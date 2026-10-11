@@ -248,3 +248,6 @@ h2 { font-size: 22px; font-weight: 600; display: flex; align-items: center; gap:
 @media (max-height: 860px) {
   .btn-primary, .btn-primary.big { font-size: 15px; padding: 11px 22px; }
 }
+/* Link counter: a small status chip, same scale as the site chips beside it. */
+.count-chip { font-size: 14px; font-weight: 500; padding: 7px 14px; gap: 6px; }
+.count-chip svg { width: 14px; height: 14px; }
