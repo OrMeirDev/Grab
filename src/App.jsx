@@ -4,6 +4,7 @@ import {
   ArrowUpDown, GripVertical, FolderOpen, Check, Pause, Play, Clock, RotateCw, Trash2,
   AlertTriangle, Unlink, Video, Music, ChevronDown, Settings2, Loader2, RefreshCw,
 } from 'lucide-react';
+import { siYoutube, siVimeo, siInstagram, siTiktok } from 'simple-icons';
 import { HistoryPage, LibraryPage, SettingsPage, SitesModal } from './pages.jsx';
 
 const api = window.grab;
@@ -15,11 +16,12 @@ const PAGES = [
   { id: 'settings', icon: Settings, label: 'הגדרות' },
 ];
 
+// Brand marks from Simple Icons (CC0 SVG paths), drawn white on the brand color.
 const SITES = [
-  { key: 'youtube', name: 'YouTube', color: '#ff0033', letter: '▶' },
-  { key: 'vimeo', name: 'Vimeo', color: '#1ab7ea', letter: 'V' },
-  { key: 'instagram', name: 'Instagram', color: '#d62976', letter: '◎' },
-  { key: 'tiktok', name: 'TikTok', color: '#111111', letter: '♪' },
+  { key: 'youtube', name: 'YouTube', color: '#ff0000', icon: siYoutube },
+  { key: 'vimeo', name: 'Vimeo', color: '#1ab7ea', icon: siVimeo },
+  { key: 'instagram', name: 'Instagram', color: '#ff0069', icon: siInstagram },
+  { key: 'tiktok', name: 'TikTok', color: '#000000', icon: siTiktok },
 ];
 
 const QUALITIES = [
@@ -78,7 +80,9 @@ function SiteMark({ site, size = 16 }) {
   if (!s) return null;
   return (
     <span className="site-mark" style={{ background: s.color, width: size, height: size, fontSize: size * 0.55 }}>
-      {s.letter}
+      {s.icon
+        ? <svg viewBox="0 0 24 24" width={size * 0.66} height={size * 0.66} fill="#fff" aria-hidden="true"><path d={s.icon.path} /></svg>
+        : s.letter}
     </span>
   );
 }

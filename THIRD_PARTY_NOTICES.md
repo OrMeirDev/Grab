@@ -17,6 +17,11 @@ Each is distributed under its own license.
 - License: MIT.
 - Project and source: https://github.com/denoland/deno
 
+## Simple Icons (site logos)
+- License: CC0 1.0 for the icon data. Project: https://github.com/simple-icons/simple-icons
+- The YouTube, Vimeo, Instagram and TikTok logos are trademarks of their owners, shown only
+  to indicate which sites Grab can download from.
+
 ## Electron, React, Vite, lucide-react
 - Licenses: MIT (lucide-react: ISC).
 - Included through the npm packages listed in package.json.
