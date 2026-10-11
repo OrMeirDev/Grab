@@ -32,7 +32,7 @@ const QUALITIES = [
 ];
 
 const ERROR_LABELS = {
-  blocked: 'יוטיוב חסם זמנית, נסה שוב מאוחר יותר',
+  blocked: 'האתר חסם זמנית, נסה שוב מאוחר יותר',
   private: 'הסרטון פרטי או דורש התחברות',
   notfound: 'לא נמצא סרטון בקישור',
   unavailable: 'הסרטון הוסר או לא זמין',
@@ -54,6 +54,22 @@ function parseLinks(text) {
     return { url: m[0], label };
   }).filter(Boolean);
 }
+
+// Which site a link belongs to, from the URL alone so it works before the lookup finishes.
+// Blocks are tracked per site key: "youtube", "tiktok", "vimeo", ...
+function siteKey(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase().replace(/^(www|m|mobile|vm)\./, '');
+    if (/(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com)$/.test(host)) return 'youtube';
+    const parts = host.split('.');
+    return parts.length > 1 ? parts[parts.length - 2] : host;
+  } catch {
+    return 'unknown';
+  }
+}
+
+const SITE_LABELS = { youtube: 'יוטיוב', tiktok: 'טיקטוק', instagram: 'אינסטגרם', vimeo: 'Vimeo', facebook: 'פייסבוק', x: 'X', twitter: 'X' };
+const siteLabel = (key) => SITE_LABELS[key] || key.charAt(0).toUpperCase() + key.slice(1);
 
 function siteInfo(site) {
   if (!site) return null;
@@ -286,27 +302,31 @@ export default function App() {
     api?.setSettings(patch);
   };
 
-  // When a site blocks us, everything stops: each further request would only extend the block.
-  const [blocked, setBlocked] = useState(false);
-  const blockedRef = useRef(false);
-  const triggerBlock = useCallback(() => {
-    blockedRef.current = true;
-    setBlocked(true);
-    setRunning(false);
+  // A block is per site: when YouTube blocks us, only YouTube items wait (each further request
+  // would extend the block), while downloads from other sites carry on.
+  const [blockedSites, setBlockedSites] = useState([]);
+  const blockedRef = useRef(new Set());
+  const isBlocked = (item) => blockedRef.current.has(siteKey(item.url));
+  const setBlockedList = (set) => { blockedRef.current = set; setBlockedSites([...set]); };
+  const triggerBlock = useCallback((key) => {
+    if (blockedRef.current.has(key)) return;
+    setBlockedList(new Set([...blockedRef.current, key]));
   }, []);
-  const resumeAfterBlock = () => {
-    blockedRef.current = false;
-    setBlocked(false);
+  const resumeSite = (key) => {
+    const next = new Set(blockedRef.current);
+    next.delete(key);
+    setBlockedList(next);
     if (queueRef.current.some((x) => x.status === 'queued')) setRunning(true);
   };
+  const clearBlocks = () => setBlockedList(new Set());
 
   const analyzeOne = useCallback(async (id, url, label) => {
     update(id, { status: 'analyzing', error: null, errorLabel: null });
     const info = await api.analyze(url);
     if (!info.ok) {
       if (info.kind === 'blocked') {
-        update(id, { status: 'waiting' }); // looked up again once the user resumes
-        triggerBlock();
+        update(id, { status: 'waiting' }); // looked up again once the user resumes this site
+        triggerBlock(siteKey(url));
         return;
       }
       update(id, { status: 'error', error: info.error, errorLabel: errorLabel(info.kind, 'לא נמצא סרטון בקישור'), analyzeFailed: true });
@@ -325,11 +345,11 @@ export default function App() {
     if (lookupBusy.current) return;
     lookupBusy.current = true;
     let first = true;
-    while (!blockedRef.current) {
-      const next = queueRef.current.find((x) => x.status === 'waiting');
+    for (;;) {
+      const next = queueRef.current.find((x) => x.status === 'waiting' && !isBlocked(x));
       if (!next) break;
       if (!first) await sleep(LOOKUP_GAP_MS + Math.random() * LOOKUP_GAP_MS);
-      if (blockedRef.current) break;
+      if (isBlocked(next)) continue; // its site got blocked while we waited
       first = false;
       await analyzeOne(next.id, next.url, next.label);
       await sleep(0); // let the queue state settle before picking the next one
@@ -338,8 +358,8 @@ export default function App() {
   }, [analyzeOne]);
 
   useEffect(() => {
-    if (api && !blocked && queue.some((x) => x.status === 'waiting')) runLookups();
-  }, [queue, blocked, runLookups]);
+    if (api && queue.some((x) => x.status === 'waiting' && !isBlocked(x))) runLookups();
+  }, [queue, blockedSites, runLookups]);
 
   const newItem = (url, label, extra = {}) => ({ id: nextId++, url, label, name: label, status: 'waiting', progress: 0, ...extra });
 
@@ -363,9 +383,10 @@ export default function App() {
   const [restUntil, setRestUntil] = useState(0);
   const [, setTick] = useState(0);
   useEffect(() => {
-    if (!running || !api || blocked) return;
+    if (!running || !api) return;
     if (queue.some((x) => x.status === 'downloading')) return;
-    const next = queue.find((x) => x.status === 'queued');
+    // Items from a blocked site stay queued and are skipped until the user resumes that site.
+    const next = queue.find((x) => x.status === 'queued' && !blockedSites.includes(siteKey(x.url)));
     if (!next) { setRunning(false); return; }
 
     const isYouTube = !next.site || /youtube/i.test(next.site);
@@ -388,20 +409,19 @@ export default function App() {
       if (r.stopped) return; // paused or removed by the user
       if (r.kind === 'blocked') {
         update(next.id, { status: 'queued', infoFile: null }); // resumes from where it stopped
-        return triggerBlock();
+        return triggerBlock(siteKey(next.url));
       }
       // One automatic retry, fetching fresh info in case the saved stream links expired.
       update(next.id, (x) => (x.autoRetried
         ? { status: 'error', error: r.error, errorLabel: errorLabel(r.kind, 'ההורדה נכשלה') }
         : { status: 'queued', autoRetried: true, infoFile: null }));
     });
-  }, [queue, running, blocked, restUntil, settings, update, triggerBlock]);
+  }, [queue, running, blockedSites, restUntil, settings, update, triggerBlock]);
 
   const downloadAll = () => {
     if (!api) return;
     setQueue((q) => q.map((x) => (x.status === 'ready' || x.status === 'paused' ? { ...x, status: 'queued' } : x)));
-    blockedRef.current = false;
-    setBlocked(false);
+    clearBlocks();
     setRunning(true);
   };
 
@@ -415,6 +435,13 @@ export default function App() {
       if (result.updated) { setSites(null); loadSites(); }
     }
   };
+  const checkAppUpdate = async () => {
+    if (!api?.checkAppUpdate) return;
+    setAppUpdate({ state: 'checking' });
+    const started = await api.checkAppUpdate();
+    if (!started) setAppUpdate({ state: 'dev' }); // only the installed app can update itself
+  };
+
   const engine = {
     state: engineState,
     update: updateEngine,
@@ -422,15 +449,15 @@ export default function App() {
     message: engineMessage(engineState, version),
   };
 
-  const resting = running && !blocked && restUntil > Date.now() && !queue.some((x) => x.status === 'downloading');
+  const resting = running && restUntil > Date.now() && !queue.some((x) => x.status === 'downloading');
 
   const actions = {
     rename: (id, name) => update(id, { name, nameEdited: true }),
     // Queues just this row; it joins the line behind anything already downloading.
     downloadOne: (id) => {
+      const item = queueRef.current.find((x) => x.id === id);
       update(id, { status: 'queued' });
-      blockedRef.current = false;
-      setBlocked(false);
+      if (item) resumeSite(siteKey(item.url)); // an explicit click retries even a blocked site
       setRunning(true);
     },
     pause: (id) => { api.stop(id); update(id, { status: 'paused' }); },
@@ -496,7 +523,12 @@ export default function App() {
 
         {page === 'history' && <HistoryPage onRequeue={requeue} />}
         {page === 'library' && <LibraryPage folder={settings.folder} />}
-        {page === 'settings' && <SettingsPage settings={settings} onChange={saveSettings} version={version} engine={engine} />}
+        {page === 'settings' && (
+          <SettingsPage
+            settings={settings} onChange={saveSettings} version={version} engine={engine}
+            app={{ version: appVersion, status: appUpdate, check: checkAppUpdate }}
+          />
+        )}
 
         {page === 'downloads' && (<>
         <header className="page-header">
@@ -511,16 +543,22 @@ export default function App() {
 
         {notice && <div className="notice" onClick={() => setNotice('')}>{notice}</div>}
 
-        {blocked && (
-          <div className="blocked-banner">
-            <AlertTriangle size={22} />
-            <div>
-              <div className="blocked-title">יוטיוב חסם זמנית. התור הושהה.</div>
-              <div>עצרתי את כל ההורדות והזיהויים כדי לא להאריך את החסימה. בדרך כלל זה עובר תוך כמה שעות.</div>
+        {blockedSites.map((key) => {
+          const others = queue.some((x) => siteKey(x.url) !== key && ['waiting', 'analyzing', 'queued', 'downloading'].includes(x.status));
+          return (
+            <div className="blocked-banner" key={key}>
+              <AlertTriangle size={22} />
+              <div>
+                <div className="blocked-title">{siteLabel(key)} חסם זמנית. סרטוני {siteLabel(key)} הושהו.</div>
+                <div>
+                  עצרתי רק את {siteLabel(key)} כדי לא להאריך את החסימה. בדרך כלל זה עובר תוך כמה שעות.
+                  {others && ' הורדות מאתרים אחרים ממשיכות כרגיל.'}
+                </div>
+              </div>
+              <button className="btn-ghost" onClick={() => resumeSite(key)}><Play size={16} /> המשך את {siteLabel(key)}</button>
             </div>
-            <button className="btn-ghost" onClick={resumeAfterBlock}><Play size={16} /> המשך</button>
-          </div>
-        )}
+          );
+        })}
 
         <section className="card paste-card">
           <label className="card-label">הקישורים שלך</label>

@@ -214,7 +214,20 @@ export function SitesModal({ sites, error, onRetry, onClose }) {
   );
 }
 
-export function SettingsPage({ settings, onChange, version, engine }) {
+function appUpdateMessage(status) {
+  switch (status?.state) {
+    case 'checking': return 'בודק אם יש גרסה חדשה…';
+    case 'none': return 'Grab מעודכן לגרסה האחרונה';
+    case 'available': return `גרסה ${status.version} זמינה. אפשר לעדכן מהפס למעלה.`;
+    case 'downloading': return `מוריד את העדכון… ${status.percent || 0}%`;
+    case 'ready': return `גרסה ${status.version} מוכנה. הפעל מחדש כדי להתקין.`;
+    case 'error': return 'הבדיקה נכשלה. בדוק את החיבור לאינטרנט.';
+    case 'dev': return 'בדיקת עדכונים פועלת רק בגרסה המותקנת.';
+    default: return 'Grab בודק עדכונים בכל הפעלה וכל 4 שעות.';
+  }
+}
+
+export function SettingsPage({ settings, onChange, version, engine, app }) {
   const checking = engine?.state?.status === 'checking';
   const failed = engine?.state?.result && !engine.state.result.ok;
   const choose = async () => {
@@ -247,6 +260,16 @@ export function SettingsPage({ settings, onChange, version, engine }) {
             <option value="720">720p</option>
             <option value="480">480p</option>
           </select>
+        </div>
+        <div className="setting">
+          <div>
+            <div className="setting-title">עדכוני תוכנה</div>
+            <div className="row-meta">גרסה {app?.version || '…'}</div>
+            <div className={`row-meta ${app?.status?.state === 'error' ? 'tag-muted' : ''}`}>{appUpdateMessage(app?.status)}</div>
+          </div>
+          <button className="btn-ghost" onClick={app?.check} disabled={['checking', 'downloading'].includes(app?.status?.state)}>
+            <RefreshCw size={16} className={app?.status?.state === 'checking' ? 'spin' : ''} /> בדוק עדכונים
+          </button>
         </div>
         <div className="setting">
           <div>

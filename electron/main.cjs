@@ -54,7 +54,10 @@ function createWindow() {
   mainWindow = win;
   // Check for an app update shortly after start, once the page is listening.
   win.webContents.once('did-finish-load', () => {
-    if (app.isPackaged) setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 3000);
+    if (!app.isPackaged) return;
+    setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 3000);
+    // Grab often stays open for hours, so keep checking while it runs.
+    setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 4 * 60 * 60 * 1000);
   });
 
   if (process.env.VITE_DEV) {
