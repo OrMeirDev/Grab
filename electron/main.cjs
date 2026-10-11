@@ -1,0 +1,153 @@
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const engine = require('./engine.cjs');
+const { autoUpdater } = require('electron-updater');
+
+// App updates come from GitHub releases (see build.publish in package.json). Nothing downloads
+// until the user clicks "update"; the new version installs when they restart.
+let mainWindow = null;
+const sendUpdate = (status) => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update:status', status);
+};
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = true;
+autoUpdater.on('update-available', (info) => sendUpdate({ state: 'available', version: info.version }));
+autoUpdater.on('update-not-available', () => sendUpdate({ state: 'none' }));
+autoUpdater.on('download-progress', (p) => sendUpdate({ state: 'downloading', percent: Math.round(p.percent) }));
+autoUpdater.on('update-downloaded', (info) => sendUpdate({ state: 'ready', version: info.version }));
+autoUpdater.on('error', (e) => sendUpdate({ state: 'error', message: String(e?.message || e).slice(0, 200) }));
+
+ipcMain.handle('update:check', () => (app.isPackaged ? autoUpdater.checkForUpdates().then(() => true).catch(() => false) : false));
+ipcMain.handle('update:download', () => autoUpdater.downloadUpdate().catch(() => null));
+ipcMain.handle('update:install', () => {
+  for (const child of jobs.values()) child && child.kill();
+  autoUpdater.quitAndInstall();
+});
+ipcMain.handle('app:version', () => app.getVersion());
+
+const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
+const defaults = () => ({ folder: path.join(app.getPath('downloads'), 'Grab'), format: 'mp4', quality: 'best' });
+
+function readSettings() {
+  try { return { ...defaults(), ...JSON.parse(fs.readFileSync(settingsFile(), 'utf8')) }; } catch { return defaults(); }
+}
+
+const jobs = new Map(); // id -> child process
+
+function createWindow() {
+  const win = new BrowserWindow({
+    width: 1280,
+    height: 820,
+    minWidth: 960,
+    minHeight: 640,
+    title: 'Grab',
+    backgroundColor: '#f6f7fb',
+    autoHideMenuBar: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      preload: path.join(__dirname, 'preload.cjs'),
+    },
+  });
+
+  mainWindow = win;
+  // Check for an app update shortly after start, once the page is listening.
+  win.webContents.once('did-finish-load', () => {
+    if (app.isPackaged) setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 3000);
+  });
+
+  if (process.env.VITE_DEV) {
+    win.loadURL('http://localhost:5173');
+  } else {
+    win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  }
+}
+
+ipcMain.handle('engine:version', () => engine.version());
+ipcMain.handle('engine:analyze', (_e, url) => engine.analyze(url));
+ipcMain.handle('engine:extractors', () => engine.extractors());
+ipcMain.handle('engine:update', () => {
+  // Windows can't replace yt-dlp.exe while a download is using it.
+  if (jobs.size) return { ok: false, busy: true };
+  return engine.updateEngine();
+});
+
+ipcMain.handle('engine:start', async (e, job) => {
+  fs.mkdirSync(job.folder, { recursive: true });
+  const { child, done } = engine.download(job, (p) => {
+    if (!e.sender.isDestroyed()) e.sender.send('engine:progress', { id: job.id, ...p });
+  });
+  jobs.set(job.id, child);
+  const result = await done;
+  const stopped = jobs.get(job.id) === null;
+  jobs.delete(job.id);
+  return stopped ? { ok: false, stopped: true } : result;
+});
+
+ipcMain.handle('engine:stop', (_e, id) => {
+  const child = jobs.get(id);
+  if (child) {
+    jobs.set(id, null);
+    child.kill();
+  }
+});
+
+ipcMain.handle('settings:get', () => readSettings());
+ipcMain.handle('settings:set', (_e, s) => {
+  const next = { ...readSettings(), ...s };
+  fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
+  fs.writeFileSync(settingsFile(), JSON.stringify(next, null, 2));
+  return next;
+});
+
+const historyFile = () => path.join(app.getPath('userData'), 'history.json');
+function readHistory() {
+  try { return JSON.parse(fs.readFileSync(historyFile(), 'utf8')); } catch { return []; }
+}
+function writeHistory(list) {
+  fs.mkdirSync(path.dirname(historyFile()), { recursive: true });
+  fs.writeFileSync(historyFile(), JSON.stringify(list.slice(0, 1000), null, 2));
+}
+ipcMain.handle('history:get', () => readHistory());
+ipcMain.handle('history:add', (_e, entry) => writeHistory([{ ...entry, completedAt: new Date().toISOString() }, ...readHistory()]));
+ipcMain.handle('history:clear', () => writeHistory([]));
+
+const MEDIA = /\.(mp4|mkv|webm|mov|m4a|mp3|opus|wav|flac)$/i;
+ipcMain.handle('library:list', (_e, dir) => {
+  const out = [];
+  const walk = (d, depth) => {
+    let entries;
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const ent of entries) {
+      const p = path.join(d, ent.name);
+      if (ent.isDirectory() && depth < 3) walk(p, depth + 1);
+      else if (ent.isFile() && MEDIA.test(ent.name)) {
+        const st = fs.statSync(p);
+        out.push({ file: p, name: ent.name, folder: path.relative(dir, d), size: st.size, modified: st.mtime.toISOString() });
+      }
+    }
+  };
+  walk(dir, 0);
+  return out.sort((a, b) => b.modified.localeCompare(a.modified));
+});
+ipcMain.handle('file:open', (_e, file) => shell.openPath(file));
+ipcMain.handle('file:exists', (_e, file) => !!file && fs.existsSync(file));
+
+ipcMain.handle('folder:choose', async () => {
+  const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
+  return r.canceled ? null : r.filePaths[0];
+});
+ipcMain.handle('folder:show', (_e, file) => shell.showItemInFolder(file));
+ipcMain.handle('folder:open', (_e, dir) => { fs.mkdirSync(dir, { recursive: true }); return shell.openPath(dir); });
+
+app.whenReady().then(async () => {
+  engine.setUserBinDir(path.join(app.getPath('userData'), 'bin'));
+  await engine.reconcileEngine();
+  engine.cleanInfoCache();
+  createWindow();
+});
+app.on('window-all-closed', () => {
+  for (const child of jobs.values()) child && child.kill();
+  app.quit();
+});

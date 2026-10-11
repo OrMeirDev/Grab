@@ -1,0 +1,7 @@
+node_modules/
+dist/
+release/
+# yt-dlp, ffmpeg and deno are large third-party binaries; fetch them with `npm run fetch-bin`.
+bin/
+.claude/
+*.log
