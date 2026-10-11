@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const engine = require('./engine.cjs');
@@ -22,7 +22,8 @@ ipcMain.handle('update:check', () => (app.isPackaged ? autoUpdater.checkForUpdat
 ipcMain.handle('update:download', () => autoUpdater.downloadUpdate().catch(() => null));
 ipcMain.handle('update:install', () => {
   for (const child of jobs.values()) child && child.kill();
-  autoUpdater.quitAndInstall();
+  // Silent install + relaunch: the user sees Grab close and reopen, not the installer wizard.
+  autoUpdater.quitAndInstall(true, true);
 });
 ipcMain.handle('app:version', () => app.getVersion());
 
@@ -36,11 +37,15 @@ function readSettings() {
 const jobs = new Map(); // id -> child process
 
 function createWindow() {
+  // Open at a size that fits the screen; the layout is built so nothing needs page scrolling
+  // down to the minimum size (only the queue list scrolls inside itself).
+  const area = screen.getPrimaryDisplay().workAreaSize;
   const win = new BrowserWindow({
-    width: 1280,
-    height: 820,
-    minWidth: 960,
-    minHeight: 640,
+    width: Math.min(1320, area.width - 40),
+    height: Math.min(900, area.height - 40),
+    minWidth: Math.min(1000, area.width),
+    minHeight: Math.min(660, area.height),
+    center: true,
     title: 'Grab',
     backgroundColor: '#f6f7fb',
     autoHideMenuBar: true,

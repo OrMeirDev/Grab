@@ -496,18 +496,12 @@ export default function App() {
     } catch { /* clipboard blocked */ }
   };
 
-  const chooseFolder = async () => {
-    const dir = await api?.chooseFolder();
-    if (dir) saveSettings({ folder: dir });
-  };
-
   const counts = useMemo(() => ({
     done: queue.filter((x) => x.status === 'done').length,
     failed: queue.filter((x) => x.status === 'error').length,
     pending: queue.filter((x) => ['ready', 'queued', 'paused', 'downloading'].includes(x.status)).length,
   }), [queue]);
 
-  const folderLabel = settings.folder ? settings.folder.split(/[\\/]/).slice(-2).join(' / ') : 'בחר תיקייה';
 
   return (
     <div className="app">
@@ -621,9 +615,6 @@ export default function App() {
             </select>
             <ChevronDown size={16} />
           </label>
-          <button className="select" onClick={chooseFolder} title={settings.folder}>
-            <Folder size={17} /> <span dir="auto">{folderLabel}</span> <ChevronDown size={16} />
-          </button>
           <div className="action-main">
             <span className="muted summary">
               {resting ? 'הפסקה קצרה לפני הסרטון הבא…' : (
