@@ -16,6 +16,19 @@ The installer is not code-signed, so Windows SmartScreen warns on first run: cli
 - Pauses the whole queue the moment YouTube starts rate-limiting, instead of making it worse
 - History, library of downloaded files, searchable list of supported sites
 - One-click update of the yt-dlp engine
+- Finds embedded Mux and other players inside open Shadow DOM and frames, with network manifest discovery
+
+## Pages that use your browser session
+
+Grab connects to your running Chrome profile when yt-dlp cannot read a page or needs authentication. It does not open a sign-in window or create a separate profile.
+
+1. Use Chrome 144 or newer and enable remote debugging at `chrome://inspect/#remote-debugging` once.
+2. Leave Chrome running in the profile where you are already signed in. Accept Chrome's connection permission when Grab first connects (Chrome asks again after a new connection).
+3. Paste the page URL in Grab as usual. An exact open tab is scanned without navigation or playback changes; otherwise Grab opens a background tab in the existing context and closes that tab when lookup finishes.
+
+Lookup reads player attributes (including signed Mux manifest URLs), open Shadow DOM, frame execution contexts and media network requests. Cookies for the page and discovered URLs are passed to yt-dlp in a temporary domain-scoped cookie jar, together with the player request's User-Agent, Referer and Origin. The jar is deleted after lookup/download. A failed download of an embedded source is looked up again to refresh expiring URLs.
+
+This connection currently discovers the standard Chrome user-data directory. Custom user-data directories and other browsers need an additional endpoint selection option. If the requested page exists in multiple browser contexts, Grab asks you to leave it open in the intended context.
 
 ## Develop
 
@@ -23,6 +36,7 @@ The installer is not code-signed, so Windows SmartScreen warns on first run: cli
 npm install
 npm run fetch-bin   # downloads yt-dlp, ffmpeg and deno into bin/ (not in git: too large)
 npm run dev         # app with hot reload
+npm test            # session, collector and download-context regression tests
 npm run dist        # build the installer into release/
 npm run release     # build and publish a GitHub release (needs GH_TOKEN)
 ```
@@ -31,7 +45,7 @@ To publish an update: bump `version` in `package.json`, then run `npm run releas
 
 ## Not supported
 
-Sites that protect video with DRM or signed/expiring tokens (Netflix, paid course platforms on bunny.net, etc.). Grab does not bypass such protection.
+DRM-protected streams and players without a downloadable HTTP media source (for example, some WebRTC players). Signed URLs can work when the active browser session has access; expired URLs must be refreshed. Grab does not bypass DRM or access controls. Closed Shadow DOM cannot be traversed by the page collector; network discovery can still find exposed HTTP media requests.
 
 ## Licenses
 

@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const engine = require('./engine.cjs');
 const pageprobe = require('./pageprobe.cjs');
+const browserSession = require('./browser-session.cjs');
 const { autoUpdater } = require('electron-updater');
 
 // App updates come from GitHub releases (see build.publish in package.json). Nothing downloads
@@ -94,17 +95,32 @@ ipcMain.handle('engine:version', () => engine.version());
 ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
   // forcePage: what yt-dlp found at the link didn't download, so go straight to the page's player.
   const first = forcePage ? { ok: false, kind: 'notfound', error: 'Unsupported URL' } : await engine.analyze(url);
-  if (first.ok || first.kind !== 'notfound') return first;
+  if (first.ok || !['notfound', 'private', 'blocked', 'other'].includes(first.kind)) return first;
   if (!e.sender.isDestroyed()) e.sender.send('engine:lookup-phase', { url, phase: 'page' });
   let probe;
-  try { probe = await pageprobe.findMedia(url); } catch { probe = { candidates: [] }; }
-  for (const c of probe.candidates.slice(0, 4)) {
-    // A file or stream from the page is named after the page; an embedded player keeps its own title.
-    const r = await engine.analyze(c.url, { referer: url, title: c.kind === 'embed' ? undefined : probe.title });
-    if (r.ok) return { ...r, mediaUrl: c.url, referer: url };
+  try {
+    probe = await pageprobe.findMedia(url, { refresh: forcePage });
+    // A blob player may have loaded its manifest before attachment and discarded resource entries.
+    if (probe.reusedTab && !probe.candidates.length) probe = await pageprobe.findMedia(url, { refresh: true });
   }
-  if (probe.protected) return { ok: false, kind: 'protected', error: 'DRM' };
-  return { ...first, kind: 'notfoundPage' };
+  catch (error) { return { ok: false, kind: error.kind || 'browserSession', error: error.message }; }
+  return browserSession.withSessionCookies(probe.cookieRef, async (cookieFile) => {
+    // An authenticated extractor may understand the page better than its embedded sources.
+    if (!forcePage && ['private', 'blocked'].includes(first.kind)) {
+      const authenticated = await engine.analyze(url, { cookieFile, requestContext: probe.requestContext });
+      if (authenticated.ok) return { ...authenticated, cookieRef: probe.cookieRef, requestContext: probe.requestContext };
+    }
+    let last;
+    for (const c of probe.candidates) {
+      const requestContext = c.requestContext;
+      const r = await engine.analyze(c.url, { cookieFile, requestContext, referer: url, title: c.kind === 'embed' ? undefined : probe.title });
+      if (r.ok) return { ...r, mediaUrl: c.url, referer: requestContext?.referer || url, requestContext, cookieRef: probe.cookieRef };
+      last = r;
+    }
+    if (probe.protected) return { ok: false, kind: 'protected', error: 'DRM' };
+    if (last && ['private', 'blocked', 'network'].includes(last.kind)) return last;
+    return { ...first, kind: 'notfoundPage' };
+  });
 });
 ipcMain.handle('engine:extractors', () => engine.extractors());
 ipcMain.handle('engine:update', () => {
@@ -115,14 +131,16 @@ ipcMain.handle('engine:update', () => {
 
 ipcMain.handle('engine:start', async (e, job) => {
   fs.mkdirSync(job.folder, { recursive: true });
-  const { child, done } = engine.download(job, (p) => {
-    if (!e.sender.isDestroyed()) e.sender.send('engine:progress', { id: job.id, ...p });
+  return browserSession.withSessionCookies(job.cookieRef, async (cookieFile) => {
+    const { child, done } = engine.download({ ...job, cookieFile }, (p) => {
+      if (!e.sender.isDestroyed()) e.sender.send('engine:progress', { id: job.id, ...p });
+    });
+    jobs.set(job.id, child);
+    try {
+      const result = await done;
+      return jobs.get(job.id) === null ? { ok: false, stopped: true } : result;
+    } finally { jobs.delete(job.id); }
   });
-  jobs.set(job.id, child);
-  const result = await done;
-  const stopped = jobs.get(job.id) === null;
-  jobs.delete(job.id);
-  return stopped ? { ok: false, stopped: true } : result;
 });
 
 ipcMain.handle('engine:stop', (_e, id) => {
@@ -191,3 +209,4 @@ app.on('window-all-closed', () => {
   for (const child of jobs.values()) child && child.kill();
   app.quit();
 });
+app.on('before-quit', browserSession.disconnectBrowser);

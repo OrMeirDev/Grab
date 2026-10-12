@@ -39,6 +39,8 @@ const ERROR_LABELS = {
   protected: 'הסרטון מוגן בהגנת העתקה (DRM), ואי אפשר להוריד אותו',
   unavailable: 'הסרטון הוסר או לא זמין',
   network: 'אין חיבור לאינטרנט',
+  browserSession: 'צריך לפתוח Chrome, להפעיל remote debugging ב־chrome://inspect/#remote-debugging ולאשר את החיבור',
+  browserContext: 'העמוד פתוח בכמה סשנים של Chrome; השאר אותו פתוח בסשן שבו אתה מחובר',
 };
 const errorLabel = (kind, fallback) => ERROR_LABELS[kind] || fallback;
 const LOOKUP_GAP_MS = 2000; // plus up to the same again at random
@@ -330,7 +332,9 @@ export default function App() {
   // yt-dlp found at the link failed). autoQueue: download right away once found.
   const analyzeOne = useCallback(async (id, url, label, { forcePage = false, autoQueue = false } = {}) => {
     update(id, { status: 'analyzing', error: null, errorLabel: null, phase: forcePage ? 'page' : null });
-    const info = await api.analyze(url, { forcePage });
+    let info;
+    try { info = await api.analyze(url, { forcePage }); }
+    catch (error) { info = { ok: false, error: error.message }; }
     if (!info.ok) {
       if (info.kind === 'blocked') {
         update(id, { status: 'waiting' }); // looked up again once the user resumes this site
@@ -347,6 +351,7 @@ export default function App() {
       infoFile: info.infoFile, infoAt: info.infoAt,
       // Found inside the page's player: download from that address, as the page does.
       mediaUrl: info.mediaUrl || null, referer: info.referer || null,
+      cookieRef: info.cookieRef || null, requestContext: info.requestContext || null,
     }));
     if (autoQueue) setRunning(true);
   }, [update, triggerBlock]);
@@ -412,6 +417,7 @@ export default function App() {
     api.start({
       id: next.id, url: next.url, name: next.name, folder: settings.folder, format: settings.format, quality: settings.quality,
       infoFile: next.infoFile, infoAt: next.infoAt, mediaUrl: next.mediaUrl, referer: next.referer,
+      cookieRef: next.cookieRef, requestContext: next.requestContext,
     }).then((r) => {
       setRestUntil(Date.now() + DOWNLOAD_REST_MS + Math.random() * DOWNLOAD_REST_MS);
       if (r.ok) {
@@ -428,10 +434,10 @@ export default function App() {
       // the saved stream links expired.
       update(next.id, (x) => (x.autoRetried
         ? { status: 'error', error: r.error, errorLabel: errorLabel(r.kind, 'ההורדה נכשלה') }
-        : !x.mediaUrl && /^(generic|html5mediaembed)$/i.test(x.site || '')
-          ? { status: 'waiting', autoRetried: true, forcePage: true, autoQueue: true, infoFile: null }
+        : x.mediaUrl || /^(generic|html5mediaembed)$/i.test(x.site || '')
+          ? { status: 'waiting', autoRetried: true, forcePage: true, autoQueue: true, infoFile: null, mediaUrl: null, referer: null, cookieRef: null, requestContext: null }
           : { status: 'queued', autoRetried: true, infoFile: null }));
-    });
+    }).catch((error) => update(next.id, { status: 'error', error: error.message, errorLabel: 'ההורדה נכשלה' }));
   }, [queue, running, blockedSites, restUntil, settings, update, triggerBlock]);
 
   const downloadAll = () => {
@@ -480,6 +486,7 @@ export default function App() {
     resume: (id) => { update(id, { status: 'queued' }); setRunning(true); },
     retry: (item) => {
       if (item.analyzeFailed) return update(item.id, { status: 'waiting', analyzeFailed: false, error: null });
+      if (item.mediaUrl) return update(item.id, { status: 'waiting', autoRetried: false, forcePage: true, autoQueue: true, error: null, infoFile: null, mediaUrl: null, referer: null, cookieRef: null, requestContext: null });
       update(item.id, { status: 'queued', autoRetried: false, error: null, infoFile: null });
       setRunning(true);
     },

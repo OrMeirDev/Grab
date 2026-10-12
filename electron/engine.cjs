@@ -174,8 +174,18 @@ function cleanInfoCache() {
 
 // referer/title: set when the video was found inside another page's player (see pageprobe.cjs):
 // the video is fetched the way that page's player fetches it, and named after the page.
-async function analyze(url, { referer, title: pageTitle } = {}) {
-  const extra = referer ? ['--referer', referer] : [];
+function sessionArgs({ referer, requestContext = {}, cookieFile } = {}) {
+  requestContext = requestContext || {};
+  const args = [];
+  if (cookieFile) args.push('--cookies', cookieFile);
+  if (requestContext.userAgent) args.push('--user-agent', requestContext.userAgent);
+  if (requestContext.referer || referer) args.push('--referer', requestContext.referer || referer);
+  if (requestContext.origin) args.push('--add-headers', 'Origin:' + requestContext.origin);
+  return args;
+}
+
+async function analyze(url, { title: pageTitle, ...context } = {}) {
+  const extra = sessionArgs(context);
   const { code, out, err } = await run(['-J', '--no-playlist', '--no-warnings', '--skip-download', '--sleep-requests', '1', ...extra, url]).done;
   if (code !== 0) return { ok: false, error: cleanError(err), kind: errorKind(err) };
   try {
@@ -210,12 +220,12 @@ function freshInfo(infoFile, infoAt) {
   return !!infoFile && Date.now() - (infoAt || 0) < INFO_MAX_AGE_MS && fs.existsSync(infoFile);
 }
 
-function downloadArgs({ url, mediaUrl, referer, name, folder, format, quality, infoFile, infoAt }) {
+function downloadArgs({ url, mediaUrl, referer, requestContext, cookieFile, name, folder, format, quality, infoFile, infoAt }) {
   const out = path.join(folder, safeName(name) + '.%(ext)s');
   // Reuse the lookup result when it's still fresh; otherwise fetch the page again, slowly.
   // A video found inside a page's player is fetched from its own address, as that page does.
   const source = freshInfo(infoFile, infoAt) ? ['--load-info-json', infoFile] : ['--sleep-requests', '1', mediaUrl || url];
-  if (referer) source.unshift('--referer', referer);
+  source.unshift(...sessionArgs({ referer, requestContext, cookieFile }));
   // --print implies quiet mode, so --progress is needed to keep the progress lines coming.
   const common = ['--newline', '--progress', '--no-playlist', '--no-warnings', '-R', '10', '--fragment-retries', '10',
     '--progress-template', 'download:GRAB|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s',
