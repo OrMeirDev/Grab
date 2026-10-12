@@ -43,7 +43,8 @@ async function findMedia(pageUrl, { timeoutMs = 20000 } = {}) {
   let drm = false;
   let title = '';
   const add = (url, { type = '', size = 0, fromPlayer = false } = {}) => {
-    if (!/^https?:/i.test(url) || ADS.test(url) || SEGMENT.test(url)) return;
+    // Stream pieces are skipped by name and by type (some services give them odd names, e.g. ".dts").
+    if (!/^https?:/i.test(url) || ADS.test(url) || SEGMENT.test(url) || /mp2t|iso\.segment/i.test(type)) return;
     const kind = MANIFEST.test(url) || /mpegurl|dash/i.test(type) ? 'stream' : FILE.test(url) || /^video\//i.test(type) ? 'file' : null;
     if (!kind) return;
     const prev = found.get(url) || {};
