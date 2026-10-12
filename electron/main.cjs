@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, screen, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const engine = require('./engine.cjs');
@@ -58,6 +58,21 @@ function createWindow() {
   });
 
   mainWindow = win;
+  // Electron windows have no right-click menu of their own: give text fields the usual one
+  // (so a link can be pasted with the mouse), and offer "copy" for text selected elsewhere.
+  win.webContents.on('context-menu', (_e, p) => {
+    const f = p.editFlags;
+    const items = p.isEditable
+      ? [
+        { label: 'גזור', role: 'cut', enabled: f.canCut },
+        { label: 'העתק', role: 'copy', enabled: f.canCopy },
+        { label: 'הדבק', role: 'paste', enabled: f.canPaste },
+        { type: 'separator' },
+        { label: 'בחר הכול', role: 'selectAll', enabled: f.canSelectAll },
+      ]
+      : p.selectionText.trim() ? [{ label: 'העתק', role: 'copy' }] : [];
+    if (items.length) Menu.buildFromTemplate(items).popup({ window: win });
+  });
   // Check for an app update shortly after start, once the page is listening.
   win.webContents.once('did-finish-load', () => {
     if (!app.isPackaged) return;
