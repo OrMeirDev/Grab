@@ -35,6 +35,8 @@ const ERROR_LABELS = {
   blocked: 'האתר חסם זמנית, נסה שוב מאוחר יותר',
   private: 'הסרטון פרטי או דורש התחברות',
   notfound: 'לא נמצא סרטון בקישור',
+  notfoundPage: 'לא נמצא סרטון בקישור, וגם לא בנגן שבתוך העמוד',
+  protected: 'הסרטון מוגן בהגנת העתקה (DRM), ואי אפשר להוריד אותו',
   unavailable: 'הסרטון הוסר או לא זמין',
   network: 'אין חיבור לאינטרנט',
 };
@@ -188,7 +190,7 @@ function QueueItem({ item, index, actions, drag }) {
         )}
       </div>
       <div className="item-info">
-        {analyzing ? <div className="item-name muted">{waiting ? (item.label || 'ממתין לזיהוי') : 'מזהה סרטון…'}</div> : (
+        {analyzing ? <div className="item-name muted">{waiting ? (item.label || 'ממתין לזיהוי') : item.phase === 'page' ? 'מחפש את הסרטון בתוך הנגן שבעמוד…' : 'מזהה סרטון…'}</div> : (
           <input
             className="item-name name-input"
             value={item.name}
@@ -291,10 +293,14 @@ export default function App() {
     loadSites();
     api.appVersion?.().then(setAppVersion);
     const offUpdate = api.onAppUpdate ? api.onAppUpdate(setAppUpdate) : null;
+    // "Looking inside the page's player": shown on the item while that slower search runs.
+    const offPhase = api.onLookupPhase ? api.onLookupPhase(({ url, phase }) => {
+      setQueue((q) => q.map((x) => (x.url === url && x.status === 'analyzing' ? { ...x, phase } : x)));
+    }) : null;
     const offProgress = api.onProgress(({ id, percent, speed, eta }) => {
       update(id, { progress: percent, speed, eta: eta && eta !== 'NA' && eta !== 'Unknown' ? eta : '' });
     });
-    return () => { offProgress(); offUpdate?.(); };
+    return () => { offProgress(); offUpdate?.(); offPhase?.(); };
   }, [update]);
 
   const saveSettings = (patch) => {
@@ -320,9 +326,11 @@ export default function App() {
   };
   const clearBlocks = () => setBlockedList(new Set());
 
-  const analyzeOne = useCallback(async (id, url, label) => {
-    update(id, { status: 'analyzing', error: null, errorLabel: null });
-    const info = await api.analyze(url);
+  // forcePage: go straight to looking inside the page's player (after a download from what
+  // yt-dlp found at the link failed). autoQueue: download right away once found.
+  const analyzeOne = useCallback(async (id, url, label, { forcePage = false, autoQueue = false } = {}) => {
+    update(id, { status: 'analyzing', error: null, errorLabel: null, phase: forcePage ? 'page' : null });
+    const info = await api.analyze(url, { forcePage });
     if (!info.ok) {
       if (info.kind === 'blocked') {
         update(id, { status: 'waiting' }); // looked up again once the user resumes this site
@@ -333,10 +341,14 @@ export default function App() {
       return;
     }
     update(id, (x) => ({
-      status: 'ready', analyzeFailed: false, site: info.site, duration: info.duration, height: info.height,
+      status: autoQueue ? 'queued' : 'ready', forcePage: false, autoQueue: false,
+      analyzeFailed: false, site: info.site, duration: info.duration, height: info.height,
       thumbnail: info.thumbnail, title: info.title, name: x.nameEdited ? x.name : (label || info.title),
       infoFile: info.infoFile, infoAt: info.infoAt,
+      // Found inside the page's player: download from that address, as the page does.
+      mediaUrl: info.mediaUrl || null, referer: info.referer || null,
     }));
+    if (autoQueue) setRunning(true);
   }, [update, triggerBlock]);
 
   // Lookup runner: one "waiting" link at a time with a randomized gap, so sites don't flag us as a bot.
@@ -351,7 +363,7 @@ export default function App() {
       if (!first) await sleep(LOOKUP_GAP_MS + Math.random() * LOOKUP_GAP_MS);
       if (isBlocked(next)) continue; // its site got blocked while we waited
       first = false;
-      await analyzeOne(next.id, next.url, next.label);
+      await analyzeOne(next.id, next.url, next.label, { forcePage: !!next.forcePage, autoQueue: !!next.autoQueue });
       await sleep(0); // let the queue state settle before picking the next one
     }
     lookupBusy.current = false;
@@ -399,7 +411,7 @@ export default function App() {
     update(next.id, { status: 'downloading', speed: '', eta: '' });
     api.start({
       id: next.id, url: next.url, name: next.name, folder: settings.folder, format: settings.format, quality: settings.quality,
-      infoFile: next.infoFile, infoAt: next.infoAt,
+      infoFile: next.infoFile, infoAt: next.infoAt, mediaUrl: next.mediaUrl, referer: next.referer,
     }).then((r) => {
       setRestUntil(Date.now() + DOWNLOAD_REST_MS + Math.random() * DOWNLOAD_REST_MS);
       if (r.ok) {
@@ -411,10 +423,14 @@ export default function App() {
         update(next.id, { status: 'queued', infoFile: null }); // resumes from where it stopped
         return triggerBlock(siteKey(next.url));
       }
-      // One automatic retry, fetching fresh info in case the saved stream links expired.
+      // One automatic retry. A generic page whose download failed often had its real video inside
+      // the page's own player, so that retry looks there; otherwise it fetches fresh info in case
+      // the saved stream links expired.
       update(next.id, (x) => (x.autoRetried
         ? { status: 'error', error: r.error, errorLabel: errorLabel(r.kind, 'ההורדה נכשלה') }
-        : { status: 'queued', autoRetried: true, infoFile: null }));
+        : !x.mediaUrl && /^(generic|html5mediaembed)$/i.test(x.site || '')
+          ? { status: 'waiting', autoRetried: true, forcePage: true, autoQueue: true, infoFile: null }
+          : { status: 'queued', autoRetried: true, infoFile: null }));
     });
   }, [queue, running, blockedSites, restUntil, settings, update, triggerBlock]);
 

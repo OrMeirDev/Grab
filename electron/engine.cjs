@@ -172,8 +172,11 @@ function cleanInfoCache() {
   } catch { /* nothing cached yet */ }
 }
 
-async function analyze(url) {
-  const { code, out, err } = await run(['-J', '--no-playlist', '--no-warnings', '--skip-download', '--sleep-requests', '1', url]).done;
+// referer/title: set when the video was found inside another page's player (see pageprobe.cjs):
+// the video is fetched the way that page's player fetches it, and named after the page.
+async function analyze(url, { referer, title: pageTitle } = {}) {
+  const extra = referer ? ['--referer', referer] : [];
+  const { code, out, err } = await run(['-J', '--no-playlist', '--no-warnings', '--skip-download', '--sleep-requests', '1', ...extra, url]).done;
   if (code !== 0) return { ok: false, error: cleanError(err), kind: errorKind(err) };
   try {
     const j = JSON.parse(out);
@@ -187,7 +190,7 @@ async function analyze(url) {
       ok: true,
       infoFile,
       infoAt: Date.now(),
-      title: j.title || j.id,
+      title: pageTitle || j.title || j.id,
       duration: j.duration || null,
       height: j.height || null,
       thumbnail: j.thumbnail || null,
@@ -207,10 +210,12 @@ function freshInfo(infoFile, infoAt) {
   return !!infoFile && Date.now() - (infoAt || 0) < INFO_MAX_AGE_MS && fs.existsSync(infoFile);
 }
 
-function downloadArgs({ url, name, folder, format, quality, infoFile, infoAt }) {
+function downloadArgs({ url, mediaUrl, referer, name, folder, format, quality, infoFile, infoAt }) {
   const out = path.join(folder, safeName(name) + '.%(ext)s');
   // Reuse the lookup result when it's still fresh; otherwise fetch the page again, slowly.
-  const source = freshInfo(infoFile, infoAt) ? ['--load-info-json', infoFile] : ['--sleep-requests', '1', url];
+  // A video found inside a page's player is fetched from its own address, as that page does.
+  const source = freshInfo(infoFile, infoAt) ? ['--load-info-json', infoFile] : ['--sleep-requests', '1', mediaUrl || url];
+  if (referer) source.unshift('--referer', referer);
   // --print implies quiet mode, so --progress is needed to keep the progress lines coming.
   const common = ['--newline', '--progress', '--no-playlist', '--no-warnings', '-R', '10', '--fragment-retries', '10',
     '--progress-template', 'download:GRAB|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s',

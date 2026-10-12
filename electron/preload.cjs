@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('grab', {
   version: () => ipcRenderer.invoke('engine:version'),
-  analyze: (url) => ipcRenderer.invoke('engine:analyze', url),
+  analyze: (url, opts) => ipcRenderer.invoke('engine:analyze', url, opts),
   extractors: () => ipcRenderer.invoke('engine:extractors'),
   updateEngine: () => ipcRenderer.invoke('engine:update'),
   appVersion: () => ipcRenderer.invoke('app:version'),
@@ -13,6 +13,11 @@ contextBridge.exposeInMainWorld('grab', {
     const handler = (_e, status) => cb(status);
     ipcRenderer.on('update:status', handler);
     return () => ipcRenderer.removeListener('update:status', handler);
+  },
+  onLookupPhase: (cb) => {
+    const handler = (_e, data) => cb(data);
+    ipcRenderer.on('engine:lookup-phase', handler);
+    return () => ipcRenderer.removeListener('engine:lookup-phase', handler);
   },
   start: (job) => ipcRenderer.invoke('engine:start', job),
   stop: (id) => ipcRenderer.invoke('engine:stop', id),

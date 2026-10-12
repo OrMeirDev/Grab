@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, screen } = require('electron
 const path = require('path');
 const fs = require('fs');
 const engine = require('./engine.cjs');
+const pageprobe = require('./pageprobe.cjs');
 const { autoUpdater } = require('electron-updater');
 
 // App updates come from GitHub releases (see build.publish in package.json). Nothing downloads
@@ -73,7 +74,23 @@ function createWindow() {
 }
 
 ipcMain.handle('engine:version', () => engine.version());
-ipcMain.handle('engine:analyze', (_e, url) => engine.analyze(url));
+// When yt-dlp finds no video at the link, the link is often a page with its own small player:
+// look inside it the way DevTools would, and try the video addresses found there.
+ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
+  // forcePage: what yt-dlp found at the link didn't download, so go straight to the page's player.
+  const first = forcePage ? { ok: false, kind: 'notfound', error: 'Unsupported URL' } : await engine.analyze(url);
+  if (first.ok || first.kind !== 'notfound') return first;
+  if (!e.sender.isDestroyed()) e.sender.send('engine:lookup-phase', { url, phase: 'page' });
+  let probe;
+  try { probe = await pageprobe.findMedia(url); } catch { probe = { candidates: [] }; }
+  for (const c of probe.candidates.slice(0, 4)) {
+    // A file or stream from the page is named after the page; an embedded player keeps its own title.
+    const r = await engine.analyze(c.url, { referer: url, title: c.kind === 'embed' ? undefined : probe.title });
+    if (r.ok) return { ...r, mediaUrl: c.url, referer: url };
+  }
+  if (probe.protected) return { ok: false, kind: 'protected', error: 'DRM' };
+  return { ...first, kind: 'notfoundPage' };
+});
 ipcMain.handle('engine:extractors', () => engine.extractors());
 ipcMain.handle('engine:update', () => {
   // Windows can't replace yt-dlp.exe while a download is using it.
