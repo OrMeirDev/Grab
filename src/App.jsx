@@ -4,8 +4,16 @@ import {
   ArrowUpDown, GripVertical, FolderOpen, Check, Pause, Play, Clock, RotateCw, Trash2,
   AlertTriangle, Unlink, Video, Music, ChevronDown, Settings2, Loader2, RefreshCw,
 } from 'lucide-react';
+import logo1x from './assets/logo-1x.png';
+import logo125 from './assets/logo-1_25x.png';
+import logo15 from './assets/logo-1_5x.png';
+import logo2x from './assets/logo-2x.png';
+
 import { siYoutube, siVimeo, siInstagram, siTiktok } from 'simple-icons';
 import { HistoryPage, LibraryPage, SettingsPage, SitesModal, SignInGuideModal } from './pages.jsx';
+
+// The app icon beside the name, drawn at its exact size for each display scale so it stays sharp.
+const LOGO_SET = `${logo1x} 1x, ${logo125} 1.25x, ${logo15} 1.5x, ${logo2x} 2x`;
 
 const api = window.grab;
 
@@ -144,7 +152,7 @@ function Sidebar({ version, appVersion, page, onNavigate, engine }) {
     <aside className="sidebar">
       <div className="brand">
         <span>Grab</span>
-        <Download size={30} strokeWidth={2.4} className="brand-icon" />
+        <img className="brand-logo" src={logo1x} srcSet={LOGO_SET} width={40} height={40} alt="" draggable={false} />
       </div>
       <nav>
         {PAGES.map(({ id, icon: Icon, label }) => (
@@ -528,7 +536,6 @@ export default function App() {
     failed: queue.filter((x) => x.status === 'error').length,
     pending: queue.filter((x) => ['ready', 'queued', 'paused', 'downloading'].includes(x.status)).length,
   }), [queue]);
-
 
   return (
     <div className="app">
