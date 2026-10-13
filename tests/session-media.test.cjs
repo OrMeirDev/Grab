@@ -309,6 +309,17 @@ test('when the default browser can\'t be reached, the error says which browser a
   assert.equal(result.browser.supported, true);
 });
 
+test('once the signed-in browser was needed on a site, more links from it skip the hidden browser', async () => {
+  let hidden = 0;
+  const handlers = mainHandlers({ analyze: async (url) => (url === manifest ? { ok: true, title: 'Lesson' } : { ok: false, kind: 'notfound' }) },
+    { findMedia: async () => ({ candidates: [{ url: manifest, kind: 'stream' }] }) },
+    { findMedia: async () => { hidden++; return { candidates: [] }; } });
+  for (const lesson of [pageUrl, pageUrl + '?lesson=2', pageUrl + '?lesson=3']) {
+    assert.equal((await handlers.get('engine:analyze')({ sender }, lesson)).ok, true);
+  }
+  assert.equal(hidden, 1);
+});
+
 test('without browser remote debugging, a page with no video reports notfoundPage', async () => {
   const handlers = mainHandlers({ analyze: async () => ({ ok: false, kind: 'notfound' }) },
     { findMedia: async () => { throw new Error('DevToolsActivePort missing'); } });

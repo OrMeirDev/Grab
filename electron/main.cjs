@@ -93,6 +93,7 @@ function createWindow() {
 ipcMain.handle('engine:version', () => engine.version());
 // When yt-dlp finds no video at the link, the link is often a page with its own small player:
 // look inside it the way DevTools would, and try the video addresses found there.
+const signedInSites = new Set(); // sites whose videos only the user's signed-in browser can see
 ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
   // forcePage: what yt-dlp found at the link didn't download, so go straight to the page's player.
   const first = forcePage ? { ok: false, kind: 'notfound', error: 'Unsupported URL' } : await engine.analyze(url);
@@ -101,7 +102,10 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
 
   // 1. A hidden, clean browser (no cookies or accounts): works on public pages with no setup.
   //    Only when yt-dlp found no video; a clean visit doesn't get past a login or a bot check.
-  if (first.kind === 'notfound') {
+  //    Skipped for a site where it already failed and the user's browser found the video, so a
+  //    batch of lessons from one course goes straight to the browser.
+  const host = (() => { try { return new URL(url).host; } catch { return ''; } })();
+  if (first.kind === 'notfound' && !signedInSites.has(host)) {
     phase('page');
     let hidden = { candidates: [] };
     try { hidden = await hiddenProbe.findMedia(url); } catch { /* fall through to the backup */ }
@@ -140,7 +144,10 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
     for (const c of probe.candidates) {
       const requestContext = c.requestContext;
       const r = await engine.analyze(c.url, { cookieFile, requestContext, referer: url, title: c.kind === 'embed' ? undefined : probe.title });
-      if (r.ok) return { ...r, mediaUrl: c.url, referer: requestContext?.referer || url, requestContext, cookieRef: probe.cookieRef };
+      if (r.ok) {
+        if (first.kind === 'notfound') signedInSites.add(host);
+        return { ...r, mediaUrl: c.url, referer: requestContext?.referer || url, requestContext, cookieRef: probe.cookieRef };
+      }
       last = r;
     }
     if (probe.protected) return { ok: false, kind: 'protected', error: 'DRM' };
