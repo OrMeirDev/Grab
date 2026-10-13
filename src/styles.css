@@ -106,7 +106,7 @@ h2 { font-size: 22px; font-weight: 600; display: flex; align-items: center; gap:
 .item-meta { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 15px; white-space: nowrap; }
 
 .item-status { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-.progress-wrap { width: 560px; max-width: 40vw; }
+.progress-wrap { width: 100%; max-width: 560px; }
 .progress-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; font-size: 14px; flex-direction: row-reverse; }
 .pct { color: var(--accent); font-weight: 600; font-size: 18px; }
 .progress { height: 6px; background: #ececf3; border-radius: 99px; overflow: hidden; direction: ltr; }
@@ -264,3 +264,30 @@ h2 { font-size: 22px; font-weight: 600; display: flex; align-items: center; gap:
 .guide-foot .btn-ghost { white-space: nowrap; flex-shrink: 0; }
 .guide-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .modal.guide .verdict { font-size: 13px; padding: 9px 12px; margin-bottom: 0; }
+
+/* Queue rows never overlap at any window size: the title keeps a minimum width and cuts off with
+   "…", the progress bar takes a share of the row instead of a fixed width, and long labels wrap
+   inside their own column. Nothing in a row paints outside its column. */
+.queue { overflow-x: hidden; }
+.queue-item { grid-template-columns: 24px 190px minmax(150px, 1fr) auto auto; }
+.queue-item.is-downloading { grid-template-columns: 24px 190px minmax(150px, 1fr) minmax(150px, 1fr) auto; }
+.item-info { min-width: 0; overflow: clip; overflow-clip-margin: 8px; }
+.item-info .item-name.muted { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item-meta { overflow: hidden; }
+.name-input { text-overflow: ellipsis; }
+.item-meta > span:not(.url) { overflow: hidden; text-overflow: ellipsis; }
+.item-status { max-width: 100%; }
+.item-status .pill { max-width: 100%; line-height: 1.35; }
+.item-status .pill-danger { border-radius: 14px; }
+.progress-top { gap: 10px; }
+.progress-top .muted { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.btn-primary.big { white-space: nowrap; }
+@media (max-width: 1150px) {
+  .queue-item { gap: 12px; grid-template-columns: 20px 140px minmax(130px, 1fr) auto auto; }
+  .queue-item.is-downloading { grid-template-columns: 20px 140px minmax(130px, 1fr) minmax(120px, 1fr) auto; }
+  .thumb { width: 140px; height: 62px; }
+  .item-name, .name-input { font-size: 17px; }
+  .item-meta { font-size: 13px; }
+  .summary { display: none; }
+  .segmented button { padding: 9px 16px; }
+}

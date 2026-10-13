@@ -175,7 +175,7 @@ function QueueItem({ item, index, actions, drag }) {
 
   return (
     <div
-      className={`queue-item ${drag.over === index ? 'drag-over' : ''}`}
+      className={`queue-item is-${item.status} ${drag.over === index ? 'drag-over' : ''}`}
       draggable
       onDragStart={() => drag.start(index)}
       onDragOver={(e) => { e.preventDefault(); drag.enter(index); }}
