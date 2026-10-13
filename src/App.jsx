@@ -2,8 +2,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Download, History, Folder, Settings, Home, ChevronLeft, ClipboardPaste, Sparkles, Link2,
   ArrowUpDown, GripVertical, FolderOpen, Check, Pause, Play, Clock, RotateCw, Trash2,
-  AlertTriangle, Unlink, Video, Music, ChevronDown, Settings2, Loader2, RefreshCw,
+  AlertTriangle, Unlink, Video, Music, Settings2, Loader2, RefreshCw,
 } from 'lucide-react';
+import GlassSelect from './glass-select.jsx';
 // The Grab name with its symbol on the right (vector, from the brand package).
 import brandLockup from './assets/brand/logo-lockup.svg';
 
@@ -640,10 +641,9 @@ export default function App() {
           </div>
           <label className="select">
             <Settings2 size={17} />
-            <select value={settings.quality} disabled={settings.format === 'mp3'} onChange={(e) => saveSettings({ quality: e.target.value })}>
+            <GlassSelect value={settings.quality} disabled={settings.format === 'mp3'} onChange={(e) => saveSettings({ quality: e.target.value })}>
               {QUALITIES.map((q) => <option key={q.value} value={q.value}>{q.label}</option>)}
-            </select>
-            <ChevronDown size={16} />
+            </GlassSelect>
           </label>
           <div className="action-main">
             <span className="muted summary">

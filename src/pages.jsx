@@ -3,6 +3,7 @@ import {
   FolderOpen, Play, RotateCcw, Trash2, Search, Film, Music, RefreshCw, Folder, History as HistoryIcon,
   X, CheckCircle2, XCircle, AlertTriangle, Copy, Loader2,
 } from 'lucide-react';
+import GlassSelect from './glass-select.jsx';
 
 const api = window.grab;
 
@@ -318,12 +319,12 @@ export function SettingsPage({ settings, onChange, version, engine, app, onSignI
         </div>
         <div className="setting">
           <div><div className="setting-title">איכות וידאו</div><div className="row-meta">"הגבוהה ביותר" מעדיפה פורמט שמתנגן בכל מכשיר (בדרך כלל עד 1080p)</div></div>
-          <select className="plain-select" value={settings.quality} onChange={(e) => onChange({ quality: e.target.value })}>
+          <GlassSelect className="plain-select" value={settings.quality} onChange={(e) => onChange({ quality: e.target.value })}>
             <option value="best">הגבוהה ביותר</option>
             <option value="1080">1080p</option>
             <option value="720">720p</option>
             <option value="480">480p</option>
-          </select>
+          </GlassSelect>
         </div>
         <div className="setting">
           <div>
