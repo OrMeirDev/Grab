@@ -241,6 +241,16 @@ ipcMain.handle('folder:choose', async () => {
 ipcMain.handle('folder:show', (_e, file) => shell.showItemInFolder(file));
 ipcMain.handle('folder:open', (_e, dir) => { fs.mkdirSync(dir, { recursive: true }); return shell.openPath(dir); });
 
+// One Grab at a time: opening it again brings the open window to the front instead.
+const focusMain = () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+};
+if (!app.requestSingleInstanceLock()) app.exit(0);
+app.on('second-instance', focusMain);
+
 app.whenReady().then(async () => {
   engine.setUserBinDir(path.join(app.getPath('userData'), 'bin'));
   await engine.reconcileEngine();

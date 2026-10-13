@@ -205,7 +205,7 @@ test('existing tab is not navigated, played or closed and network fallback survi
 
 function mainHandlers(engine, pageprobe, hiddenProbe = { findMedia: async () => ({ candidates: [] }) }) {
   const handlers = new Map();
-  const app = { getPath: () => os.tmpdir(), whenReady: () => ({ then() {} }), on() {} };
+  const app = { getPath: () => os.tmpdir(), whenReady: () => ({ then() {} }), on() {}, requestSingleInstanceLock: () => true };
   const updater = { on() {} };
   const sandbox = { require: (name) => {
     if (name === 'electron') return { app, ipcMain: { handle: (key, value) => handlers.set(key, value) } };
