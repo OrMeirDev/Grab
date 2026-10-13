@@ -10,6 +10,8 @@ const GROUPS = [
   { box: '.segmented', item: ':scope > button', on: '.on' },
   { box: '.cat-tabs', item: '.cat-tab', on: '.on' },
   { box: '.gmenu', item: '.gm-item', on: '.hl' },
+  { box: '.gcal-grid', item: '.gcal-day', on: '.sel' },
+  { box: '.gtime-col', item: '.gtime-cell', on: '.on' },
 ];
 
 const LEAD = '.3s cubic-bezier(.3, .8, .25, 1)';
@@ -31,6 +33,19 @@ function set(box, edges, timing) {
   }
 }
 
+// The item's box inside the group, from the layout itself (offsets), so a group that is still
+// scaling in (a menu opening) or scrolled doesn't throw the drop off. Rects only as a fallback.
+function edgesOf(box, item) {
+  if (item.offsetParent === box) {
+    return { t: item.offsetTop, b: item.offsetTop + item.offsetHeight, l: item.offsetLeft, r: item.offsetLeft + item.offsetWidth };
+  }
+  const hb = box.getBoundingClientRect();
+  const ib = item.getBoundingClientRect();
+  const x0 = hb.left + box.clientLeft - box.scrollLeft;
+  const y0 = hb.top + box.clientTop - box.scrollTop;
+  return { t: ib.top - y0, b: ib.bottom - y0, l: ib.left - x0, r: ib.right - x0 };
+}
+
 function place(box, item) {
   const prev = state.get(box);
   if (!item || !box.offsetWidth || !item.offsetWidth) {
@@ -38,11 +53,7 @@ function place(box, item) {
     if (prev) prev.gone = true;
     return;
   }
-  const hb = box.getBoundingClientRect();
-  const ib = item.getBoundingClientRect();
-  const x0 = hb.left + box.clientLeft - box.scrollLeft;
-  const y0 = hb.top + box.clientTop - box.scrollTop;
-  const next = { t: ib.top - y0, b: ib.bottom - y0, l: ib.left - x0, r: ib.right - x0 };
+  const next = edgesOf(box, item);
   const same = prev && !prev.gone && prev.item === item && ['t', 'b', 'l', 'r'].every((k) => Math.abs(prev[k] - next[k]) < 0.5);
   if (same) return;
   toggle(box, 'lg-ready', true);

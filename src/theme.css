@@ -297,3 +297,33 @@ h1 { font-size: 34px; }
 @keyframes gm-in-up { from { opacity: 0; transform: translateY(4px) scale(.94); } to { opacity: 1; transform: none; } }
 @keyframes gm-out { to { opacity: 0; transform: scale(.97); } }
 @media (prefers-reduced-motion: reduce) { .gmenu, .gmenu.closing { animation-duration: 1ms; } }
+
+/* ---- glass date and time pickers (glass-pickers.jsx) ---- */
+.gfield { gap: 10px; }
+.gfield-icon { flex-shrink: 0; opacity: .55; }
+.gpop { padding: 12px; overflow: visible; }
+.gcal { width: 286px; }
+.gcal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.gcal-head b { font-size: 15px; font-weight: 600; }
+.gcal-nav { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px; color: var(--muted); transition: background var(--ease), color var(--ease); }
+.gcal-nav:hover { background: rgba(var(--accent-rgb), .08); color: var(--accent); }
+.gcal-week, .gcal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+.gcal-week span { font-size: 11.5px; color: var(--muted); padding: 4px 0; }
+.gcal-day { height: 34px; border-radius: 10px; font-size: 13.5px; color: var(--text); font-variant-numeric: tabular-nums; transition: background var(--ease); }
+.gcal-day:hover { background: rgba(var(--accent-rgb), .07); }
+.gcal-day.out { color: #a7b1c2; }
+.gcal-day.today { color: var(--accent); font-weight: 700; }
+.gcal-day.sel { color: var(--accent); font-weight: 700; }
+.gcal-day.focus:not(.sel) { box-shadow: inset 0 0 0 1.5px rgba(var(--accent-rgb), .35); }
+.gcal-grid.lg-host::before { border-radius: 10px; }
+.gcal-foot { display: flex; justify-content: center; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.gcal-today { padding: 6px 16px; border-radius: 10px; font-size: 13px; font-weight: 600; color: var(--accent); }
+.gcal-today:hover { background: rgba(var(--accent-rgb), .08); }
+.gtime-cols { display: flex; align-items: center; gap: 6px; }
+.gtime-col { height: 236px; width: 64px; overflow-y: auto; padding: 2px; display: flex; flex-direction: column; gap: 2px; scroll-behavior: smooth; }
+.gtime-col::-webkit-scrollbar { width: 8px; }
+.gtime-cell { min-height: 32px; border-radius: 9px; font-size: 14px; color: var(--text); font-variant-numeric: tabular-nums; }
+.gtime-cell:hover { background: rgba(var(--accent-rgb), .07); }
+.gtime-cell.on { color: var(--accent); font-weight: 700; }
+.gtime-col.lg-host::before { border-radius: 9px; }
+.gtime-sep { font-size: 18px; font-weight: 700; color: var(--muted); }
