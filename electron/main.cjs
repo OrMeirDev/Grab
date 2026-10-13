@@ -97,7 +97,7 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
   // forcePage: what yt-dlp found at the link didn't download, so go straight to the page's player.
   const first = forcePage ? { ok: false, kind: 'notfound', error: 'Unsupported URL' } : await engine.analyze(url);
   if (first.ok || !['notfound', 'private', 'blocked', 'other'].includes(first.kind)) return first;
-  const phase = (p) => { if (!e.sender.isDestroyed()) e.sender.send('engine:lookup-phase', { url, phase: p }); };
+  const phase = (p, browserName) => { if (!e.sender.isDestroyed()) e.sender.send('engine:lookup-phase', { url, phase: p, browser: browserName }); };
 
   // 1. A hidden, clean browser (no cookies or accounts): works on public pages with no setup.
   //    Only when yt-dlp found no video; a clean visit doesn't get past a login or a bot check.
@@ -112,16 +112,24 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
     if (hidden.protected) return { ok: false, kind: 'protected', error: 'DRM' };
   }
 
-  // 2. Backup: the user's own Chrome, when its remote debugging is on. If it isn't, report what
-  //    the clean lookup found instead of a setup error.
-  phase('chrome');
+  // 2. Backup: the user's default browser, where they are signed in, when its remote debugging is
+  //    on. If it isn't, report what the clean lookup found, with how to turn it on.
+  const browser = browserSession.defaultBrowser();
+  phase('browser', browser.name);
+  const connect = () => browserSession.connectBrowser({ browser });
   let probe;
   try {
-    probe = await pageprobe.findMedia(url, { refresh: forcePage });
+    probe = await pageprobe.findMedia(url, { refresh: forcePage, connect });
     // A blob player may have loaded its manifest before attachment and discarded resource entries.
-    if (probe.reusedTab && !probe.candidates.length) probe = await pageprobe.findMedia(url, { refresh: true });
+    if (probe.reusedTab && !probe.candidates.length) probe = await pageprobe.findMedia(url, { refresh: true, connect });
   }
-  catch { return first.kind === 'notfound' ? { ...first, kind: 'notfoundPage' } : first; }
+  catch (err) {
+    if (err.kind === 'browserContext') return { ...first, kind: 'browserContext', browser: { name: browser.name } };
+    // The browser can't be reached (closed, debugging off, or not supported): say how to fix it.
+    const hint = ['browserSession', 'browserUnsupported'].includes(err.kind)
+      ? { browser: { name: browser.name, scheme: browser.scheme, supported: browser.supported !== false } } : {};
+    return first.kind === 'notfound' ? { ...first, kind: 'notfoundPage', ...hint } : { ...first, ...hint };
+  }
   return browserSession.withSessionCookies(probe.cookieRef, async (cookieFile) => {
     // An authenticated extractor may understand the page better than its embedded sources.
     if (!forcePage && ['private', 'blocked'].includes(first.kind)) {

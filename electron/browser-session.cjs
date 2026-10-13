@@ -4,25 +4,53 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
-const sessionError = (message, kind = 'browserSession') => Object.assign(new Error(message), { kind });
+// The user's default browser (where they are signed in). Chromium-based browsers all have the same
+// remote-debugging switch (<scheme>://inspect/#remote-debugging) and DevToolsActivePort file.
+const CHROME = { name: 'Chrome', scheme: 'chrome', dir: ['LOCALAPPDATA', 'Google', 'Chrome', 'User Data'] };
+const BROWSERS = [
+  [/^ChromeHTML/i, CHROME],
+  [/^MSEdge/i, { name: 'Edge', scheme: 'edge', dir: ['LOCALAPPDATA', 'Microsoft', 'Edge', 'User Data'] }],
+  [/^Brave/i, { name: 'Brave', scheme: 'brave', dir: ['LOCALAPPDATA', 'BraveSoftware', 'Brave-Browser', 'User Data'] }],
+  [/^Vivaldi/i, { name: 'Vivaldi', scheme: 'vivaldi', dir: ['LOCALAPPDATA', 'Vivaldi', 'User Data'] }],
+  [/^OperaGX/i, { name: 'Opera GX', scheme: 'opera', dir: ['APPDATA', 'Opera Software', 'Opera GX Stable'] }],
+  [/^Opera/i, { name: 'Opera', scheme: 'opera', dir: ['APPDATA', 'Opera Software', 'Opera Stable'] }],
+  [/^Chromium/i, { name: 'Chromium', scheme: 'chrome', dir: ['LOCALAPPDATA', 'Chromium', 'User Data'] }],
+  // Firefox no longer speaks the protocol used here, so it can't be used for a signed-in lookup.
+  [/^Firefox/i, { name: 'Firefox', supported: false }],
+];
 
-function activePortPath() {
-  if (process.platform === 'win32') {
-    if (!process.env.LOCALAPPDATA) throw sessionError('Chrome profile folder is unavailable');
-    return path.join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'User Data', 'DevToolsActivePort');
-  }
-  if (process.platform === 'darwin') return path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome', 'DevToolsActivePort');
-  return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'google-chrome', 'DevToolsActivePort');
+// Windows keeps the default browser as the ProgId of the https handler (e.g. "BraveHTML").
+function defaultBrowserId() {
+  if (process.platform !== 'win32') return '';
+  try {
+    const out = require('child_process').execFileSync('reg', ['query', 'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice', '/v', 'ProgId'], { encoding: 'utf8', windowsHide: true, timeout: 5000 });
+    return (out.match(/ProgId\s+REG_SZ\s+(\S+)/i) || [])[1] || '';
+  } catch { return ''; }
 }
 
-function readEndpoint(file = activePortPath()) {
+// { name, scheme, endpointFile } of the default browser; Chrome when it isn't known.
+function defaultBrowser(progId = defaultBrowserId()) {
+  const b = (BROWSERS.find(([re]) => re.test(progId)) || [, CHROME])[1];
+  if (b.supported === false) return { name: b.name, supported: false };
+  const info = { name: b.name, scheme: b.scheme };
+  if (process.platform === 'win32') {
+    const [env, ...rest] = b.dir;
+    if (process.env[env]) info.endpointFile = path.join(process.env[env], ...rest, 'DevToolsActivePort');
+  } else if (process.platform === 'darwin') info.endpointFile = path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome', 'DevToolsActivePort');
+  else info.endpointFile = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'google-chrome', 'DevToolsActivePort');
+  return info;
+}
+
+const sessionError = (message, kind = 'browserSession', browser) => Object.assign(new Error(message), { kind, browser });
+
+function readEndpoint(file, browser = { name: 'Chrome', scheme: 'chrome' }) {
   let content;
   try { content = fs.readFileSync(file, 'utf8'); }
-  catch { throw sessionError('Open Chrome and enable remote debugging at chrome://inspect/#remote-debugging'); }
+  catch { throw sessionError(`Open ${browser.name} and enable remote debugging at ${browser.scheme}://inspect/#remote-debugging`, 'browserSession', browser); }
   const [rawPort, endpointPath] = content.trim().split(/\r?\n/);
   const port = Number(rawPort);
   if (!Number.isInteger(port) || port < 1 || port > 65535 || !endpointPath?.startsWith('/devtools/browser/')) {
-    throw sessionError('Chrome debugging endpoint is invalid');
+    throw sessionError(`${browser.name} debugging endpoint is invalid`, 'browserSession', browser);
   }
   return `ws://127.0.0.1:${port}${endpointPath}`;
 }
@@ -47,7 +75,7 @@ class CdpClient extends EventEmitter {
       } else if (message.method) this.emit('event', message);
     });
     const disconnected = () => {
-      for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(sessionError('Chrome disconnected')); }
+      for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(sessionError('Browser disconnected')); }
       this.pending.clear();
       this.emit('disconnected');
     };
@@ -58,7 +86,7 @@ class CdpClient extends EventEmitter {
   get connected() { return this.socket.readyState === 1; }
 
   send(method, params = {}, sessionId, timeoutMs = 15000) {
-    if (!this.connected) return Promise.reject(sessionError('Chrome disconnected'));
+    if (!this.connected) return Promise.reject(sessionError('Browser disconnected'));
     return new Promise((resolve, reject) => {
       const id = ++this.nextId;
       const timer = setTimeout(() => {
@@ -76,18 +104,22 @@ class CdpClient extends EventEmitter {
 
 let client = null;
 let connecting = null;
-async function connectExistingChrome({ endpointFile } = {}) {
-  if (client?.connected) return client;
+// Connects to the user's default browser (or the one given, for tests). The file is left behind
+// when the browser closes, so a refused connection means "open the browser", same as no file.
+async function connectBrowser({ endpointFile, browser = endpointFile ? { name: 'Chrome', scheme: 'chrome', endpointFile } : defaultBrowser() } = {}) {
+  if (browser.supported === false) throw sessionError(`${browser.name} is not supported for signed-in lookup`, 'browserUnsupported', browser);
+  if (client?.connected && client.browser.name === browser.name) return client;
+  if (client?.connected) client.disconnect();
   if (connecting) return connecting;
   connecting = (async () => {
     const WebSocket = require('ws');
-    const socket = new WebSocket(readEndpoint(endpointFile), { handshakeTimeout: 60000, perMessageDeflate: false });
+    const socket = new WebSocket(readEndpoint(browser.endpointFile, browser), { handshakeTimeout: 60000, perMessageDeflate: false });
     await new Promise((resolve, reject) => {
       const done = (error) => {
         socket.removeListener('open', opened);
         socket.removeListener('error', failed);
         socket.removeListener('close', failed);
-        if (error) reject(sessionError('Could not connect to Chrome; enable remote debugging and allow the connection'));
+        if (error) reject(sessionError(`Could not connect to ${browser.name}; open it, enable remote debugging and allow the connection`, 'browserSession', browser));
         else resolve();
       };
       const opened = () => done();
@@ -98,7 +130,8 @@ async function connectExistingChrome({ endpointFile } = {}) {
     });
     const connected = new CdpClient(socket);
     try { await connected.send('Browser.getVersion', {}, undefined, 60000); }
-    catch (error) { connected.disconnect(); throw sessionError(error.message); }
+    catch (error) { connected.disconnect(); throw sessionError(error.message, 'browserSession', browser); }
+    connected.browser = browser;
     client = connected;
     connected.once('disconnected', () => { if (client === connected) client = null; });
     return connected;
@@ -107,7 +140,7 @@ async function connectExistingChrome({ endpointFile } = {}) {
 }
 
 // Reuse the requested page if it is open. Otherwise create only a background tab
-// in the matching existing context; never launch Chrome or create a fresh context.
+// in the matching existing context; never launch the browser or create a fresh context.
 async function chooseTarget(cdp, pageUrl, { refresh = false } = {}) {
   const wanted = new URL(pageUrl);
   const { targetInfos = [] } = await cdp.send('Target.getTargets');
@@ -162,4 +195,4 @@ function disconnectBrowser() {
   for (const dir of activeCookieDirs) fs.rmSync(dir, { recursive: true, force: true });
   activeCookieDirs.clear();
 }
-module.exports = { connectExistingChrome, chooseTarget, rememberCookies, withSessionCookies, disconnectBrowser, CdpClient, readEndpoint };
+module.exports = { connectBrowser, defaultBrowser, chooseTarget, rememberCookies, withSessionCookies, disconnectBrowser, CdpClient, readEndpoint };

@@ -1,7 +1,7 @@
-// Find embedded media in the user's existing Chrome session. No new browser
+// Find embedded media in the user's default browser (its existing session). No new browser
 // profile or Grab sign-in window is created.
 const browserSession = require('./browser-session.cjs');
-const { collectorScript } = require('./media-collector.cjs');
+const { collectorScript, isNotPlayer } = require('./media-collector.cjs');
 
 const FILE = /\.(mp4|webm|mov|m4v|mkv|mp3|m4a|ogg|opus|wav|flac|aac)(\?|#|$)/i;
 const MANIFEST = /\.(m3u8|mpd)(\?|#|$)/i;
@@ -11,7 +11,7 @@ const ADS = /doubleclick|googlesyndication|googleads|imasdk|adnxs|adsystem|adver
 const LICENSE = /widevine|playready|fairplay|\/license/i;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect = browserSession.connectExistingChrome } = {}) {
+async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect = browserSession.connectBrowser } = {}) {
   const page = new URL(pageUrl);
   if (!/^https?:$/.test(page.protocol)) throw new Error('Unsupported page URL');
   const cdp = await connect();
@@ -113,7 +113,7 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
           if (r.drm) drm = true;
           if (context.frameId === mainFrameId && r.title) title = r.title;
           r.media.forEach((url) => add(url, { fromPlayer: true, referer: r.pageUrl || pageUrl }));
-          r.embeds.forEach((url) => { if (/^https?:/i.test(url) && !ADS.test(url)) embeds.add(url); });
+          r.embeds.forEach((url) => { if (/^https?:/i.test(url) && !ADS.test(url) && !isNotPlayer(url)) embeds.add(url); });
         } catch { diagnostics.scanErrors++; }
       }));
       // An unrelated iframe does not stop lookup. Allow newly loaded players to settle.

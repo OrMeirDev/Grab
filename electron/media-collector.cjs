@@ -64,4 +64,14 @@ function collectInPage({ startPlayback = true } = {}) {
 }
 
 const collectorScript = (options = {}) => `(${collectInPage.toString()})(${JSON.stringify(options)})`;
-module.exports = { collectInPage, collectorScript };
+// Frames that are never a video player: payments, captchas, fraud checks, sign-in buttons, chat
+// widgets, analytics and cookie banners. Trying them only wastes the lookup's time.
+const NOT_PLAYER_HOST = /(^|\.)(stripe\.com|stripe\.network|stripecdn\.com|hcaptcha\.com|recaptcha\.net|sardine\.ai|paypal\.com|braintreegateway\.com|adyen\.com|challenges\.cloudflare\.com|accounts\.google\.com|appleid\.apple\.com|googletagmanager\.com|google-analytics\.com|intercom\.io|intercomcdn\.com|crisp\.chat|zdassets\.com|zendesk\.com|hotjar\.com|onetrust\.com|cookielaw\.org|cookiebot\.com)$/i;
+const isNotPlayer = (url) => {
+  try {
+    const u = new URL(url);
+    return NOT_PLAYER_HOST.test(u.hostname) || (/(^|\.)google\.com$/i.test(u.hostname) && u.pathname.startsWith('/recaptcha'));
+  } catch { return true; }
+};
+
+module.exports = { collectInPage, collectorScript, isNotPlayer };

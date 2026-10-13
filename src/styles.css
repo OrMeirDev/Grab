@@ -104,6 +104,7 @@ h2 { font-size: 22px; font-weight: 600; display: flex; align-items: center; gap:
 .duration { position: absolute; bottom: 6px; left: 8px; background: rgba(0,0,0,.65); padding: 2px 7px; border-radius: 5px; font-size: 14px; font-weight: 600; }
 .item-name { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
 .item-meta { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 15px; white-space: nowrap; }
+.error-hint { margin-top: 3px; color: var(--danger); font-size: 12px; line-height: 1.35; user-select: text; }
 
 .item-status { min-width: 0; }
 .progress-wrap { width: 560px; max-width: 40vw; }

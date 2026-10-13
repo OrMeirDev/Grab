@@ -1,10 +1,10 @@
 // First look inside a page's player: open the page the way a browser would, hidden and muted, in
 // a fresh in-memory session (no cookies or accounts, nothing saved), and collect the video
 // addresses its player uses: video elements, the stream requests it makes, embedded players.
-// Works on public pages with no setup. The user's own Chrome (pageprobe.cjs) is only the backup.
+// Works on public pages with no setup. The user's default browser (pageprobe.cjs) is only the backup.
 // A DRM-protected player is reported, never touched.
 const { BrowserWindow, session } = require('electron');
-const { collectorScript } = require('./media-collector.cjs');
+const { collectorScript, isNotPlayer } = require('./media-collector.cjs');
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 const FILE = /\.(mp4|webm|mov|m4v|mkv|mp3|m4a|ogg|opus|wav|flac|aac)(\?|#|$)/i;
@@ -62,7 +62,7 @@ async function findMedia(pageUrl, { timeoutMs = 20000 } = {}) {
         if (r.drm) drm = true;
         if (frame === win.webContents.mainFrame && r.title) title = r.title;
         r.media.forEach((u) => add(u, { fromPlayer: true }));
-        r.embeds.forEach((u) => { if (/^https?:/i.test(u) && !ADS.test(u)) embeds.add(u); });
+        r.embeds.forEach((u) => { if (/^https?:/i.test(u) && !ADS.test(u) && !isNotPlayer(u)) embeds.add(u); });
       } catch { /* frame went away */ }
     }
   };

@@ -39,10 +39,15 @@ const ERROR_LABELS = {
   protected: 'הסרטון מוגן בהגנת העתקה (DRM), ואי אפשר להוריד אותו',
   unavailable: 'הסרטון הוסר או לא זמין',
   network: 'אין חיבור לאינטרנט',
-  browserSession: 'צריך לפתוח Chrome, להפעיל remote debugging ב־chrome://inspect/#remote-debugging ולאשר את החיבור',
-  browserContext: 'העמוד פתוח בכמה סשנים של Chrome; השאר אותו פתוח בסשן שבו אתה מחובר',
+  browserContext: 'העמוד פתוח בכמה סשנים של הדפדפן; השאר אותו פתוח בסשן שבו אתה מחובר',
 };
-const errorLabel = (kind, fallback) => ERROR_LABELS[kind] || fallback;
+const errorLabel = (kind, fallback, browser) => (kind === 'browserContext' && browser
+  ? `העמוד פתוח בכמה סשנים של ${browser.name}; השאר אותו פתוח בסשן שבו אתה מחובר`
+  : ERROR_LABELS[kind] || fallback);
+// Shown under the error when the page may need a sign-in and the default browser couldn't be reached.
+const browserHint = (kind, b) => (!b || kind === 'browserContext' ? '' : b.supported === false
+  ? `חיפוש עם התחברות עובד רק בדפדפן מבוסס Chromium, ו־${b.name} אינו כזה`
+  : `אם צריך התחברות: פתח את ${b.name} שבו אתה מחובר, הפעל remote debugging ב־${b.scheme}://inspect/#remote-debugging ונסה שוב`);
 const LOOKUP_GAP_MS = 2000; // plus up to the same again at random
 const DOWNLOAD_REST_MS = 5000; // 5–10 seconds between YouTube downloads
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -192,7 +197,7 @@ function QueueItem({ item, index, actions, drag }) {
         )}
       </div>
       <div className="item-info">
-        {analyzing ? <div className="item-name muted">{waiting ? (item.label || 'ממתין לזיהוי') : item.phase === 'page' ? 'מחפש את הסרטון בתוך הנגן שבעמוד…' : item.phase === 'chrome' ? 'מנסה דרך Chrome שלך…' : 'מזהה סרטון…'}</div> : (
+        {analyzing ? <div className="item-name muted">{waiting ? (item.label || 'ממתין לזיהוי') : item.phase === 'page' ? 'מחפש את הסרטון בתוך הנגן שבעמוד…' : item.phase === 'browser' ? `מנסה דרך ${item.phaseBrowser || 'הדפדפן'} שלך…` : 'מזהה סרטון…'}</div> : (
           <input
             className="item-name name-input"
             value={item.name}
@@ -205,6 +210,7 @@ function QueueItem({ item, index, actions, drag }) {
             ? (<><span className="url" dir="ltr">{item.url}</span> <Link2 size={13} /></>)
             : (<><SiteMark site={item.site} /> <span>{meta}</span></>)}
         </div>
+        {isError && item.errorHint && <div className="error-hint">{item.errorHint}</div>}
       </div>
 
       <div className="item-status">
@@ -296,8 +302,8 @@ export default function App() {
     api.appVersion?.().then(setAppVersion);
     const offUpdate = api.onAppUpdate ? api.onAppUpdate(setAppUpdate) : null;
     // "Looking inside the page's player": shown on the item while that slower search runs.
-    const offPhase = api.onLookupPhase ? api.onLookupPhase(({ url, phase }) => {
-      setQueue((q) => q.map((x) => (x.url === url && x.status === 'analyzing' ? { ...x, phase } : x)));
+    const offPhase = api.onLookupPhase ? api.onLookupPhase(({ url, phase, browser }) => {
+      setQueue((q) => q.map((x) => (x.url === url && x.status === 'analyzing' ? { ...x, phase, phaseBrowser: browser } : x)));
     }) : null;
     const offProgress = api.onProgress(({ id, percent, speed, eta }) => {
       update(id, { progress: percent, speed, eta: eta && eta !== 'NA' && eta !== 'Unknown' ? eta : '' });
@@ -331,7 +337,7 @@ export default function App() {
   // forcePage: go straight to looking inside the page's player (after a download from what
   // yt-dlp found at the link failed). autoQueue: download right away once found.
   const analyzeOne = useCallback(async (id, url, label, { forcePage = false, autoQueue = false } = {}) => {
-    update(id, { status: 'analyzing', error: null, errorLabel: null, phase: forcePage ? 'page' : null });
+    update(id, { status: 'analyzing', error: null, errorLabel: null, errorHint: null, phase: forcePage ? 'page' : null });
     let info;
     try { info = await api.analyze(url, { forcePage }); }
     catch (error) { info = { ok: false, error: error.message }; }
@@ -341,7 +347,7 @@ export default function App() {
         triggerBlock(siteKey(url));
         return;
       }
-      update(id, { status: 'error', error: info.error, errorLabel: errorLabel(info.kind, 'לא נמצא סרטון בקישור'), analyzeFailed: true });
+      update(id, { status: 'error', error: info.error, errorLabel: errorLabel(info.kind, 'לא נמצא סרטון בקישור', info.browser), errorHint: browserHint(info.kind, info.browser), analyzeFailed: true });
       return;
     }
     update(id, (x) => ({

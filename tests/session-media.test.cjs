@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const browser = require('../electron/browser-session.cjs');
-const { collectorScript } = require('../electron/media-collector.cjs');
+const { collectorScript, isNotPlayer } = require('../electron/media-collector.cjs');
 const { findMedia } = require('../electron/pageprobe.cjs');
 
 const pageUrl = 'https://courses.example/lesson';
@@ -284,7 +284,32 @@ test('the hidden clean browser is tried first; Chrome is not touched when it fin
   assert.equal(chrome, 0);
 });
 
-test('without Chrome remote debugging, a page with no video reports notfoundPage', async () => {
+test('the signed-in lookup uses the default browser: Chromium browsers by their own profile, Firefox is reported', { skip: process.platform !== 'win32' }, () => {
+  const brave = browser.defaultBrowser('BraveHTML');
+  assert.equal(brave.name, 'Brave');
+  assert.equal(brave.scheme, 'brave');
+  assert.match(brave.endpointFile, /BraveSoftware[\\/]Brave-Browser[\\/]User Data[\\/]DevToolsActivePort$/);
+  assert.match(browser.defaultBrowser('MSEdgeHTM').endpointFile, /Microsoft[\\/]Edge[\\/]User Data/);
+  assert.equal(browser.defaultBrowser('OperaGXStable').name, 'Opera GX');
+  assert.deepEqual(browser.defaultBrowser('FirefoxURL-308046B0AF4A39CB'), { name: 'Firefox', supported: false });
+  assert.equal(browser.defaultBrowser('SomethingElse').name, 'Chrome');
+});
+
+test('payment, captcha and tracking frames are not tried as players; video embeds are', () => {
+  for (const u of ['https://js.stripe.com/v3/m-outer.html', 'https://newassets.hcaptcha.com/captcha/v1/x/hcaptcha.html', 'https://api.sardine.ai/assets/collector.html', 'https://www.google.com/recaptcha/api2/anchor', 'https://challenges.cloudflare.com/turnstile/v0/x']) assert.equal(isNotPlayer(u), true, u);
+  for (const u of ['https://player.vimeo.com/video/1', 'https://www.youtube.com/embed/x', 'https://iframe.mediadelivery.net/embed/1/2', 'https://www.facebook.com/plugins/video.php?href=x', 'https://www.google.com/maps/embed']) assert.equal(isNotPlayer(u), false, u);
+});
+
+test('when the default browser can\'t be reached, the error says which browser and how to turn it on', async () => {
+  const handlers = mainHandlers({ analyze: async () => ({ ok: false, kind: 'notfound' }) },
+    { findMedia: async () => { throw Object.assign(new Error('closed'), { kind: 'browserSession' }); } });
+  const result = await handlers.get('engine:analyze')({ sender }, pageUrl);
+  assert.equal(result.kind, 'notfoundPage');
+  assert.equal(typeof result.browser.name, 'string');
+  assert.equal(result.browser.supported, true);
+});
+
+test('without browser remote debugging, a page with no video reports notfoundPage', async () => {
   const handlers = mainHandlers({ analyze: async () => ({ ok: false, kind: 'notfound' }) },
     { findMedia: async () => { throw new Error('DevToolsActivePort missing'); } });
   assert.equal((await handlers.get('engine:analyze')({ sender }, pageUrl)).kind, 'notfoundPage');
@@ -335,7 +360,7 @@ test('connects through the live endpoint WebSocket, shares the connection and ne
   try {
     fs.writeFileSync(endpointFile, server.address().port + '\n/devtools/browser/session\n');
     const [first, second] = await Promise.all([
-      browser.connectExistingChrome({ endpointFile }), browser.connectExistingChrome({ endpointFile }),
+      browser.connectBrowser({ endpointFile }), browser.connectBrowser({ endpointFile }),
     ]);
     assert.equal(first, second);
     assert.equal(connections, 1);
