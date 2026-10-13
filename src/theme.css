@@ -1,0 +1,220 @@
+/* ============================================================================================
+   Design 2026: pearl canvas, frosted-glass surfaces with a fine lit edge, restrained shadows and
+   one accent color per app. Shared by Grab, Morph and Tune; only the accent block differs.
+   Loaded after styles.css, so it restyles the existing components without touching their logic.
+   ============================================================================================ */
+:root { --accent: #7444E8; --accent-rgb: 116, 68, 232; }
+
+:root {
+  --bg: #f4f8fe;
+  --card: rgba(255, 255, 255, .78);
+  --border: rgba(119, 160, 217, .25);
+  --text: #132039;
+  --muted: #56657c;
+  --accent-soft: rgba(var(--accent-rgb), .10);
+  --radius: 24px;
+  --glass: rgba(255, 255, 255, .78);
+  --glass-strong: rgba(255, 255, 255, .9);
+  --edge: rgba(255, 255, 255, .96);
+  --shadow-panel: 0 10px 30px rgba(42, 84, 140, .08);
+  --shadow-control: 0 3px 10px rgba(42, 84, 140, .06);
+  --font-ui: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', Arial, sans-serif;
+  --font-display: 'Segoe UI Variable Display', 'Segoe UI Variable', 'Segoe UI', Arial, sans-serif;
+  --ease: 160ms ease;
+}
+
+/* ---- canvas: pearl, with two soft pools of the accent light ---- */
+body {
+  font-family: var(--font-ui);
+  color: var(--text);
+  background:
+    radial-gradient(900px 520px at 18% 12%, rgba(var(--accent-rgb), .07), transparent 60%),
+    radial-gradient(760px 520px at 78% 92%, rgba(var(--accent-rgb), .06), transparent 62%),
+    linear-gradient(180deg, #f7faff 0%, #eef3fb 100%);
+  background-attachment: fixed;
+}
+.main { background: transparent; }
+h1 { font-family: var(--font-display); font-weight: 650; letter-spacing: -.2px; color: var(--text); }
+h2 { font-family: var(--font-display); font-weight: 650; color: var(--text); }
+.subtitle, .muted, .row-meta, .dmeta, .item-meta { color: var(--muted); }
+
+/* ---- the glass surface every card, panel and list row uses ---- */
+.card, .panel, .ocard, .settings, .stat, .queue-item, .row, .file-row, .tool-card, .drop-zone, .modal,
+.empty, .list > .row, .search, .action-bar > .segmented, .action-bar > .select, .update-banner {
+  background: var(--glass);
+  border: 1px solid var(--border);
+  box-shadow: inset 0 1px 0 var(--edge), var(--shadow-panel);
+  backdrop-filter: blur(14px);
+}
+.card, .panel, .ocard, .settings, .tool-card, .drop-zone { border-radius: 24px; }
+.queue-item, .row, .file-row, .stat { border-radius: 20px; }
+.modal { border-radius: 26px; background: var(--glass-strong); box-shadow: inset 0 1px 0 var(--edge), 0 30px 70px rgba(30, 50, 90, .22); }
+.modal-backdrop { background: rgba(28, 40, 66, .32); backdrop-filter: blur(3px); }
+.panel-title, .group-title { background: rgba(255, 255, 255, .72); backdrop-filter: blur(12px); }
+.drow { border-bottom-color: rgba(119, 160, 217, .14); }
+
+/* ---- sidebar: frosted, the brand lockup on top, rounded navigation ---- */
+.sidebar {
+  background: rgba(255, 255, 255, .55);
+  border-inline-start: 1px solid var(--border);
+  box-shadow: inset 1px 0 0 var(--edge);
+  backdrop-filter: blur(18px);
+}
+.brand { direction: ltr; justify-content: center; margin-bottom: 26px; }
+.brand-lockup { display: block; height: 42px; width: auto; max-width: 180px; user-select: none; -webkit-user-drag: none; }
+.nav-item {
+  min-height: 48px; border-radius: 18px; border: 1px solid transparent; color: #26334d;
+  transition: background var(--ease), border-color var(--ease), box-shadow var(--ease);
+}
+.nav-item svg { color: #3b4a66; }
+.nav-item:hover { background: rgba(255, 255, 255, .7); }
+.nav-item.active {
+  color: var(--accent); font-weight: 600;
+  background: rgba(var(--accent-rgb), .10);
+  border-color: rgba(var(--accent-rgb), .16);
+  box-shadow: inset 0 1px 0 #fff, 0 4px 14px rgba(var(--accent-rgb), .08);
+}
+.nav-item.active svg { color: var(--accent); }
+
+/* ---- buttons and fields: 44px, radius 14, lit edge ---- */
+.btn-primary {
+  min-height: 44px; border-radius: 14px; color: #fff; font-weight: 600;
+  background: linear-gradient(180deg, rgba(var(--accent-rgb), .84), var(--accent));
+  border: 1px solid rgba(var(--accent-rgb), .6);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 6px 18px rgba(var(--accent-rgb), .28);
+  transition: box-shadow var(--ease), transform var(--ease), filter var(--ease);
+}
+.btn-primary:hover:not(:disabled) { filter: brightness(1.05); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4), 0 8px 22px rgba(var(--accent-rgb), .34); }
+.btn-primary:active:not(:disabled) { transform: translateY(1px); }
+.btn-primary:disabled { opacity: .43; box-shadow: none; }
+.action-bar > .btn-primary { background: linear-gradient(180deg, rgba(var(--accent-rgb), .84), var(--accent)); }
+.btn-ghost, .icon-btn, .update-link {
+  border-radius: 14px; background: var(--glass-strong); border: 1px solid var(--border);
+  box-shadow: inset 0 1px 0 var(--edge), var(--shadow-control);
+  transition: box-shadow var(--ease), background var(--ease), transform var(--ease);
+}
+.btn-ghost { min-height: 40px; }
+.btn-ghost:hover:not(:disabled), .icon-btn:hover:not(:disabled) { background: #fff; box-shadow: inset 0 1px 0 var(--edge), 0 5px 16px rgba(var(--accent-rgb), .13); }
+.btn-ghost:active:not(:disabled), .icon-btn:active:not(:disabled) { transform: translateY(1px); }
+.icon-btn.accent { color: var(--accent); background: rgba(var(--accent-rgb), .10); border-color: rgba(var(--accent-rgb), .18); }
+.icon-btn.danger { border-color: rgba(229, 72, 77, .22); }
+.icon-btn.passive, .icon-btn.ghost { box-shadow: none; }
+textarea, .search, .plain-select, .unit-input, input[type=text], input[type=search], select {
+  border-radius: 14px;
+}
+textarea, .plain-select, .unit-input {
+  background: var(--glass-strong); border: 1px solid var(--border); box-shadow: inset 0 1px 0 #fff;
+}
+textarea:focus, .unit-input:focus, .plain-select:focus { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(var(--accent-rgb), .12); outline: none; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* ---- chips, pills, badges, segmented controls ---- */
+.site-chip, .count-chip, .pill, .badge, .score, .chip, .dir-chip, .tool-chip, .group-chip, .cat-tab, .src {
+  border-radius: 999px;
+}
+.site-chip, .group-chip, .cat-tab {
+  background: var(--glass-strong); border: 1px solid var(--border); box-shadow: inset 0 1px 0 var(--edge), var(--shadow-control);
+}
+.count-chip, .badge, .more-sites { background: rgba(var(--accent-rgb), .10); color: var(--accent); border: 1px solid rgba(var(--accent-rgb), .14); }
+.cat-tab.on { background: var(--accent); color: #fff; border-color: transparent; box-shadow: 0 4px 12px rgba(var(--accent-rgb), .3); }
+.segmented { border-radius: 16px; border: 1px solid var(--border); background: var(--glass-strong); box-shadow: inset 0 1px 0 var(--edge), var(--shadow-control); }
+.segmented button { border-radius: 12px; }
+.segmented button.on {
+  color: var(--accent); background: rgba(var(--accent-rgb), .10);
+  border: 1px solid rgba(var(--accent-rgb), .3); box-shadow: inset 0 1px 0 #fff;
+}
+.select { border-radius: 16px; }
+.toggle.on { background: var(--accent); }
+.nav-badge { background: rgba(var(--accent-rgb), .12); color: var(--accent); }
+
+/* ---- lists and tables keep fine dividers and a clear hover ---- */
+.queue-item:hover, .row:hover, .file-row:hover { box-shadow: inset 0 1px 0 var(--edge), 0 12px 30px rgba(42, 84, 140, .1); }
+.thumb, .row-icon, .dicon, .kind-icon { border-radius: 14px; }
+.row-icon, .dicon { background: rgba(var(--accent-rgb), .08); color: var(--accent); box-shadow: inset 0 1px 0 #fff; }
+.dicon.warn { background: #fff4e0; color: #b45309; }
+.dicon.good { background: rgba(var(--accent-rgb), .10); color: var(--accent); }
+.empty { border-style: solid; border-radius: 24px; }
+
+/* ---- small details ---- */
+.ltr-value { direction: ltr; unicode-bidi: isolate; font-variant-numeric: tabular-nums; }
+.stat b, .pct, .score b, .badge { font-variant-numeric: tabular-nums; }
+::-webkit-scrollbar-thumb { background: rgba(var(--accent-rgb), .22); border: 4px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background-color: rgba(var(--accent-rgb), .4); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; }
+}
+@supports not (backdrop-filter: blur(1px)) {
+  .card, .panel, .ocard, .settings, .stat, .queue-item, .row, .file-row, .tool-card, .modal, .sidebar { background: #fbfdff; }
+}
+
+/* ---- proportions from the mockups ---- */
+.sidebar { width: 272px; padding: 26px 18px; }
+.brand { margin-bottom: 22px; }
+.brand-lockup { height: 52px; max-width: 210px; }
+nav { gap: 6px; }
+.nav-item { font-size: 16.5px; padding: 11px 16px; }
+.nav-item svg { width: 21px; height: 21px; }
+h1 { font-size: 34px; }
+.subtitle { font-size: 15.5px; }
+.breadcrumbs { font-size: 14px; }
+
+/* ---- empty states: the icon sits in a soft glass circle above the text ---- */
+.empty { gap: 12px; padding: 34px 24px; color: var(--muted); }
+.empty > svg:first-child {
+  width: 64px; height: 64px; padding: 18px; border-radius: 50%; color: var(--accent);
+  background: radial-gradient(circle at 50% 35%, #fff, rgba(var(--accent-rgb), .08));
+  border: 1px solid rgba(var(--accent-rgb), .14);
+  box-shadow: inset 0 1px 0 #fff, 0 8px 22px rgba(var(--accent-rgb), .14);
+}
+
+/* ---- the big drop area when nothing has been added yet (Morph) ---- */
+.drop-zone.hero { display: block; padding: 22px; text-align: center; border: 1px solid var(--border); background: var(--glass); }
+.drop-zone.hero:hover { background: rgba(255, 255, 255, .86); }
+.drop-zone.hero.dragging { border-color: var(--accent); background: rgba(var(--accent-rgb), .08); }
+.drop-inner {
+  display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 22px 16px;
+  border: 1.5px dashed rgba(var(--accent-rgb), .22); border-radius: 18px;
+}
+.drop-art { position: relative; width: 92px; height: 86px; margin-bottom: 4px; }
+.drop-art i {
+  position: absolute; width: 64px; height: 76px; border-radius: 14px;
+  background: linear-gradient(160deg, rgba(255, 255, 255, .95), rgba(var(--accent-rgb), .28));
+  border: 1px solid rgba(var(--accent-rgb), .25); box-shadow: 0 8px 20px rgba(var(--accent-rgb), .18);
+}
+.drop-art i:nth-child(1) { left: 26px; top: 0; transform: rotate(10deg); opacity: .7; }
+.drop-art i:nth-child(2) { left: 18px; top: 3px; transform: rotate(4deg); opacity: .85; }
+.drop-art i:nth-child(3) { left: 8px; top: 8px; display: flex; align-items: center; justify-content: center; color: var(--accent); background: linear-gradient(160deg, #fff, rgba(var(--accent-rgb), .2)); }
+.drop-zone.hero .drop-title { font-size: 21px; font-weight: 650; }
+.drop-or { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; }
+.drop-or::before, .drop-or::after { content: ''; width: 46px; height: 1px; background: rgba(119, 160, 217, .35); }
+.drop-pick { min-width: 210px; justify-content: center; display: inline-flex; align-items: center; gap: 10px; padding: 0 26px; font-size: 16px; }
+.drop-kinds { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 6px; }
+.drop-kinds span {
+  padding: 6px 16px; border-radius: 999px; font-size: 13.5px; color: #3b4a66;
+  background: var(--glass-strong); border: 1px solid var(--border); box-shadow: inset 0 1px 0 #fff;
+}
+@media (max-height: 800px) {
+  .drop-inner { gap: 6px; padding: 12px; }
+  .drop-art { transform: scale(.72); margin: -10px 0 -12px; }
+  .drop-zone.hero .drop-title { font-size: 18px; }
+  .drop-kinds { display: none; }
+}
+
+/* ---- narrow windows: a slimmer sidebar, and long list lines end with "…" instead of
+        running into the buttons beside them ---- */
+@media (max-width: 1150px) {
+  .sidebar { width: 236px; padding: 22px 14px; }
+  .brand-lockup { height: 46px; }
+  .nav-item { font-size: 15.5px; }
+}
+.row-info, .file-info, .item-info { min-width: 0; }
+.row-name, .row-meta, .file-name, .file-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- the navigation sits in one glass panel (Tune splits it into a panel per group) ---- */
+.sidebar > nav, .nav-panel {
+  padding: 6px; border-radius: 22px; gap: 4px;
+  background: rgba(255, 255, 255, .5); border: 1px solid var(--border);
+  box-shadow: inset 0 1px 0 var(--edge), 0 10px 26px rgba(40, 70, 120, .06);
+}
+.sidebar > nav:has(.nav-panel) { padding: 0; background: none; border: 0; box-shadow: none; }
