@@ -6,6 +6,7 @@
   "main": "electron/main.cjs",
   "private": true,
   "scripts": {
+    "test": "node --test",
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV=1 electron .\"",
     "build": "vite build",
     "start": "electron .",
@@ -80,6 +81,7 @@
     }
   },
   "dependencies": {
-    "electron-updater": "^6.8.9"
+    "electron-updater": "^6.8.9",
+    "ws": "^8.22.0"
   }
 }
