@@ -192,7 +192,7 @@ function QueueItem({ item, index, actions, drag }) {
         )}
       </div>
       <div className="item-info">
-        {analyzing ? <div className="item-name muted">{waiting ? (item.label || 'ממתין לזיהוי') : item.phase === 'page' ? 'מחפש את הסרטון בתוך הנגן שבעמוד…' : 'מזהה סרטון…'}</div> : (
+        {analyzing ? <div className="item-name muted">{waiting ? (item.label || 'ממתין לזיהוי') : item.phase === 'page' ? 'מחפש את הסרטון בתוך הנגן שבעמוד…' : item.phase === 'chrome' ? 'מנסה דרך Chrome שלך…' : 'מזהה סרטון…'}</div> : (
           <input
             className="item-name name-input"
             value={item.name}

@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const engine = require('./engine.cjs');
 const pageprobe = require('./pageprobe.cjs');
+const hiddenProbe = require('./hidden-probe.cjs');
 const browserSession = require('./browser-session.cjs');
 const { autoUpdater } = require('electron-updater');
 
@@ -96,14 +97,31 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
   // forcePage: what yt-dlp found at the link didn't download, so go straight to the page's player.
   const first = forcePage ? { ok: false, kind: 'notfound', error: 'Unsupported URL' } : await engine.analyze(url);
   if (first.ok || !['notfound', 'private', 'blocked', 'other'].includes(first.kind)) return first;
-  if (!e.sender.isDestroyed()) e.sender.send('engine:lookup-phase', { url, phase: 'page' });
+  const phase = (p) => { if (!e.sender.isDestroyed()) e.sender.send('engine:lookup-phase', { url, phase: p }); };
+
+  // 1. A hidden, clean browser (no cookies or accounts): works on public pages with no setup.
+  //    Only when yt-dlp found no video; a clean visit doesn't get past a login or a bot check.
+  if (first.kind === 'notfound') {
+    phase('page');
+    let hidden = { candidates: [] };
+    try { hidden = await hiddenProbe.findMedia(url); } catch { /* fall through to the backup */ }
+    for (const c of hidden.candidates.slice(0, 4)) {
+      const r = await engine.analyze(c.url, { referer: url, title: c.kind === 'embed' ? undefined : hidden.title });
+      if (r.ok) return { ...r, mediaUrl: c.url, referer: url };
+    }
+    if (hidden.protected) return { ok: false, kind: 'protected', error: 'DRM' };
+  }
+
+  // 2. Backup: the user's own Chrome, when its remote debugging is on. If it isn't, report what
+  //    the clean lookup found instead of a setup error.
+  phase('chrome');
   let probe;
   try {
     probe = await pageprobe.findMedia(url, { refresh: forcePage });
     // A blob player may have loaded its manifest before attachment and discarded resource entries.
     if (probe.reusedTab && !probe.candidates.length) probe = await pageprobe.findMedia(url, { refresh: true });
   }
-  catch (error) { return { ok: false, kind: error.kind || 'browserSession', error: error.message }; }
+  catch { return first.kind === 'notfound' ? { ...first, kind: 'notfoundPage' } : first; }
   return browserSession.withSessionCookies(probe.cookieRef, async (cookieFile) => {
     // An authenticated extractor may understand the page better than its embedded sources.
     if (!forcePage && ['private', 'blocked'].includes(first.kind)) {

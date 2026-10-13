@@ -203,7 +203,7 @@ test('existing tab is not navigated, played or closed and network fallback survi
   assert.equal(cdp.listenerCount('event'), 0);
 });
 
-function mainHandlers(engine, pageprobe) {
+function mainHandlers(engine, pageprobe, hiddenProbe = { findMedia: async () => ({ candidates: [] }) }) {
   const handlers = new Map();
   const app = { getPath: () => os.tmpdir(), whenReady: () => ({ then() {} }), on() {} };
   const updater = { on() {} };
@@ -212,6 +212,7 @@ function mainHandlers(engine, pageprobe) {
     if (name === 'electron-updater') return { autoUpdater: updater };
     if (name === './engine.cjs') return engine;
     if (name === './pageprobe.cjs') return pageprobe;
+    if (name === './hidden-probe.cjs') return hiddenProbe;
     if (name === './browser-session.cjs') return browser;
     return require(name);
   }, process, console, setTimeout, setInterval, __dirname: path.join(__dirname, '../electron') };
@@ -270,6 +271,23 @@ test('a tab with only an old blob is rescanned in a background tab, without relo
   });
   assert.equal((await handlers.get('engine:analyze')({ sender }, pageUrl)).ok, true);
   assert.deepEqual(options.map((o) => o.refresh), [false, true]);
+});
+
+test('the hidden clean browser is tried first; Chrome is not touched when it finds the video', async () => {
+  let chrome = 0;
+  const handlers = mainHandlers({ analyze: async (url, options) => (url === manifest ? { ok: true, title: 'Lesson', referer: options.referer } : { ok: false, kind: 'notfound' }) },
+    { findMedia: async () => { chrome++; return { candidates: [] }; } },
+    { findMedia: async () => ({ title: 'Lesson', candidates: [{ url: manifest, kind: 'stream' }] }) });
+  const result = await handlers.get('engine:analyze')({ sender }, pageUrl);
+  assert.equal(result.ok, true);
+  assert.equal(result.mediaUrl, manifest);
+  assert.equal(chrome, 0);
+});
+
+test('without Chrome remote debugging, a page with no video reports notfoundPage', async () => {
+  const handlers = mainHandlers({ analyze: async () => ({ ok: false, kind: 'notfound' }) },
+    { findMedia: async () => { throw new Error('DevToolsActivePort missing'); } });
+  assert.equal((await handlers.get('engine:analyze')({ sender }, pageUrl)).kind, 'notfoundPage');
 });
 
 test('authentication errors retry the original extractor with active-session cookies', async () => {
