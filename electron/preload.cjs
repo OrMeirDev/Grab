@@ -4,6 +4,8 @@ contextBridge.exposeInMainWorld('grab', {
   version: () => ipcRenderer.invoke('engine:version'),
   analyze: (url, opts) => ipcRenderer.invoke('engine:analyze', url, opts),
   extractors: () => ipcRenderer.invoke('engine:extractors'),
+  defaultBrowser: () => ipcRenderer.invoke('browser:default'),
+  checkBrowser: () => ipcRenderer.invoke('browser:check'),
   updateEngine: () => ipcRenderer.invoke('engine:update'),
   appVersion: () => ipcRenderer.invoke('app:version'),
   checkAppUpdate: () => ipcRenderer.invoke('update:check'),

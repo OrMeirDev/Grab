@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   FolderOpen, Play, RotateCcw, Trash2, Search, Film, Music, RefreshCw, Folder, History as HistoryIcon,
-  X, CheckCircle2, XCircle, AlertTriangle,
+  X, CheckCircle2, XCircle, AlertTriangle, Copy, Loader2,
 } from 'lucide-react';
 
 const api = window.grab;
@@ -142,6 +142,70 @@ function searchTerms(query) {
   return host[1].toLowerCase().split('.').filter((p) => p.length >= 3 && !SKIP_LABELS.has(p)).map(norm);
 }
 
+// For a link to a page (a course lesson, a members' area) rather than to the video itself: Grab
+// looks through the user's own default browser, where they are already signed in. Written for
+// people who know nothing about computers: one line of why, four short steps, a check button.
+export function SignInGuideModal({ onClose }) {
+  const [browser, setBrowser] = useState(null);
+  const [check, setCheck] = useState(null); // 'checking' | 'ok' | 'fail'
+  const [copied, setCopied] = useState(false);
+  useEffect(() => { api.defaultBrowser?.().then(setBrowser).catch(() => {}); }, []);
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const name = browser?.name || 'הדפדפן';
+  const address = `${browser?.scheme || 'chrome'}://inspect/#remote-debugging`;
+  const copy = () => navigator.clipboard.writeText(address).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }).catch(() => {});
+  const test = async () => {
+    setCheck('checking');
+    const r = await api.checkBrowser().catch(() => ({ ok: false }));
+    setCheck(r.ok ? 'ok' : 'fail');
+  };
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal guide" role="dialog" aria-label="הורדה מאתר שצריך להתחבר אליו">
+        <div className="modal-head">
+          <h2>הורדה מאתר שצריך להתחבר אליו</h2>
+          <button className="icon-btn" title="סגור" onClick={onClose}><X size={18} /></button>
+        </div>
+        <p className="guide-why">
+          כשהקישור הוא לשיעור או לעמוד באתר, ולא לסרטון עצמו, Grab צריך לראות את העמוד כמו שאתה רואה אותו.
+          לכן הוא נעזר ב־{name}, שבו אתה כבר מחובר.
+        </p>
+        {browser?.supported === false ? (
+          <div className="verdict warn"><AlertTriangle size={18} /> זה עובד רק עם Chrome,‏ Edge,‏ Brave או Opera. כדי להשתמש בזה, הגדר אחד מהם כדפדפן ברירת המחדל.</div>
+        ) : (<>
+          <ol className="guide-steps">
+            <li>פתח את {name} והתחבר לאתר.</li>
+            <li>
+              הדבק בשורת הכתובת של {name} את הכתובת הזו ולחץ Enter:
+              <span className="guide-address">
+                <code dir="ltr">{address}</code>
+                <button className="btn-ghost small" onClick={copy}><Copy size={14} /> {copied ? 'הועתק' : 'העתק'}</button>
+              </span>
+            </li>
+            <li>סמן בדף שנפתח את התיבה Allow remote debugging.</li>
+            <li>חזור ל־Grab ונסה שוב. אם {name} שואל אם לאשר, לחץ אישור.</li>
+          </ol>
+          <div className="guide-foot">
+            <span className="row-meta">{name} צריך להיות פתוח. אם זה הפסיק לעבוד אחרי שסגרת אותו, חזור על שלבים 2–3.</span>
+            <button className="btn-ghost" onClick={test} disabled={check === 'checking'}>
+              {check === 'checking' ? <Loader2 size={16} className="spin" /> : null} בדוק חיבור
+            </button>
+          </div>
+          {check === 'checking' && <div className="verdict warn"><AlertTriangle size={18} /> אם {name} שואל אם לאשר את החיבור, לחץ אישור.</div>}
+          {check === 'ok' && <div className="verdict ok"><CheckCircle2 size={18} /> מחובר ל־{name}. אפשר להדביק את הקישור.</div>}
+          {check === 'fail' && <div className="verdict no"><XCircle size={18} /> עדיין אין חיבור. ודא ש־{name} פתוח, שהתיבה מסומנת ושאישרת.</div>}
+        </>)}
+      </div>
+    </div>
+  );
+}
+
 export function SitesModal({ sites, error, onRetry, onClose }) {
   const [q, setQ] = useState('');
   useEffect(() => {
@@ -227,7 +291,7 @@ function appUpdateMessage(status) {
   }
 }
 
-export function SettingsPage({ settings, onChange, version, engine, app }) {
+export function SettingsPage({ settings, onChange, version, engine, app, onSignInGuide }) {
   const checking = engine?.state?.status === 'checking';
   const failed = engine?.state?.result && !engine.state.result.ok;
   const choose = async () => {
@@ -260,6 +324,13 @@ export function SettingsPage({ settings, onChange, version, engine, app }) {
             <option value="720">720p</option>
             <option value="480">480p</option>
           </select>
+        </div>
+        <div className="setting">
+          <div>
+            <div className="setting-title">הורדה מאתר שצריך להתחבר אליו</div>
+            <div className="row-meta">כשהקישור הוא לשיעור או לעמוד באתר, ולא לסרטון עצמו. הגדרה חד־פעמית בדפדפן.</div>
+          </div>
+          <button className="btn-ghost" onClick={onSignInGuide}>מדריך קצר</button>
         </div>
         <div className="setting">
           <div>

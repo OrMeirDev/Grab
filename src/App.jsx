@@ -5,7 +5,7 @@ import {
   AlertTriangle, Unlink, Video, Music, ChevronDown, Settings2, Loader2, RefreshCw,
 } from 'lucide-react';
 import { siYoutube, siVimeo, siInstagram, siTiktok } from 'simple-icons';
-import { HistoryPage, LibraryPage, SettingsPage, SitesModal } from './pages.jsx';
+import { HistoryPage, LibraryPage, SettingsPage, SitesModal, SignInGuideModal } from './pages.jsx';
 
 const api = window.grab;
 
@@ -44,10 +44,6 @@ const ERROR_LABELS = {
 const errorLabel = (kind, fallback, browser) => (kind === 'browserContext' && browser
   ? `העמוד פתוח בכמה סשנים של ${browser.name}; השאר אותו פתוח בסשן שבו אתה מחובר`
   : ERROR_LABELS[kind] || fallback);
-// Shown under the error when the page may need a sign-in and the default browser couldn't be reached.
-const browserHint = (kind, b) => (!b || kind === 'browserContext' ? '' : b.supported === false
-  ? `חיפוש עם התחברות עובד רק בדפדפן מבוסס Chromium, ו־${b.name} אינו כזה`
-  : `אם צריך התחברות: פתח את ${b.name} שבו אתה מחובר, הפעל remote debugging ב־${b.scheme}://inspect/#remote-debugging ונסה שוב`);
 const LOOKUP_GAP_MS = 2000; // plus up to the same again at random
 const DOWNLOAD_REST_MS = 5000; // 5–10 seconds between YouTube downloads
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -210,7 +206,6 @@ function QueueItem({ item, index, actions, drag }) {
             ? (<><span className="url" dir="ltr">{item.url}</span> <Link2 size={13} /></>)
             : (<><SiteMark site={item.site} /> <span>{meta}</span></>)}
         </div>
-        {isError && item.errorHint && <div className="error-hint">{item.errorHint}</div>}
       </div>
 
       <div className="item-status">
@@ -229,6 +224,7 @@ function QueueItem({ item, index, actions, drag }) {
         {item.status === 'done' && <span className="pill pill-success"><Check size={15} /> הושלם</span>}
         {item.status === 'queued' && <span className="pill">בתור</span>}
         {isError && <span className="pill pill-danger" title={item.error}><AlertTriangle size={15} /> {item.errorLabel || 'לא נמצא סרטון בקישור'}</span>}
+        {isError && item.signInHint && <button className="link-btn" onClick={actions.signInGuide}>האתר דורש התחברות? כך מורידים ממנו</button>}
       </div>
 
       <div className="item-actions">
@@ -272,6 +268,7 @@ export default function App() {
   const [sites, setSites] = useState(null);
   const [sitesError, setSitesError] = useState(false);
   const [sitesOpen, setSitesOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
 
   // Never leave the sites window spinning: any failure turns into an error with a retry button.
   const loadSites = useCallback(async () => {
@@ -337,7 +334,7 @@ export default function App() {
   // forcePage: go straight to looking inside the page's player (after a download from what
   // yt-dlp found at the link failed). autoQueue: download right away once found.
   const analyzeOne = useCallback(async (id, url, label, { forcePage = false, autoQueue = false } = {}) => {
-    update(id, { status: 'analyzing', error: null, errorLabel: null, errorHint: null, phase: forcePage ? 'page' : null });
+    update(id, { status: 'analyzing', error: null, errorLabel: null, signInHint: false, phase: forcePage ? 'page' : null });
     let info;
     try { info = await api.analyze(url, { forcePage }); }
     catch (error) { info = { ok: false, error: error.message }; }
@@ -347,7 +344,7 @@ export default function App() {
         triggerBlock(siteKey(url));
         return;
       }
-      update(id, { status: 'error', error: info.error, errorLabel: errorLabel(info.kind, 'לא נמצא סרטון בקישור', info.browser), errorHint: browserHint(info.kind, info.browser), analyzeFailed: true });
+      update(id, { status: 'error', error: info.error, errorLabel: errorLabel(info.kind, 'לא נמצא סרטון בקישור', info.browser), signInHint: !!info.browser && info.kind !== 'browserContext', analyzeFailed: true });
       return;
     }
     update(id, (x) => ({
@@ -502,6 +499,7 @@ export default function App() {
       setQueue((q) => q.filter((x) => x.id !== id));
     },
     show: (item) => (item.file ? api.showFile(item.file) : api.openFolder(settings.folder)),
+    signInGuide: () => setGuideOpen(true),
   };
 
   const dragFrom = useRef(null);
@@ -550,6 +548,7 @@ export default function App() {
           <SettingsPage
             settings={settings} onChange={saveSettings} version={version} engine={engine}
             app={{ version: appVersion, status: appUpdate, check: checkAppUpdate }}
+            onSignInGuide={() => setGuideOpen(true)}
           />
         )}
 
@@ -557,7 +556,10 @@ export default function App() {
         <header className="page-header">
           <div>
             <h1>הורדה חדשה</h1>
-            <p className="subtitle">מדביקים קישורים. אנחנו דואגים לשאר.</p>
+            <p className="subtitle">
+              מדביקים קישורים. אנחנו דואגים לשאר.{' '}
+              <button className="link-btn" onClick={() => setGuideOpen(true)}>קישור לשיעור באתר שצריך להתחבר אליו?</button>
+            </p>
           </div>
           <button className="icon-btn big" title="הדבק מהלוח" onClick={pasteFromClipboard}>
             <ClipboardPaste size={20} />
@@ -659,6 +661,7 @@ export default function App() {
         </>)}
       </main>
       {sitesOpen && <SitesModal sites={sites} error={sitesError} onRetry={loadSites} onClose={() => setSitesOpen(false)} />}
+      {guideOpen && <SignInGuideModal onClose={() => setGuideOpen(false)} />}
     </div>
   );
 }

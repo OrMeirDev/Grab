@@ -148,6 +148,15 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
     return { ...first, kind: 'notfoundPage' };
   });
 });
+// The sign-in guide names the user's own browser and can check that Grab reaches it.
+ipcMain.handle('browser:default', () => {
+  const b = browserSession.defaultBrowser();
+  return { name: b.name, scheme: b.scheme, supported: b.supported !== false };
+});
+ipcMain.handle('browser:check', async () => {
+  try { await browserSession.connectBrowser({ browser: browserSession.defaultBrowser() }); return { ok: true }; }
+  catch (err) { return { ok: false, kind: err.kind }; }
+});
 ipcMain.handle('engine:extractors', () => engine.extractors());
 ipcMain.handle('engine:update', () => {
   // Windows can't replace yt-dlp.exe while a download is using it.

@@ -104,9 +104,8 @@ h2 { font-size: 22px; font-weight: 600; display: flex; align-items: center; gap:
 .duration { position: absolute; bottom: 6px; left: 8px; background: rgba(0,0,0,.65); padding: 2px 7px; border-radius: 5px; font-size: 14px; font-weight: 600; }
 .item-name { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
 .item-meta { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 15px; white-space: nowrap; }
-.error-hint { margin-top: 3px; color: var(--danger); font-size: 12px; line-height: 1.35; user-select: text; }
 
-.item-status { min-width: 0; }
+.item-status { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .progress-wrap { width: 560px; max-width: 40vw; }
 .progress-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; font-size: 14px; flex-direction: row-reverse; }
 .pct { color: var(--accent); font-weight: 600; font-size: 18px; }
@@ -252,3 +251,16 @@ h2 { font-size: 22px; font-weight: 600; display: flex; align-items: center; gap:
 /* Link counter: a small status chip, same scale as the site chips beside it. */
 .count-chip { font-size: 14px; font-weight: 500; padding: 7px 14px; gap: 6px; }
 .count-chip svg { width: 14px; height: 14px; }
+/* Sign-in guide: one line of why, four short steps, a connection check. */
+.link-btn { background: none; border: none; padding: 0; color: var(--accent); font-size: 13px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.item-status .link-btn { font-size: 12px; padding-inline: 6px; }
+.modal.guide { width: min(560px, 100%); }
+.modal.guide h2 { font-size: 19px; }
+.guide-why { font-size: 14px; line-height: 1.6; margin: 0 0 12px; }
+.guide-steps { margin: 0 0 14px; padding-inline-start: 20px; font-size: 14px; line-height: 1.6; display: grid; gap: 6px; }
+.guide-address { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.guide-address code { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 4px 8px; font-size: 13px; user-select: all; }
+.btn-ghost.small { padding: 4px 10px; font-size: 13px; border-radius: 8px; gap: 5px; }
+.guide-foot .btn-ghost { white-space: nowrap; flex-shrink: 0; }
+.guide-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.modal.guide .verdict { font-size: 13px; padding: 9px 12px; margin-bottom: 0; }
