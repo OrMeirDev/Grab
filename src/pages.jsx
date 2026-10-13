@@ -198,7 +198,7 @@ export function SignInGuideModal({ onClose }) {
             </button>
           </div>
           {check === 'checking' && <div className="verdict warn"><AlertTriangle size={18} /> אם {name} שואל אם לאשר את החיבור, לחץ אישור.</div>}
-          {check === 'ok' && <div className="verdict ok"><CheckCircle2 size={18} /> מחובר ל־{name}. אפשר להדביק את הקישור.</div>}
+          {check === 'ok' && <div className="verdict ok"><CheckCircle2 size={18} /> מחובר ל־{name}. אפשר לסגור את החלון ולהדביק ב־Grab את הקישור לסרטון.</div>}
           {check === 'fail' && <div className="verdict no"><XCircle size={18} /> עדיין אין חיבור. ודא ש־{name} פתוח, שהתיבה מסומנת ושאישרת.</div>}
         </>)}
       </div>
