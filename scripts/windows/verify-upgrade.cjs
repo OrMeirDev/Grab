@@ -47,11 +47,13 @@ const grabRunning = () => /grab\.exe/i.test(execFileSync('tasklist', ['/FI', 'IM
 
 // The per-user install electron-builder's NSIS installer registers (HKCU uninstall key).
 function installed() {
-  const json = ps("Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' | Where-Object { $_.DisplayName -like 'Grab*' } | Select-Object DisplayName, DisplayVersion, InstallLocation | ConvertTo-Json -Compress");
+  const json = ps("Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' | Where-Object { $_.DisplayName -like 'Grab*' } | Select-Object DisplayName, DisplayVersion, InstallLocation, UninstallString | ConvertTo-Json -Compress");
   const entry = json ? [].concat(JSON.parse(json))[0] : null;
   if (!entry) return null;
-  const exe = path.join(entry.InstallLocation, 'Grab.exe');
-  return { name: entry.DisplayName, version: entry.DisplayVersion, dir: entry.InstallLocation, exe, fileVersion: fs.existsSync(exe) ? ps(`(Get-Item '${exe}').VersionInfo.ProductVersion`) : null };
+  // InstallLocation is not always written; the uninstaller sits in the install folder.
+  const dir = entry.InstallLocation || path.dirname((entry.UninstallString || '').match(/^"([^"]+)"|^(\S+)/)?.slice(1).find(Boolean) || '');
+  const exe = path.join(dir, 'Grab.exe');
+  return { name: entry.DisplayName, version: entry.DisplayVersion, dir, exe, uninstall: entry.UninstallString, fileVersion: fs.existsSync(exe) ? ps(`(Get-Item '${exe}').VersionInfo.ProductVersion`) : null };
 }
 
 async function install(file) {
