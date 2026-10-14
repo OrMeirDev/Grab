@@ -8,8 +8,14 @@
 // headers. DRM-protected players are reported as such, never touched.
 //
 // Dependencies are injected (engine, probes, browser session) so this is testable without Electron.
+const { budget } = require('../domain/candidate-policy.cjs');
 
-function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession }) {
+// A lookup checks candidates until this much time has passed since it started (each check is
+// also bounded by the engine's own deadline), so one page with many dead sources can't hold the
+// queue for long.
+const LOOKUP_BUDGET_MS = 6 * 60 * 1000;
+
+function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession, now = () => Date.now() }) {
   // Sites whose videos only the user's signed-in browser could see: later links from them skip
   // the hidden browser, so a batch of lessons from one course goes straight to the browser.
   const signedInSites = new Set();
@@ -17,6 +23,8 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
   // onPhase(phase, browserName): 'page' (looking inside the player) or 'browser' (using the
   // user's browser). signal: AbortSignal that cancels the lookup.
   async function analyze(url, { forcePage = false, onPhase = () => {}, signal } = {}) {
+    const deadline = now() + LOOKUP_BUDGET_MS;
+    const outOfTime = () => signal?.aborted || now() > deadline;
     // forcePage: what yt-dlp found at the link didn't download, so go straight to the page's player.
     const first = forcePage ? { ok: false, kind: 'notfound', error: 'Unsupported URL' } : await engine.analyze(url, { signal });
     if (first.ok || !['notfound', 'private', 'blocked', 'other'].includes(first.kind)) return first;
@@ -29,8 +37,9 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
       onPhase('page');
       let hidden = { candidates: [] };
       try { hidden = await hiddenProbe.findMedia(url); } catch { /* fall through to the backup */ }
-      const found = await tryCandidates(hidden, url, { signal });
+      const found = await tryCandidates(hidden, url, { signal, outOfTime });
       if (found) return found;
+      browserSession.forgetCookies?.(hidden.cookieRef);
       if (hidden.protected) return { ok: false, kind: 'protected', error: 'DRM' };
     }
     if (signal?.aborted) return { ok: false, kind: 'cancelled', error: 'cancelled' };
@@ -59,8 +68,9 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
         if (authenticated.ok) return { ...authenticated, cookieRef: probe.cookieRef, requestContext: probe.requestContext };
       }
       let last;
-      for (const c of probe.candidates) {
+      for (const c of budget(probe.candidates)) {
         if (signal?.aborted) return { ok: false, kind: 'cancelled', error: 'cancelled' };
+        if (outOfTime()) break;
         const requestContext = c.requestContext;
         const r = await engine.analyze(c.url, { cookieFile, requestContext, referer: url, title: c.kind === 'embed' ? undefined : probe.title, signal });
         if (r.ok) {
@@ -75,14 +85,20 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
     });
   }
 
-  // The hidden browser's candidates, checked in rank order.
-  async function tryCandidates(hidden, url, { signal }) {
-    for (const c of hidden.candidates.slice(0, 4)) {
-      if (signal?.aborted) return null;
-      const r = await engine.analyze(c.url, { referer: url, title: c.kind === 'embed' ? undefined : hidden.title, signal });
-      if (r.ok) return { ...r, mediaUrl: c.url, referer: url };
-    }
-    return null;
+  // The hidden browser's candidates, checked in rank order (up to the candidate budget, not just
+  // the first few), each with the request context and cookies its player used.
+  async function tryCandidates(hidden, url, { signal, outOfTime }) {
+    const candidates = budget(hidden.candidates || []);
+    if (!candidates.length) return null;
+    return browserSession.withSessionCookies(hidden.cookieRef, async (cookieFile) => {
+      for (const c of candidates) {
+        if (outOfTime()) return null;
+        const requestContext = c.requestContext;
+        const r = await engine.analyze(c.url, { cookieFile, requestContext, referer: url, title: c.kind === 'embed' ? undefined : hidden.title, signal });
+        if (r.ok) return { ...r, mediaUrl: c.url, referer: requestContext?.referer || url, requestContext: requestContext || null, cookieRef: hidden.cookieRef || null };
+      }
+      return null;
+    });
   }
 
   return { analyze };

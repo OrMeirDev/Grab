@@ -2,7 +2,7 @@ const { EventEmitter } = require('events');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const crypto = require('crypto');
+const { CookieVault } = require('./infrastructure/cookie-vault.cjs');
 
 // The user's default browser (where they are signed in). Chromium-based browsers all have the same
 // remote-debugging switch (<scheme>://inspect/#remote-debugging) and DevToolsActivePort file.
@@ -108,12 +108,16 @@ let connecting = null;
 // when the browser closes, so a refused connection means "open the browser", same as no file.
 async function connectBrowser({ endpointFile, browser = endpointFile ? { name: 'Chrome', scheme: 'chrome', endpointFile } : defaultBrowser() } = {}) {
   if (browser.supported === false) throw sessionError(`${browser.name} is not supported for signed-in lookup`, 'browserUnsupported', browser);
-  if (client?.connected && client.browser.name === browser.name) return client;
+  // A connection is reused only for the same endpoint: the same profile folder and the same
+  // running browser (its DevToolsActivePort changes when the browser restarts). Two browsers, or two
+  // profiles of one browser, never share a connection by name (GRB-13).
+  const endpoint = readEndpoint(browser.endpointFile, browser);
+  if (client?.connected && client.endpoint === endpoint) return client;
+  if (connecting && connecting.endpoint === endpoint) return connecting;
   if (client?.connected) client.disconnect();
-  if (connecting) return connecting;
-  connecting = (async () => {
+  const pending = (async () => {
     const WebSocket = require('ws');
-    const socket = new WebSocket(readEndpoint(browser.endpointFile, browser), { handshakeTimeout: 60000, perMessageDeflate: false });
+    const socket = new WebSocket(endpoint, { handshakeTimeout: 60000, perMessageDeflate: false });
     await new Promise((resolve, reject) => {
       const done = (error) => {
         socket.removeListener('open', opened);
@@ -132,11 +136,14 @@ async function connectBrowser({ endpointFile, browser = endpointFile ? { name: '
     try { await connected.send('Browser.getVersion', {}, undefined, 60000); }
     catch (error) { connected.disconnect(); throw sessionError(error.message, 'browserSession', browser); }
     connected.browser = browser;
+    connected.endpoint = endpoint;
     client = connected;
     connected.once('disconnected', () => { if (client === connected) client = null; });
     return connected;
   })();
-  try { return await connecting; } finally { connecting = null; }
+  pending.endpoint = endpoint;
+  connecting = pending;
+  try { return await pending; } finally { if (connecting === pending) connecting = null; }
 }
 
 // Reuse the requested page if it is open. Otherwise create only a background tab
@@ -159,43 +166,18 @@ async function chooseTarget(cdp, pageUrl, { refresh = false } = {}) {
   return { targetId, created: true };
 }
 
-const cookieSnapshots = new Map();
-const activeCookieDirs = new Set();
-function rememberCookies(cookies) {
-  const reference = crypto.randomUUID();
-  cookieSnapshots.set(reference, { cookies, at: Date.now() });
-  for (const [key, value] of cookieSnapshots) if (Date.now() - value.at > 24 * 60 * 60 * 1000) cookieSnapshots.delete(key);
-  return reference;
-}
-
-async function withSessionCookies(reference, work) {
-  const snapshot = cookieSnapshots.get(reference);
-  if (!snapshot?.cookies.length) return work(undefined);
-  const lines = snapshot.cookies.filter((c) => ![c.domain, c.path, c.name, c.value].some((v) => /[\t\r\n]/.test(v || ''))).map((c) => [
-    (c.httpOnly ? '#HttpOnly_' : '') + c.domain,
-    c.domain.startsWith('.') ? 'TRUE' : 'FALSE', c.path || '/',
-    c.secure ? 'TRUE' : 'FALSE', c.session || c.expires < 0 ? 0 : Math.floor(c.expires || 0), c.name, c.value,
-  ].join('\t'));
-  if (!lines.length) return work(undefined);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-cookies-'));
-  activeCookieDirs.add(dir);
-  const file = path.join(dir, 'cookies.txt');
-  try {
-    fs.writeFileSync(file, '# Netscape HTTP Cookie File\n' + lines.join('\n') + '\n', { mode: 0o600 });
-    return await work(file);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-    activeCookieDirs.delete(dir);
-  }
-}
+// The page cookies captured by a lookup, behind opaque handles (see infrastructure/cookie-vault.cjs).
+const vault = new CookieVault();
+const rememberCookies = (cookies) => vault.remember(cookies);
+const withSessionCookies = (reference, work) => vault.withJar(reference, work);
 
 // A job that no longer needs its page's cookies (finished, removed, looked up again).
-function forgetCookies(reference) { cookieSnapshots.delete(reference); }
+function forgetCookies(reference) { vault.forget(reference); }
 
+// Called on app shutdown: the connection, every cookie snapshot and every jar, even while a
+// download is being cancelled.
 function disconnectBrowser() {
   if (client) client.disconnect();
-  // Called on app shutdown, including while a download is being cancelled.
-  for (const dir of activeCookieDirs) fs.rmSync(dir, { recursive: true, force: true });
-  activeCookieDirs.clear();
+  vault.clear();
 }
-module.exports = { connectBrowser, defaultBrowser, chooseTarget, rememberCookies, withSessionCookies, forgetCookies, disconnectBrowser, CdpClient, readEndpoint };
+module.exports = { connectBrowser, defaultBrowser, chooseTarget, rememberCookies, withSessionCookies, forgetCookies, disconnectBrowser, scavengeCookieJars: () => vault.scavenge(), CdpClient, readEndpoint };

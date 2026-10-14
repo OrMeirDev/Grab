@@ -2,13 +2,7 @@
 // profile or Grab sign-in window is created.
 const browserSession = require('./browser-session.cjs');
 const { collectorScript, isNotPlayer } = require('./media-collector.cjs');
-
-const FILE = /\.(mp4|webm|mov|m4v|mkv|mp3|m4a|ogg|opus|wav|flac|aac)(\?|#|$)/i;
-const MANIFEST = /\.(m3u8|mpd)(\?|#|$)/i;
-const MEDIA_TYPE = /^(video\/|audio\/|application\/(vnd\.apple\.mpegurl|x-mpegurl|dash\+xml))/i;
-const SEGMENT = /\.(ts|m4s)(\?|#|$)|[/_-](seg|segment|chunk|frag)[-_]?\d|init[-_]?\d*\.mp4/i;
-const ADS = /doubleclick|googlesyndication|googleads|imasdk|adnxs|adsystem|advert|\/ads?\//i;
-const LICENSE = /widevine|playready|fairplay|\/license/i;
+const { classify, unconfirmedPlayerSources, rankMedia, playerEmbeds, isLicenseRequest, isMediaType } = require('./domain/candidate-policy.cjs');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect = browserSession.connectBrowser } = {}) {
@@ -23,7 +17,7 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
   const failed = new Set();
   const requests = new Map();
   const initializations = new Set();
-  const diagnostics = { framesScanned: 0, playersSeen: 0, scanErrors: 0 };
+  const diagnostics = { framesScanned: 0, playersSeen: 0, scanErrors: 0, rejected: {} };
   let rootSessionId;
   let mainFrameId;
   let title = '';
@@ -31,10 +25,17 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
   let userAgent = '';
   let lastNewSource = Date.now();
 
+  // Addresses a player element points at (see hidden-probe.cjs): an extensionless one is only
+  // recognized by its response type, and then still counts as the player's own source.
+  const playerSources = new Set();
   const add = (url, { type = '', size = 0, fromPlayer = false, referer = pageUrl, requestContext } = {}) => {
-    if (typeof url !== 'string' || !/^https?:/i.test(url) || ADS.test(url) || SEGMENT.test(url) || /mp2t|iso\.segment/i.test(type)) return;
-    const kind = MANIFEST.test(url) || /mpegurl|dash/i.test(type) ? 'stream' : FILE.test(url) || /^(video|audio)\//i.test(type) ? 'file' : null;
-    if (!kind) return;
+    if (fromPlayer && typeof url === 'string') playerSources.add(url);
+    const verdict = classify(url, type);
+    if (!verdict.kind) {
+      if (verdict.reject !== 'not-media') diagnostics.rejected[verdict.reject] = (diagnostics.rejected[verdict.reject] || 0) + 1;
+      return;
+    }
+    const { kind } = verdict;
     const previous = found.get(url);
     requestContext = requestContext || requests.get(url) || previous?.requestContext;
     if (!previous) lastNewSource = Date.now();
@@ -77,12 +78,12 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
       const h = Object.fromEntries(Object.entries(d.request?.headers || {}).map(([key, value]) => [key.toLowerCase(), value]));
       const requestContext = { userAgent: h['user-agent'] || userAgent, referer: h.referer || d.documentURL || pageUrl, origin: h.origin || undefined };
       if (d.request?.url) requests.set(d.request.url, requestContext);
-      if (LICENSE.test(d.request?.url || '') && ['XHR', 'Fetch'].includes(d.type)) drm = true;
+      if (isLicenseRequest(d.request?.url) && ['XHR', 'Fetch'].includes(d.type)) drm = true;
       add(d.request?.url, { requestContext });
     } else if (event.method === 'Network.responseReceived') {
       if (d.response?.status >= 400) { failed.add(d.response.url); return; }
       failed.delete(d.response?.url);
-      if (MEDIA_TYPE.test(d.response?.mimeType || '')) add(d.response.url, { type: d.response.mimeType, size: Number(d.response.headers?.['Content-Length']) || 0 });
+      if (isMediaType(d.response?.mimeType)) add(d.response.url, { type: d.response.mimeType, size: Number(d.response.headers?.['Content-Length']) || 0 });
     }
   };
   cdp.on('event', onEvent);
@@ -113,7 +114,7 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
           if (r.drm) drm = true;
           if (context.frameId === mainFrameId && r.title) title = r.title;
           r.media.forEach((url) => add(url, { fromPlayer: true, referer: r.pageUrl || pageUrl }));
-          r.embeds.forEach((url) => { if (/^https?:/i.test(url) && !ADS.test(url) && !isNotPlayer(url)) embeds.add(url); });
+          r.embeds.forEach((url) => embeds.add(url));
         } catch { diagnostics.scanErrors++; }
       }));
       // An unrelated iframe does not stop lookup. Allow newly loaded players to settle.
@@ -121,11 +122,13 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
       await sleep(750);
     }
 
-    const media = [...found.values()].filter((m) => !failed.has(m.url)).sort((a, b) =>
-      (b.fromPlayer - a.fromPlayer) || ((b.kind === 'stream') - (a.kind === 'stream')) || (b.size - a.size));
+    const media = rankMedia([
+      ...[...found.values()].filter((m) => !failed.has(m.url)).map((m) => ({ ...m, fromPlayer: m.fromPlayer || playerSources.has(m.url) })),
+      ...unconfirmedPlayerSources(playerSources, found).filter((m) => !failed.has(m.url)).map((m) => ({ ...m, referer: pageUrl, requestContext: requests.get(m.url) })),
+    ]);
     const candidates = [
       ...media.map((m) => ({ ...m, requestContext: { userAgent, referer: m.referer, ...m.requestContext } })),
-      ...[...embeds].filter((url) => { try { return new URL(url).host !== page.host; } catch { return false; } }).map((url) => ({ url, kind: 'embed', size: 0, requestContext: { userAgent, referer: pageUrl } })),
+      ...playerEmbeds(embeds, pageUrl, isNotPlayer).map((url) => ({ url, kind: 'embed', size: 0, requestContext: { userAgent, referer: pageUrl } })),
     ];
     const urls = [...new Set([pageUrl, ...candidates.map((c) => c.url)])];
     const { cookies = [] } = await cdp.send('Network.getCookies', { urls }, rootSessionId);

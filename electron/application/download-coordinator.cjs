@@ -411,6 +411,12 @@ class DownloadCoordinator {
     } else if (r.kind === 'engineUpdating') {
       this.update(job.id, { status: 'queued' });
       this.retryLater(() => this.pumpDownloads());
+    } else if (r.kind === 'contextExpired') {
+      // The page's session snapshot expired (or Grab restarted): never download without it; look
+      // the page up again for a fresh one. This is not the job's one automatic retry.
+      this.forget(job);
+      this.update(job.id, { status: 'waiting', forcePage: true, autoQueue: true });
+      this.pumpLookups();
     } else if (r.kind === 'blocked') {
       this.update(job.id, { status: 'queued', infoFile: null }); // resumes from where it stopped
       this.block(job.siteKey);

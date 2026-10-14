@@ -172,12 +172,11 @@ async function updateEngine() {
 const INFO_DIR = path.join(os.tmpdir(), 'grab-info');
 const INFO_MAX_AGE_MS = 4 * 60 * 60 * 1000;
 
+// Start-up: lookup files of an earlier run are never used again (a restored job looks up afresh),
+// and they hold signed media addresses, so all of them go.
 function cleanInfoCache() {
   try {
-    for (const f of fs.readdirSync(INFO_DIR)) {
-      const p = path.join(INFO_DIR, f);
-      if (Date.now() - fs.statSync(p).mtimeMs > 24 * 60 * 60 * 1000) fs.unlinkSync(p);
-    }
+    for (const f of fs.readdirSync(INFO_DIR)) fs.rmSync(path.join(INFO_DIR, f), { force: true });
   } catch { /* nothing cached yet */ }
 }
 
@@ -206,7 +205,7 @@ async function analyze(url, { title: pageTitle, signal, ...context } = {}) {
     const j = JSON.parse(out);
     let infoFile = null;
     try {
-      fs.mkdirSync(INFO_DIR, { recursive: true });
+      fs.mkdirSync(INFO_DIR, { recursive: true, mode: 0o700 });
       infoFile = path.join(INFO_DIR, `${crypto.createHash('sha1').update(url).digest('hex')}-${Date.now()}.json`);
       fs.writeFileSync(infoFile, out);
     } catch { infoFile = null; }

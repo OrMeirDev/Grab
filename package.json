@@ -14,6 +14,7 @@
     "release": "vite build && electron-builder --win nsis --x64 --publish always",
     "fetch-bin": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fetch-bin.ps1",
     "e2e:glass-menu": "vite build && electron e2e/glass-menu.cjs",
+    "e2e:hidden-probe": "electron e2e/hidden-probe.cjs",
     "e2e:layout": "vite build && electron e2e/layout.cjs",
     "e2e:liquid-glass": "vite build && electron e2e/liquid-glass.cjs",
     "e2e:queue-cooldown": "vite build && electron e2e/queue-cooldown.cjs",

@@ -256,7 +256,9 @@ app.on('second-instance', focusMain);
 app.whenReady().then(async () => {
   engine.setUserBinDir(path.join(app.getPath('userData'), 'bin'));
   await engine.reconcileEngine();
+  // Left behind by a crash: lookup files (signed media addresses) and cookie jars.
   engine.cleanInfoCache();
+  browserSession.scavengeCookieJars();
   approvedFolders.add((await settingsRepo.get()).folder);
   await coordinator.init();
   createWindow();
