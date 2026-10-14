@@ -2,10 +2,13 @@
 # as pinned in native-tools.lock.json (GRB-06): fixed release URLs, and every download and every
 # extracted file must match its SHA-256 or the script stops. License texts go to bin/licenses/.
 # Not in git because each binary is far larger than GitHub's 100 MB file limit.
+# -LockFile / -BinDir: another lock and target folder (tests/fetch-bin.windows.test.cjs).
+param([string]$LockFile, [string]$BinDir)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$bin = Join-Path $root 'bin'
-$lock = Get-Content (Join-Path $root 'native-tools.lock.json') -Raw | ConvertFrom-Json
+if (-not $LockFile) { $LockFile = Join-Path $root 'native-tools.lock.json' }
+$bin = if ($BinDir) { $BinDir } else { Join-Path $root 'bin' }
+$lock = Get-Content $LockFile -Raw | ConvertFrom-Json
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('grab-bin-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Force $bin, (Join-Path $bin 'licenses'), $tmp | Out-Null
 
@@ -46,7 +49,7 @@ try {
         }
     }
     # What was installed, for the app's diagnostics and the release notes.
-    Copy-Item (Join-Path $root 'native-tools.lock.json') (Join-Path $bin 'native-tools.lock.json') -Force
+    Copy-Item $LockFile (Join-Path $bin 'native-tools.lock.json') -Force
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }
