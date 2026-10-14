@@ -1,8 +1,8 @@
 # Grab refactor handoff (2026-10-14)
 
 Branch `claude/modest-pasteur-6315xe`, from `main` at `b1e1de8` (the audited `5813a6e` plus the e2e
-scripts). Not merged, no PR, no release. Windows verification (§4): run 8 of `windows-verify.yml` on
-`1c9d699` is green: tests, fetch-bin/verify-bin, NSIS test installer, 1.6.7 upgrade, 19/19
+scripts). Not merged, no PR, no release. Windows verification (§4): run 10 of `windows-verify.yml` on
+`ee8f20b` is green (run 8 on `1c9d699` too): tests, fetch-bin/verify-bin, NSIS test installer, 1.6.7 upgrade, 19/19
 installed-app checks. Real signed-in browser profiles, Brave, update-while-active and pause during
 the FFmpeg merge are still **Pending** (§4.4), so Windows verification is not complete.
 
@@ -66,8 +66,9 @@ Full map and rules: [architecture.md](architecture.md). In short:
 
 Where: GitHub-hosted `windows-latest` (Microsoft Windows Server 2025 Datacenter 10.0.26100), Node
 v22.23.3, Chrome 154.0.8037.58, Edge 153.0.4234.48, no Brave. Workflow `.github/workflows/windows-verify.yml`,
-run 8 (https://github.com/OrMeirDev/Grab/actions/runs/38621129149), commit
-`1c9d699269782b3cda0526bad11898de38584368`; CI run 19 on the same commit: green. This is a clean
+run 10 (https://github.com/OrMeirDev/Grab/actions/runs/38625116763), commit
+`ee8f20bcefa56af8a9d15d46babff2b49dcf608b`; CI run 21 on the same commit: green. Run 8
+(`1c9d699`) gave the same results. Commits after `ee8f20b` change only docs. This is a clean
 throwaway machine with throwaway browser profiles, not a person's PC: it proves the build, the
 installer, the upgrade and the app's own behavior, not real signed-in profiles (§4.4).
 
@@ -83,7 +84,7 @@ Native tools (pinned, verified in `bin/` and again in the installed `resources/b
 | `npm run verify-bin` | `Native tools verified: yt-dlp 2026.08.19, ffmpeg N-127511-g01cf1a5396, deno 2.9.7` |
 | `npm test` with `GRAB_TEST_YTDLP_DIR=bin` | 103 tests: 99 pass, 0 fail, 4 skipped (the four `engine.test.cjs` cases that need a fake yt-dlp.exe; they run in the Linux job). Includes on Windows: real yt-dlp.exe tests, the real-yt-dlp + real-discovery + real-Chrome restart test, exact-tab reuse on Chrome and on Edge (throwaway profiles), process-tree kill, output names, cookie-jar ACL, fetch-bin |
 | `npm run build` | pass |
-| `npm run dist -- --publish never` (version stamped `1.6.8-test.8`, not committed) | `Grab-Setup-1.6.8-test.8.exe`, 253,379,124 bytes, SHA-256 `d62853220b1d4cc8db3858a39ee16d664325a29b520b83a8b7f2ec8ca66b318f`; unsigned |
+| `npm run dist -- --publish never` (version stamped `1.6.8-test.10`, not committed) | `Grab-Setup-1.6.8-test.10.exe`, 253,379,319 bytes, SHA-256 `112da9aec9798095c92d8fa03271000e79198d32fafc11f178755ec35c5e701e`; unsigned |
 
 Found and fixed on the way (each shown failing on Windows first):
 
@@ -105,13 +106,13 @@ Found and fixed on the way (each shown failing on Windows first):
 entry, opens it again, installs the test build over it silently, then
 `scripts/windows/installed-app.cjs` drives the installed app's own window (DevTools port on the app,
 local fixture site serving real H.264/AAC media slowly). Evidence artifact
-`grab-windows-evidence-8` (results JSON, screenshots, diagnostics log, fixture request log);
-installer artifact `grab-test-installer-8` (kept 14 days, never published).
+`grab-windows-evidence-10` (results JSON, screenshots, diagnostics log, fixture request log);
+installer artifact `grab-test-installer-10` (kept until 2026-10-28, never published).
 
 | ID | Check | Result | Evidence |
 | --- | --- | --- | --- |
 | W-01a | 1.6.7 installs silently from the hash-checked installer and starts | Pass | per-user install in `%LOCALAPPDATA%\Programs\Grab`, exit 0 |
-| W-01d | test build installs over 1.6.7 in the same place | Pass | registry 1.6.7 → 1.6.8-test.8, same folder, exit 0 |
+| W-01d | test build installs over 1.6.7 in the same place | Pass | registry 1.6.7 → 1.6.8-test.10, same folder, exit 0 |
 | W-01e | upgrade keeps `settings.json` and `history.json` | Pass | identical before/after |
 | W-01f | installed `resources/bin` = lock; every tool runs | Pass | versions above |
 | W-01b / W-01c | History shows the 1.6.7 entry; Settings show its folder, MP4, 720p | Pass | `02-history.png`, `04-settings.png` |
@@ -203,8 +204,9 @@ Owner actions (not authorized for this session):
 | `xvfb-run electron e2e/layout.cjs` | all sizes ok |
 | `npm audit` | 8 moderate (one build-time chain, not shipped); was 20 (1 critical, 14 high, 5 moderate) |
 | `electron-builder --win dir` | packages `win-unpacked` with the expected asar/resources (signing skipped) |
-| CI run 19 (`1c9d699`) | test (ubuntu), test (windows), e2e: success |
-| Windows verify run 8 (`1c9d699`) | success: §4.1, §4.2 |
+| CI run 21 (`ee8f20b`) | test (ubuntu), test (windows), e2e: success |
+| Windows verify run 10 (`ee8f20b`), run 8 (`1c9d699`) | success: §4.1, §4.2 |
+| Windows verify run 9 (`d865648`) | failure: test race, fixed in `ee8f20b` (§4.1) |
 
 ## 7. Backlog
 
