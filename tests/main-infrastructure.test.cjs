@@ -50,7 +50,8 @@ test('process runner: a missing executable fails cleanly', async () => {
   assert.ok(r.spawnError);
 });
 
-test('process runner: cancel ends the whole tree (the child it started too) and waits for it', { skip: process.platform === 'win32' && 'POSIX process groups; Windows uses taskkill /T (pending Windows check)' }, async () => {
+// POSIX: the process group; Windows: taskkill /T (this test runs on the Windows CI job too).
+test('process runner: cancel ends the whole tree (the child it started too) and waits for it', async () => {
   const dir = tmp('tree');
   const pidFile = path.join(dir, 'grandchild.pid');
   const script = `const { spawn } = require('child_process');

@@ -1,0 +1,107 @@
+# Windows verification and a reviewable test build (not a release).
+# On a real Windows runner: tests (with the pinned yt-dlp.exe, Chrome and Edge on throwaway
+# profiles), the renderer build, the pinned native tools (fetch-bin + verify-bin), an NSIS installer
+# stamped with a test version, then an in-place upgrade of the released 1.6.7 with settings and
+# history, driven through the installed app's own window (scripts/windows/).
+# The installer is a workflow artifact only: never published, and production users are never
+# pointed at it (--publish never, no token given to electron-builder).
+name: Windows verify
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['claude/**']
+    paths:
+      - 'electron/**'
+      - 'src/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'native-tools.lock.json'
+      - '.github/workflows/windows-verify.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    env:
+      TEST_VERSION: 1.6.8-test.${{ github.run_number }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: machine
+        run: |
+          New-Item -ItemType Directory -Force evidence | Out-Null
+          $os = Get-CimInstance Win32_OperatingSystem
+          $browsers = @{}
+          foreach ($p in @("$env:ProgramFiles\Google\Chrome\Application\chrome.exe", "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\BraveSoftware\Brave-Browser\Application\brave.exe")) {
+            if (Test-Path $p) { $browsers[(Split-Path $p -Leaf)] = (Get-Item $p).VersionInfo.ProductVersion }
+          }
+          @{ commit = "${{ github.sha }}"; windows = "$($os.Caption) $($os.Version) build $($os.BuildNumber)"; node = (node --version); browsers = $browsers } | ConvertTo-Json | Tee-Object evidence/machine.json
+      - name: npm ci (with install scripts)
+        run: npm ci --no-fund --no-audit
+      - name: fetch-bin (pinned, hash-checked)
+        run: npm run fetch-bin
+      - name: verify-bin
+        run: npm run verify-bin 2>&1 | Tee-Object evidence/verify-bin.txt
+      - name: tests (real yt-dlp.exe; Chrome and Edge on throwaway profiles)
+        env:
+          GRAB_TEST_YTDLP_DIR: ${{ github.workspace }}\bin
+        run: |
+          npm test 2>&1 | Tee-Object evidence/npm-test.txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: renderer build
+        run: npm run build
+      - name: stamp the test version (this run only, not committed)
+        run: npm version $env:TEST_VERSION --no-git-tag-version
+      - name: NSIS installer (never published)
+        run: |
+          Remove-Item Env:GH_TOKEN, Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
+          npm run dist -- --publish never
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $exe = "release/Grab-Setup-$env:TEST_VERSION.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant()
+          "$hash  Grab-Setup-$env:TEST_VERSION.exe" | Tee-Object evidence/SHA256SUMS.txt
+      - name: upgrade 1.6.7 -> test build, then the installed app
+        run: |
+          node scripts/windows/verify-upgrade.cjs --installer "release/Grab-Setup-$env:TEST_VERSION.exe" --version $env:TEST_VERSION --out evidence/installed
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: summary
+        if: always()
+        run: |
+          $rows = @()
+          foreach ($f in 'evidence/installed/upgrade-results.json', 'evidence/installed/installed-app-results.json') {
+            if (Test-Path $f) { $rows += Get-Content $f -Raw -Encoding utf8 | ConvertFrom-Json }
+          }
+          $lines = @('| ID | Check | Status |', '|---|---|---|') + ($rows | ForEach-Object { "| $($_.id) | $($_.title) | $($_.status) |" })
+          $tests = if (Test-Path evidence/npm-test.txt) { (Get-Content evidence/npm-test.txt | Select-String '^# (tests|pass|fail|skipped|todo|cancelled)') -join ', ' } else { 'not run' }
+          @("Test version: $env:TEST_VERSION", "", "npm test: $tests", "") + $lines | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: grab-windows-evidence-${{ github.run_number }}
+          path: evidence/
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: success() || failure()
+        with:
+          name: grab-test-installer-${{ github.run_number }}
+          path: |
+            release/Grab-Setup-*.exe
+            evidence/SHA256SUMS.txt
+          if-no-files-found: warn
+          retention-days: 14

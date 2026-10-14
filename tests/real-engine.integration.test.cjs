@@ -51,13 +51,8 @@ test('real yt-dlp: session cookies and context, template escaping, progress, ver
 // session talking to a real Chromium signed in to the fixture's members area, and the real yt-dlp.
 // The hidden probe needs Electron, so a cookieless visitor stands in for it (it would show up in the
 // site's log, and its calls are counted). Needs GRAB_TEST_YTDLP_DIR and a Chromium (as above).
-function findChrome() {
-  const candidates = [process.env.GRAB_TEST_CHROME];
-  try { for (const d of fs.readdirSync('/opt/pw-browsers')) if (/^chromium-\d+$/.test(d)) candidates.push(path.join('/opt/pw-browsers', d, 'chrome-linux', 'chrome')); } catch { /* not this machine */ }
-  candidates.push('/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser');
-  return candidates.find((p) => p && fs.existsSync(p)) || null;
-}
-const CHROME = process.platform === 'linux' ? findChrome() : null;
+const { testBrowsers, killTree, removeProfile } = require('./helpers/browsers.cjs');
+const CHROME = testBrowsers()[0]?.path || null;
 
 test('real yt-dlp + real discovery + real Chromium: after a restart, a members-only job is looked up and downloaded only with the session', { skip: skip || (!CHROME && 'no Chromium found'), timeout: 240000 }, async () => {
   const { spawn } = require('node:child_process');
@@ -148,10 +143,9 @@ test('real yt-dlp + real discovery + real Chromium: after a restart, a members-o
     assert.deepEqual(members(from).map((l) => l.url), [], 'C: no request at all to the members area');
   } finally {
     browser.disconnectBrowser();
-    chrome.kill('SIGKILL');
+    await killTree(chrome);
     await site.close();
-    await new Promise((r) => setTimeout(r, 300));
-    fs.rmSync(profile, { recursive: true, force: true });
+    await removeProfile(profile);
     fs.rmSync(out, { recursive: true, force: true });
   }
 });

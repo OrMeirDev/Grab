@@ -4,7 +4,8 @@
 // the page's HttpOnly cookie reaches the domain-scoped jar; the player's request context is kept.
 //
 // Uses a throwaway profile (never the user's). Skipped when no Chromium/Chrome is installed; set
-// GRAB_TEST_CHROME to a browser executable to choose one. Not a substitute for the Windows checks
+// GRAB_TEST_CHROME to a browser executable to choose one. Runs once per installed browser (Linux:
+// Chromium; Windows: Chrome, Edge, Brave when present). Not a substitute for the Windows checks
 // with a real signed-in Chrome/Edge/Brave profile (see docs/handoff.md).
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -13,21 +14,17 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 
-function findChrome() {
-  const candidates = [process.env.GRAB_TEST_CHROME];
-  try {
-    for (const d of fs.readdirSync('/opt/pw-browsers')) if (/^chromium-\d+$/.test(d)) candidates.push(path.join('/opt/pw-browsers', d, 'chrome-linux', 'chrome'));
-  } catch { /* not this machine */ }
-  candidates.push('/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser');
-  return candidates.find((p) => p && fs.existsSync(p)) || null;
-}
-const CHROME = process.platform === 'linux' ? findChrome() : null;
+const { testBrowsers, killTree, removeProfile } = require('./helpers/browsers.cjs');
 
-test('active browser: exact tab reused untouched, own tab closed, cookies and context kept', { skip: !CHROME && 'no Chromium found', timeout: 90000 }, async () => {
+const BROWSERS = testBrowsers();
+if (!BROWSERS.length) test('active browser (no Chromium-family browser installed)', { skip: 'no Chromium found' }, () => {});
+
+for (const B of BROWSERS) {
+test(`active browser (${B.name}): exact tab reused untouched, own tab closed, cookies and context kept`, { timeout: 120000 }, async () => {
   const site = await require('./fixtures/media-site.cjs').start();
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-chrome-'));
   const pageUrl = site.base + '/watch';
-  const chrome = spawn(CHROME, ['--headless=new', '--no-sandbox', '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--autoplay-policy=no-user-gesture-required', pageUrl], { stdio: 'ignore' });
+  const chrome = spawn(B.path, ['--headless=new', '--no-sandbox', '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--autoplay-policy=no-user-gesture-required', pageUrl], { stdio: 'ignore' });
   const browserSession = require('../electron/browser-session.cjs');
   const { findMedia } = require('../electron/pageprobe.cjs');
   const endpointFile = path.join(profile, 'DevToolsActivePort');
@@ -68,9 +65,10 @@ test('active browser: exact tab reused untouched, own tab closed, cookies and co
     assert.equal(cdp.listenerCount('event'), 0);
   } finally {
     browserSession.disconnectBrowser();
-    chrome.kill('SIGKILL');
+    await killTree(chrome);
     await site.close();
     await new Promise((r) => setTimeout(r, 300));
-    fs.rmSync(profile, { recursive: true, force: true });
+    await removeProfile(profile);
   }
 });
+}
