@@ -32,7 +32,10 @@ function start({ mediaFile, slowMs = 0, port = 0 } = {}) {
   const server = http.createServer((req, res) => {
     const host = req.headers.host || '';
     const port = server.address().port;
-    log.push({ url: req.url, host, referer: req.headers.referer, origin: req.headers.origin, cookie: req.headers.cookie });
+    const h = req.headers;
+    log.push({ url: req.url, host, referer: h.referer, origin: h.origin, cookie: h.cookie, at: Date.now(),
+      // Who asked, for checks that a page was not reloaded: a prefetch, a reload, a navigation.
+      fetch: [h['sec-fetch-mode'], h['sec-fetch-dest'], h['sec-purpose'] || h.purpose, h['cache-control']].filter(Boolean).join(' '), agent: h['user-agent'] });
     if (req.url === '/watch') {
       res.writeHead(200, { 'content-type': 'text/html', 'set-cookie': 'play=granted; Path=/; HttpOnly' });
       res.end(`<!doctype html><title>Fixture lesson</title>

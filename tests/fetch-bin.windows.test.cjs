@@ -41,14 +41,14 @@ function zip(entries) {
   return Buffer.concat([...locals, cd, end]);
 }
 
-// Like `npm run fetch-bin` typed in a PowerShell 7 window when pwsh is installed.
+// Like `npm run fetch-bin` typed in a PowerShell 7 window: npm's shell starts Windows PowerShell
+// with the module path PowerShell 7 set up (PowerShell 7 itself would reset it for a direct child).
 function fetchBin(lockFile, binDir) {
   const script = path.join(__dirname, '..', 'scripts', 'fetch-bin.ps1');
-  const inner = `powershell -NoProfile -ExecutionPolicy Bypass -File '${script}' -LockFile '${lockFile}' -BinDir '${binDir}'; exit $LASTEXITCODE`;
-  let pwsh = false;
-  try { execFileSync('pwsh', ['-NoProfile', '-Command', 'exit 0'], { stdio: 'ignore' }); pwsh = true; } catch { /* Windows PowerShell only */ }
-  const [cmd, args] = pwsh ? ['pwsh', ['-NoProfile', '-Command', inner]] : ['powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-LockFile', lockFile, '-BinDir', binDir]];
-  return new Promise((resolve) => execFile(cmd, args, { encoding: 'utf8', timeout: 120000 }, (error, stdout, stderr) => resolve({ code: error ? error.code ?? 1 : 0, out: stdout + stderr })));
+  const env = { ...process.env };
+  try { env.PSModulePath = execFileSync('pwsh', ['-NoProfile', '-Command', '$env:PSModulePath'], { encoding: 'utf8' }).trim(); } catch { /* no PowerShell 7 here */ }
+  return new Promise((resolve) => execFile('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-LockFile', lockFile, '-BinDir', binDir],
+    { encoding: 'utf8', timeout: 120000, env }, (error, stdout, stderr) => resolve({ code: error ? error.code ?? 1 : 0, out: stdout + stderr, psModulePath: env.PSModulePath })));
 }
 
 test('fetch-bin: plain and zipped tools with licenses, every hash checked; a tampered file installs nothing', { skip: !windows && 'Windows only', timeout: 180000 }, async () => {
@@ -79,7 +79,7 @@ test('fetch-bin: plain and zipped tools with licenses, every hash checked; a tam
     fs.writeFileSync(lockFile, JSON.stringify(lock));
     const bin = path.join(dir, 'bin');
     const ok = await fetchBin(lockFile, bin);
-    assert.equal(ok.code, 0, ok.out);
+    assert.equal(ok.code, 0, `${ok.out}\nPSModulePath=${ok.psModulePath}`);
     assert.deepEqual(fs.readFileSync(path.join(bin, 'tool-a.exe')), toolA);
     assert.deepEqual(fs.readFileSync(path.join(bin, 'tool-b.exe')), toolB);
     assert.deepEqual(fs.readFileSync(path.join(bin, 'licenses', 'tool-a-LICENSE.txt')), licenseA);

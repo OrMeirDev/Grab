@@ -35,11 +35,18 @@ test(`active browser (${B.name}): exact tab reused untouched, own tab closed, co
     const cdp = await connect();
     const pages = async () => (await cdp.send('Target.getTargets')).targetInfos.filter((t) => t.type === 'page');
     for (let i = 0; i < 100 && !(await pages()).some((t) => t.url === pageUrl); i++) await new Promise((r) => setTimeout(r, 100));
-    await new Promise((r) => setTimeout(r, 1500)); // the user's tab has loaded its player
+    // The user's tab has loaded its player, and the browser has finished its own start-up loads
+    // (Edge can load the start page a second time): no new request for the page for 2 s.
+    const watchCount = () => site.log.filter((l) => l.url === '/watch').length;
+    for (let i = 0, last = -1, quiet = 0; i < 100 && quiet < 4; i++, await new Promise((r) => setTimeout(r, 500))) {
+      quiet = watchCount() === last ? quiet + 1 : 0;
+      last = watchCount();
+    }
     const before = await pages();
     const userTab = before.find((t) => t.url === pageUrl);
     assert.ok(userTab, 'the page is open in a tab');
-    const requestsBefore = site.log.filter((l) => l.url === '/watch').length;
+    const requestsBefore = watchCount();
+    console.log(`[${B.name}] page loads before the lookup: ${JSON.stringify(site.log.filter((l) => l.url === '/watch').map(({ at, fetch, cookie }) => ({ at, fetch, cookie })))}`);
 
     // 1. The exact open tab is scanned as it is.
     const reused = await findMedia(pageUrl, { connect, timeoutMs: 3000 });
@@ -47,7 +54,7 @@ test(`active browser (${B.name}): exact tab reused untouched, own tab closed, co
     const after = await pages();
     assert.equal(after.length, before.length, 'no tab opened or closed');
     assert.equal(after.find((t) => t.targetId === userTab.targetId)?.url, pageUrl, 'the user tab is still there, at the same address');
-    assert.equal(site.log.filter((l) => l.url === '/watch').length, requestsBefore, 'the user tab was not reloaded or navigated');
+    assert.equal(watchCount(), requestsBefore, 'the user tab was not reloaded or navigated: ' + JSON.stringify(site.log.filter((l) => l.url === '/watch')));
     assert.ok(reused.candidates.some((c) => c.url === site.base + '/media/clip'), reused.candidates.map((c) => c.url).join(' '));
     await browserSession.withSessionCookies(reused.cookieRef, async (file) => {
       assert.match(fs.readFileSync(file, 'utf8'), /#HttpOnly_127\.0\.0\.1\tFALSE\t\/\tFALSE\t0\tplay\tgranted/);
