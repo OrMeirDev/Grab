@@ -402,7 +402,8 @@ export default function App() {
 
   // Download runner: one video at a time, in queue order, with a short rest between YouTube videos.
   const [restUntil, setRestUntil] = useState(0);
-  const [, setTick] = useState(0);
+  // The rest timer bumps this so the runner looks again when the rest ends (it is a dependency).
+  const [restEnded, setRestEnded] = useState(0);
   useEffect(() => {
     if (!running || !api) return;
     if (queue.some((x) => x.status === 'downloading')) return;
@@ -413,7 +414,7 @@ export default function App() {
     const isYouTube = !next.site || /youtube/i.test(next.site);
     const wait = restUntil - Date.now();
     if (isYouTube && wait > 0) {
-      const t = setTimeout(() => setTick((n) => n + 1), wait);
+      const t = setTimeout(() => setRestEnded((n) => n + 1), wait);
       return () => clearTimeout(t);
     }
 
@@ -442,7 +443,7 @@ export default function App() {
           ? { status: 'waiting', autoRetried: true, forcePage: true, autoQueue: true, infoFile: null, mediaUrl: null, referer: null, cookieRef: null, requestContext: null }
           : { status: 'queued', autoRetried: true, infoFile: null }));
     }).catch((error) => update(next.id, { status: 'error', error: error.message, errorLabel: 'ההורדה נכשלה' }));
-  }, [queue, running, blockedSites, restUntil, settings, update, triggerBlock]);
+  }, [queue, running, blockedSites, restUntil, restEnded, settings, update, triggerBlock]);
 
   const downloadAll = () => {
     if (!api) return;
