@@ -35,13 +35,14 @@ test(`active browser (${B.name}): exact tab reused untouched, own tab closed, co
     const cdp = await connect();
     const pages = async () => (await cdp.send('Target.getTargets')).targetInfos.filter((t) => t.type === 'page');
     for (let i = 0; i < 100 && !(await pages()).some((t) => t.url === pageUrl); i++) await new Promise((r) => setTimeout(r, 100));
-    // The user's tab has loaded its player, and the browser has finished its own start-up loads
-    // (Edge can load the start page a second time): no new request for the page for 2 s.
+    // The user's tab has loaded its player: the page was requested (Edge lists the tab at its
+    // address seconds before it loads it) and nothing more for 2 s.
     const watchCount = () => site.log.filter((l) => l.url === '/watch').length;
-    for (let i = 0, last = -1, quiet = 0; i < 100 && quiet < 4; i++, await new Promise((r) => setTimeout(r, 500))) {
+    for (let i = 0, last = -1, quiet = 0; i < 120 && (quiet < 4 || !last); i++, await new Promise((r) => setTimeout(r, 500))) {
       quiet = watchCount() === last ? quiet + 1 : 0;
       last = watchCount();
     }
+    assert.ok(watchCount() > 0, 'the browser loaded the page');
     const before = await pages();
     const userTab = before.find((t) => t.url === pageUrl);
     assert.ok(userTab, 'the page is open in a tab');
