@@ -48,6 +48,9 @@ npm run release     # build and publish a GitHub release (needs GH_TOKEN)
 
 Architecture and contributor rules: [docs/architecture.md](docs/architecture.md), [AGENTS.md](AGENTS.md).
 CI (`.github/workflows/ci.yml`) runs the tests on Linux and Windows and the end-to-end checks.
+`.github/workflows/windows-verify.yml` (pushes to `claude/**`, or by hand) builds a test installer
+on Windows, upgrades the released 1.6.7 with it and drives the installed app
+(`scripts/windows/`); the installer is a workflow artifact, never a release.
 
 To publish an update: bump `version` in `package.json`, then run `npm run release` (see docs/handoff.md for the release checks still to automate).
 

@@ -59,6 +59,7 @@ xvfb-run -a npx electron --no-sandbox e2e/hidden-probe.cjs
 ```
 
 Scheduling or session changes need a fake-clock test (`tests/download-coordinator.test.cjs`) and a
-note of the Windows checks they need (docs/handoff.md → Windows checks). A UI change needs before/
+note of the Windows checks they need (docs/handoff.md → Windows verification); changes to
+installing, quitting, pausing or the cookie jar should pass `windows-verify.yml` too. A UI change needs before/
 after screenshots of every screen (`npm run e2e:screenshots`) and must not change them unless the
 change is the point. Keep each PR to one responsibility; refactors, upgrades and features separate.

@@ -27,7 +27,7 @@ const WORK = path.join(process.env.RUNNER_TEMP || require('os').tmpdir(), 'grab-
 const USER_DATA = path.join(process.env.APPDATA, 'Grab');
 // A Hebrew folder name: the downloads, the seeded settings and the 1.6.7 history all use it.
 const FOLDER = path.join(WORK, 'הורדות Grab');
-// Real media for the fixture site: 30 s of 720p test pattern and tone (about 8 MB), so a slowly
+// Real media for the fixture site: 30 s of 720p test pattern and tone (about 2.5 MB), so a slowly
 // served download is still running while a check pauses, quits or kills.
 const MEDIA = path.join(WORK, 'media.mp4');
 fs.mkdirSync(OUT, { recursive: true });
