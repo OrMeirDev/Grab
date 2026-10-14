@@ -119,7 +119,9 @@ test('real yt-dlp + real discovery + real Chromium: after a restart, a members-o
     browser.disconnectBrowser();
 
     // B. Direct authenticated extractor (a restored job: the site's own link, not a page player).
-    const savedB = { list: [{ id: 'direct-1', url: site.base + '/members/clip.mp4', label: '', name: 'clip', status: 'paused', progress: 30, site: 'Generic', siteKey: '127.0.0.1', needsSession: true, sessionSource: 'browser', fromPage: false }] };
+    // (C reuses this job; not savedB's list, which no longer holds it once B's download is saved.)
+    const direct = { id: 'direct-1', url: site.base + '/members/clip.mp4', label: '', name: 'clip', status: 'paused', progress: 30, site: 'Generic', siteKey: '127.0.0.1', needsSession: true, sessionSource: 'browser', fromPage: false };
+    const savedB = { list: [{ ...direct }] };
     from = site.log.length;
     hiddenBefore = hiddenCalls;
     const three = run(savedB, chromeInfo);
@@ -132,7 +134,7 @@ test('real yt-dlp + real discovery + real Chromium: after a restart, a members-o
     browser.disconnectBrowser();
 
     // C. The browser isn't reachable: an explicit error, and the site sees nothing.
-    const savedC = { list: [{ ...savedB.list[0], id: 'direct-2', status: 'ready' }] };
+    const savedC = { list: [{ ...direct, id: 'direct-2', status: 'ready' }] };
     from = site.log.length;
     const four = run(savedC, { name: 'Chrome', scheme: 'chrome', endpointFile: path.join(profile, 'missing', 'DevToolsActivePort') });
     await four.init();

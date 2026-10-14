@@ -90,6 +90,10 @@ Found and fixed on the way (each shown failing on Windows first):
 - `npm run fetch-bin` stopped at "Get-FileHash is not recognized" when started from a PowerShell 7
   window (Windows PowerShell inherits 7's module path). `tests/fetch-bin.windows.test.cjs` failed on
   `561d6e7` (CI job 116020637761) and passes since `83a7c6b`: hashing and unzipping now use .NET.
+- Test-only: run 9 (on `d865648`, docs-only change) failed in the real-yt-dlp restart test: part C
+  copied its saved job from part B's store, which drops the job once B's finished download is
+  saved, so it passed or failed depending on when that save landed. Reproduced on Linux by
+  delaying part C 500 ms (same error), fixed by giving both parts the same job literal.
 - Test-only: Edge lists its start tab at the page address before loading it; the exact-tab test
   now waits for the page's first load (the logged extra request had no cookie: a first load, not a
   reload by Grab). Grab sends no navigate/reload to a reused tab (`pageprobe.cjs`).
