@@ -25,7 +25,16 @@ const { createDiscoveryService } = require('../electron/application/discovery-se
 const { createDownloadRunner } = require('../electron/application/download-runner.cjs');
 const { OutputAllocator } = require('../electron/infrastructure/output-allocator.cjs');
 
-const settle = async (n = 200) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
+// Waits for a job state (real HTTP is involved, so no fixed number of turns); fails after 20 s.
+async function until(fn, what, ms = 20000) {
+  const t0 = Date.now();
+  while (!fn()) {
+    if (Date.now() - t0 > ms) throw new Error('timed out waiting for ' + what);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+const statusOf = (c, i = 0) => c.jobs[i]?.status;
+const settled = (c, states, i = 0) => until(() => states.includes(statusOf(c, i)), states.join('/'));
 const clock = { now: () => Date.now(), setTimeout: (fn) => setImmediate(fn), clearTimeout: () => {} };
 
 // ---- HTTP with a Netscape cookie jar (what yt-dlp would send) -------------------------------------
@@ -153,12 +162,12 @@ async function firstRun({ site, saved, dir, link, interrupt }) {
   const state = { mode: 'available' };
   const one = grab({ site, saved, dir, browserState: state });
   one.c.add([{ url: link }]);
-  await settle();
+  await settled(one.c, ['ready', 'error']);
   assert.equal(one.c.jobs[0].status, 'ready', JSON.stringify(one.c.jobs[0].error));
   if (interrupt) {
     one.calls.hold = true;
     one.c.downloadOne(one.c.jobs[0].id);
-    await settle();
+    await until(() => !!one.calls.release, 'the download to start');
     assert.equal(one.c.jobs[0].status, 'downloading');
   }
   await one.c.shutdown();
@@ -184,7 +193,7 @@ for (const [kind, link] of Object.entries(LINKS)) {
       const job = two.c.jobs[0];
       assert.equal(job.status, interrupt ? 'paused' : 'ready');
       if (interrupt) two.c.resume(job.id); else two.c.downloadOne(job.id);
-      await settle(400);
+      await settled(two.c, ['done', 'error']);
 
       assert.deepEqual(withoutSession(site, from), [], 'no request to the members area without the session');
       assert.equal(two.calls.hidden, 0, 'the clean hidden probe is not used');
@@ -207,7 +216,7 @@ for (const mode of ['closed', 'denied', 'unsupported']) {
     const two = grab({ site, saved, dir, browserState: { mode } });
     await two.c.init();
     two.c.downloadOne(two.c.jobs[0].id);
-    await settle(400);
+    await settled(two.c, ['done', 'error']);
     const job = two.c.jobs[0];
     assert.equal(job.status, 'error');
     assert.equal(job.error.kind, 'sessionRequired');
@@ -223,20 +232,21 @@ test('browser disconnect, then download/resume: looked up again through the brow
   const state = { mode: 'available' };
   const g = grab({ site, saved: {}, dir, browserState: state });
   g.c.add([{ url: site.base + '/members/clip.mp4' }]);
-  await settle();
+  await settled(g.c, ['ready', 'error']);
   assert.equal(g.c.jobs[0].status, 'ready');
   const from = site.log.length;
   state.cdp.disconnect(); // the user closed the browser; its account cookies are dropped
   state.mode = 'closed';
   g.c.downloadOne(g.c.jobs[0].id);
-  await settle(400);
+  await settled(g.c, ['done', 'error']);
   assert.equal(g.c.jobs[0].status, 'error');
   assert.equal(g.c.jobs[0].error.kind, 'sessionRequired');
   assert.deepEqual(membersRequests(site, from).map((l) => l.url), [], 'nothing sent while the browser is gone');
 
   state.mode = 'available'; // the browser is open again
   g.c.retry(g.c.jobs[0].id);
-  await settle(400);
+  await until(() => statusOf(g.c) !== 'error', 'the retry to start');
+  await settled(g.c, ['done', 'error']);
   assert.equal(g.c.jobs[0].status, 'done', JSON.stringify(g.c.jobs[0].error));
   assert.deepEqual(withoutSession(site, from), []);
   assert.deepEqual(g.calls.engine.slice(1).filter((e) => !e.withCookies), [], 'after the first lookup, no cookieless yt-dlp call');
@@ -249,7 +259,7 @@ test('a restored job that needs the session but has no provenance (saved by an o
   const g = grab({ site, saved, dir, browserState: { mode: 'available' } });
   await g.c.init();
   g.c.downloadOne('old-1');
-  await settle(400);
+  await settled(g.c, ['done', 'error']);
   assert.deepEqual(withoutSession(site, from), []);
   assert.equal(g.calls.hidden, 0);
   assert.equal(g.c.jobs[0].status, 'done', JSON.stringify(g.c.jobs[0].error));
@@ -259,11 +269,11 @@ test('public pages keep the ordinary lookup, and the hidden probe\'s cookies sti
   // In one session: found through the hidden probe, downloaded with the cookies its player got.
   const live = grab({ site, saved: {}, dir, browserState: { mode: 'closed' } }); // no browser needed
   live.c.add([{ url: site.base + '/watch' }]);
-  await settle();
+  await settled(live.c, ['ready', 'error']);
   assert.equal(live.c.jobs[0].status, 'ready', JSON.stringify(live.c.jobs[0].error));
   assert.equal(live.calls.hidden, 1);
   live.c.downloadOne(live.c.jobs[0].id);
-  await settle();
+  await settled(live.c, ['done', 'error']);
   assert.equal(live.c.jobs[0].status, 'done', 'the public player cookies from the hidden probe were used');
   assert.equal(live.calls.connect, 0);
   browser.disconnectBrowser();
@@ -272,14 +282,15 @@ test('public pages keep the ordinary lookup, and the hidden probe\'s cookies sti
   const saved = {};
   const one = grab({ site, saved, dir, browserState: { mode: 'closed' } });
   one.c.add([{ url: site.base + '/watch' }]);
-  await settle();
+  await settled(one.c, ['ready', 'error']);
   assert.equal(one.c.jobs[0].status, 'ready');
   await one.c.shutdown();
   browser.disconnectBrowser();
   const two = grab({ site, saved, dir, browserState: { mode: 'closed' } });
   await two.c.init();
   two.c.downloadOne(two.c.jobs[0].id);
-  await settle(400);
+  await until(() => statusOf(two.c) !== 'ready', 'the download to start');
+  await settled(two.c, ['done', 'error']);
   assert.equal(two.c.jobs[0].status, 'done', JSON.stringify(two.c.jobs[0].error));
   assert.equal(two.calls.connect, 0, 'a public page never needs the browser');
   assert.ok(two.calls.hidden >= 1, 'looked up again through the ordinary sequence');
