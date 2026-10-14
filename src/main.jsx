@@ -1,10 +1,10 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import App from './App.jsx';
-import './styles.css';
-import './theme.css';
-import { startLiquidGlass } from './liquid-glass.js';
+import AppShell from './app/AppShell.jsx';
+import './design/styles.css';
+import './design/theme.css';
+import { startLiquidGlass } from './design/glassMotion.js';
 
-createRoot(document.getElementById('root')).render(<App />);
+createRoot(document.getElementById('root')).render(<AppShell />);
 
 startLiquidGlass();
