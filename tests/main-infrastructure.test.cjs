@@ -178,19 +178,22 @@ test('router: an untrusted sender or a malformed request never reaches the handl
   const handlers = new Map();
   const rejected = [];
   let calls = 0;
-  const appFrame = { url: 'file:///app/dist/index.html' };
+  // The app's own address, built the way main.cjs builds it (a drive letter on Windows).
+  const indexFile = path.resolve('/app/dist/index.html');
+  const appUrl = require('url').pathToFileURL(indexFile).href;
+  const appFrame = { url: appUrl };
   const win = { isDestroyed: () => false, webContents: { mainFrame: appFrame } };
-  const isAppUrl = appUrlMatcher({ indexFile: '/app/dist/index.html' });
+  const isAppUrl = appUrlMatcher({ indexFile });
   const router = createRouter({ ipcMain: { handle: (c, f) => handlers.set(c, f) }, isTrusted: trustedFrame(() => win, isAppUrl), onRejected: (c, why) => rejected.push(why) });
   router.handle('job:start', [t.object({ url: t.url() })], () => ++calls);
   const call = handlers.get('job:start');
   assert.equal(call({ senderFrame: appFrame }, { url: 'https://a.example/' }), 1);
-  assert.throws(() => call({ senderFrame: { url: 'file:///app/dist/index.html' } }, { url: 'https://a.example/' }), /untrusted/);
+  assert.throws(() => call({ senderFrame: { url: appUrl } }, { url: 'https://a.example/' }), /untrusted/, 'another frame at the same address');
   assert.throws(() => call({ senderFrame: { ...appFrame, url: 'https://evil.example/' } }, { url: 'https://a.example/' }), /untrusted/);
   assert.throws(() => call({}, { url: 'https://a.example/' }), /untrusted/);
   appFrame.url = 'https://evil.example/'; // the app frame navigated away
   assert.throws(() => call({ senderFrame: appFrame }, { url: 'https://a.example/' }), /untrusted/);
-  appFrame.url = 'file:///app/dist/index.html';
+  appFrame.url = appUrl;
   assert.throws(() => call({ senderFrame: appFrame }, { url: 'file:///etc/passwd' }), { kind: 'contract' });
   assert.equal(calls, 1);
   assert.equal(rejected.length, 5);
