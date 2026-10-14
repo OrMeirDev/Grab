@@ -14,7 +14,7 @@ export default function OutputPreferences({ settings, onChange }) {
       <div className="setting">
         <div><div className="setting-title">תיקיית הורדות</div><div className="row-meta" dir="auto">{settings.folder}</div></div>
         <div className="item-actions">
-          <button className="btn-ghost" onClick={() => api.openFolder(settings.folder)}>פתח</button>
+          <button className="btn-ghost" onClick={() => api.openFolder()}>פתח</button>
           <button className="btn-ghost" onClick={choose}>שנה תיקייה</button>
         </div>
       </div>

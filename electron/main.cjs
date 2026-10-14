@@ -17,6 +17,8 @@ const { OutputAllocator } = require('./infrastructure/output-allocator.cjs');
 const { listLibrary, MEDIA } = require('./infrastructure/library-indexer.cjs');
 const { createDiscoveryService } = require('./application/discovery-service.cjs');
 const { createDownloadRunner } = require('./application/download-runner.cjs');
+const { DownloadCoordinator } = require('./application/download-coordinator.cjs');
+const { JsonStore } = require('./infrastructure/json-store.cjs');
 const { FORMATS, QUALITIES } = require('./domain/records.cjs');
 
 const DEV_URL = process.env.VITE_DEV ? 'http://localhost:5173' : null;
@@ -34,6 +36,28 @@ const historyRepo = new HistoryRepository(app.getPath('userData'));
 const allocator = new OutputAllocator();
 const discovery = createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession });
 const downloadRunner = createDownloadRunner({ engine, browserSession, allocator });
+
+// The download queue's single owner. Its snapshots go to the window; it survives a renderer
+// reload, and its non-sensitive state survives a restart (queue.json).
+const coordinator = new DownloadCoordinator({
+  discover: (url, options) => discovery.analyze(url, options),
+  startDownload: (plan, onProgress) => {
+    fs.mkdirSync(plan.folder, { recursive: true });
+    return downloadRunner.start(plan, onProgress);
+  },
+  getSettings: () => settingsRepo.get(),
+  recordCompletion: (entry) => historyRepo.add(entry),
+  // A job's private lookup data ends with it: its cookie snapshot, its lookup file, its file name.
+  releaseContext: (job, { finished }) => {
+    if (job.cookieRef) browserSession.forgetCookies(job.cookieRef);
+    if (job.infoFile && engine.isInfoFile(job.infoFile)) fs.rm(job.infoFile, { force: true }, () => {});
+    if (finished && job.id) allocator.release(job.id);
+  },
+  store: new JsonStore(path.join(app.getPath('userData'), 'queue.json'), { fallback: [] }),
+  onChange: (snapshot) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('downloads:changed', snapshot);
+  },
+});
 
 // Folders the user picked in the folder dialog (plus the default): the only ones settings accept.
 const approvedFolders = new Set([path.join(app.getPath('downloads'), 'Grab')]);
@@ -70,9 +94,12 @@ autoUpdater.on('error', (e) => sendUpdate({ state: 'error', message: String(e?.m
 router.handle('update:check', [], () => (app.isPackaged ? autoUpdater.checkForUpdates().then(() => true).catch(() => false) : false));
 router.handle('update:download', [], () => autoUpdater.downloadUpdate().catch(() => null));
 router.handle('update:install', [], async () => {
-  // Downloads are stopped and their process trees have exited before the installer replaces Grab.
-  stopAllJobs();
+  // Downloads are stopped (kept as paused) and their process trees have exited before the
+  // installer replaces Grab.
+  quitting = true;
+  await coordinator.shutdown();
   await engine.stopAll(10000);
+  browserSession.disconnectBrowser();
   // Silent install + relaunch: the user sees Grab close and reopen, not the installer wizard.
   autoUpdater.quitAndInstall(true, true);
 });
@@ -138,13 +165,7 @@ const requestContextSchema = t.optional(t.object({
   referer: t.optional(t.string({ max: 4096 })),
   origin: t.optional(t.string({ max: 1024 })),
 }));
-const jobIdSchema = (v, where) => (Number.isInteger(v) && v > 0 ? v : t.id()(v, where));
-
 router.handle('engine:version', [], () => engine.version());
-router.handle('engine:analyze', [t.url(), t.optional(t.object({ forcePage: t.optional(t.bool()) }))], (e, url, opts = {}) => {
-  const onPhase = (phase, browser) => { if (!e.sender.isDestroyed()) e.sender.send('engine:lookup-phase', { url, phase, browser }); };
-  return discovery.analyze(url, { forcePage: !!opts.forcePage, onPhase });
-});
 // The sign-in guide names the user's own browser and can check that Grab reaches it.
 router.handle('browser:default', [], () => {
   const b = browserSession.defaultBrowser();
@@ -157,58 +178,35 @@ router.handle('browser:check', [], async () => {
 router.handle('engine:extractors', [], () => engine.extractors());
 router.handle('engine:update', [], () => {
   // Never while a download, lookup or engine query runs (see engine.updateEngine).
-  if (jobs.size || engine.busy()) return { ok: false, busy: true };
+  if (coordinator.busy() || engine.busy()) return { ok: false, busy: true };
   return engine.updateEngine();
 });
 
 // ---- downloads ------------------------------------------------------------------------------
-const jobs = new Map(); // id -> { stop, stopped }
-
-const jobSchema = t.object({
-  id: jobIdSchema,
-  url: t.url(),
-  name: t.string({ max: 2000 }),
-  folder: t.string({ min: 1, max: 1024 }),
-  format: t.oneOf(...FORMATS),
-  quality: t.oneOf(...QUALITIES),
-  infoFile: t.optional(t.string({ max: 1024 })),
-  infoAt: t.optional(t.int()),
-  mediaUrl: t.optional(t.url()),
-  referer: t.optional(t.string({ max: 4096 })),
-  cookieRef: t.optional(t.string({ max: 64 })),
-  requestContext: requestContextSchema,
-});
-
-router.handle('engine:start', [jobSchema], async (e, job) => {
-  // One attempt per job at a time; a repeated start is refused instead of replacing the running one.
-  if (jobs.has(job.id)) return { ok: false, error: 'This download is already running', kind: 'other' };
+// Commands only: the renderer names a job by its id; the coordinator decides what happens.
+const id = t.id();
+router.handle('downloads:snapshot', [], () => coordinator.snapshot());
+router.handle('downloads:add', [
+  t.array(t.object({ url: t.url(), label: t.optional(t.string({ max: 2000 })) }), { max: 500 }),
+  t.optional(t.object({ nameEdited: t.optional(t.bool()) })),
+], (_e, links, opts = {}) => coordinator.add(links.map((l) => ({ url: l.url, label: l.label || '' })), { nameEdited: !!opts.nameEdited }));
+router.handle('downloads:rename', [id, t.string({ max: 2000 })], (_e, jobId, name) => coordinator.rename(jobId, name));
+router.handle('downloads:start', [id], (_e, jobId) => coordinator.downloadOne(jobId));
+router.handle('downloads:startAll', [], () => coordinator.downloadAll());
+router.handle('downloads:pause', [id], (_e, jobId) => coordinator.pause(jobId));
+router.handle('downloads:resume', [id], (_e, jobId) => coordinator.resume(jobId));
+router.handle('downloads:retry', [id], (_e, jobId) => coordinator.retry(jobId));
+router.handle('downloads:remove', [id], (_e, jobId) => coordinator.remove(jobId));
+router.handle('downloads:move', [id, id], (_e, fromId, toId) => coordinator.move(fromId, toId));
+router.handle('downloads:resumeSite', [t.string({ min: 1, max: 255 })], (_e, key) => coordinator.resumeSite(key));
+// Reveals the job's file, or opens the download folder when there is none (any more).
+router.handle('downloads:show', [id], async (_e, jobId) => {
+  const file = coordinator.fileOf(jobId);
+  if (file && fs.existsSync(file) && (await isApprovedFile(file))) return shell.showItemInFolder(file);
   const { folder } = await settingsRepo.get();
-  if (path.resolve(job.folder) !== path.resolve(folder)) return { ok: false, error: 'Not the download folder', kind: 'other' };
-  // Only a lookup result Grab wrote itself may be loaded.
-  if (job.infoFile && !engine.isInfoFile(job.infoFile)) delete job.infoFile;
   fs.mkdirSync(folder, { recursive: true });
-  const attempt = { stopped: false, stop: null };
-  jobs.set(job.id, attempt);
-  try {
-    const run = downloadRunner.start(job, (p) => {
-      if (!e.sender.isDestroyed()) e.sender.send('engine:progress', { id: job.id, ...p });
-    });
-    attempt.stop = run.stop;
-    if (attempt.stopped) run.stop();
-    const result = await run.done;
-    if (result.ok || attempt.stopped) allocator.release(job.id);
-    return attempt.stopped ? { ok: false, stopped: true } : result;
-  } finally { jobs.delete(job.id); }
+  return shell.openPath(folder);
 });
-
-router.handle('engine:stop', [jobIdSchema], (_e, id) => {
-  const attempt = jobs.get(id);
-  if (attempt) {
-    attempt.stopped = true;
-    attempt.stop?.();
-  }
-});
-const stopAllJobs = () => { for (const attempt of jobs.values()) { attempt.stopped = true; attempt.stop?.(); } };
 
 // ---- settings, history, library, files -------------------------------------------------------
 router.handle('settings:get', [], () => settingsRepo.get());
@@ -224,13 +222,6 @@ router.handle('settings:set', [t.object({
 });
 
 router.handle('history:get', [], () => historyRepo.all());
-router.handle('history:add', [t.object({
-  name: t.string({ max: 2000 }),
-  url: t.url(),
-  file: t.optional(t.string({ max: 1024 })),
-  site: t.optional(t.string({ max: 100 })),
-  format: t.oneOf(...FORMATS),
-})], (_e, entry) => historyRepo.add(entry).then(() => undefined));
 router.handle('history:clear', [], () => historyRepo.clear().then(() => undefined));
 
 router.handle('library:list', [t.optional(t.string({ max: 1024 }))], async () => listLibrary((await settingsRepo.get()).folder));
@@ -267,17 +258,22 @@ app.whenReady().then(async () => {
   await engine.reconcileEngine();
   engine.cleanInfoCache();
   approvedFolders.add((await settingsRepo.get()).folder);
+  await coordinator.init();
   createWindow();
 });
 app.on('window-all-closed', () => app.quit());
-// Quitting waits (briefly) until yt-dlp and ffmpeg have exited, so no download keeps running
-// without Grab and no file stays locked.
+// Quitting saves the queue and waits (briefly) until yt-dlp and ffmpeg have exited, so no
+// download keeps running without Grab and no file stays locked.
 let quitting = false;
 app.on('before-quit', (event) => {
-  browserSession.disconnectBrowser();
-  if (quitting || !engine.busy()) return;
+  if (quitting) return;
   event.preventDefault();
   quitting = true;
-  stopAllJobs();
-  engine.stopAll(8000).finally(() => app.quit());
+  coordinator.shutdown()
+    .then(() => engine.stopAll(8000))
+    .finally(() => { browserSession.disconnectBrowser(); app.quit(); });
 });
+
+// For the end-to-end checks (e2e/): rows shown as given, with nothing running. Main-process
+// code only; the renderer can't reach it. Not in the installed app.
+if (!app.isPackaged) module.exports.__e2e = { seedQueue: (items, options) => coordinator.seed(items, options), coordinator };

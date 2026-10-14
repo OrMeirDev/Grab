@@ -8,7 +8,7 @@ import Sidebar from '../components/Sidebar.jsx';
 import AppUpdateBanner from '../components/AppUpdateBanner.jsx';
 import useLinkDraft from '../features/intake/useLinkDraft.js';
 import useSettings from '../features/settings/useSettings.js';
-import useDownloadQueue from '../features/downloads/useDownloadQueue.js';
+import useDownloads from '../features/downloads/useDownloads.js';
 import useSupportedSites from '../features/sites/useSupportedSites.js';
 import DownloadsPage from '../features/downloads/DownloadsPage.jsx';
 import HistoryPage from '../features/history/HistoryPage.jsx';
@@ -21,7 +21,7 @@ import BrowserConnectionGuide from '../features/browser/BrowserConnectionGuide.j
 export default function AppShell() {
   const draft = useLinkDraft();
   const [settings, saveSettings] = useSettings();
-  const downloads = useDownloadQueue({ settings });
+  const downloads = useDownloads();
   const sites = useSupportedSites();
   const engine = useEngine({ busy: downloads.busy, onUpdated: sites.reload });
   const appUpdate = useAppUpdate();
@@ -35,10 +35,11 @@ export default function AppShell() {
     sites.load();
   }, []);
 
-  const identify = () => {
+  const identify = async () => {
     if (!api || !draft.parsed.length) return;
-    const skipped = downloads.addLinks(draft.parsed);
+    const links = draft.parsed;
     draft.clear();
+    const skipped = await downloads.addLinks(links);
     if (skipped) setNotice(`${skipped} קישורים כבר היו בתור ודילגתי עליהם`);
   };
   const requeue = (h) => { downloads.requeue(h); setPage('downloads'); };

@@ -1,7 +1,9 @@
 // GRB-01: after one YouTube download the queue rests 5–10 seconds, then must start the next one by
-// itself. Runs the real app with yt-dlp replaced by an instant fake (nothing is downloaded or
-// looked up online): pastes two YouTube links, identifies them, presses "download all" and waits.
-// Passes when both rows reach "done" within 25 seconds. Throwaway profile; exit code 0/1.
+// itself. GRB-02: the queue belongs to the main process, so reloading the window during that rest
+// neither loses nor repeats a job. Runs the real app with yt-dlp replaced by an instant fake
+// (nothing is downloaded or looked up online): pastes two YouTube links, identifies them, presses
+// "download all", reloads the window after the first download, and waits. Passes when both rows
+// reach "done" within 25 seconds, each started exactly once. Throwaway profile; exit code 0/1.
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -41,11 +43,20 @@ app.whenReady().then(async () => {
   for (let i = 0; i < 100 && (await js(`document.querySelectorAll('.queue-item.is-ready').length`)) < 2; i++) await wait(100);
   await js(`[...document.querySelectorAll('button')].find((b) => b.textContent.includes('הורד הכול')).click()`);
   const t0 = Date.now();
+  let reloaded = false;
   while (Date.now() - t0 < 25000) {
-    if ((await js(`document.querySelectorAll('.queue-item.is-done').length`)) === 2) {
+    if (!reloaded && started.length === 1 && (await js(`document.querySelectorAll('.queue-item.is-done').length`).catch(() => 0)) === 1) {
+      reloaded = true;
+      win.webContents.reload();
+      await wait(1500);
+      while (!(await js(`document.querySelectorAll('.queue-item').length`).catch(() => 0))) await wait(100);
+      console.log('reloaded during the rest; rows after reload:', await js(`document.querySelectorAll('.queue-item').length`));
+    }
+    if ((await js(`document.querySelectorAll('.queue-item.is-done').length`).catch(() => 0)) === 2) {
       const gap = started[1].at - started[0].at;
-      console.log(`PASS both downloads finished; second started ${gap} ms after the first`);
-      app.exit(gap >= 5000 ? 0 : 1);
+      const ok = gap >= 5000 && started.length === 2 && reloaded;
+      console.log(`${ok ? 'PASS' : 'FAIL'} both downloads finished; second started ${gap} ms after the first; starts: ${started.length}; reloaded: ${reloaded}`);
+      app.exit(ok ? 0 : 1);
       return;
     }
     await wait(250);

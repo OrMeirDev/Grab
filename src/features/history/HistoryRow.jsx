@@ -1,6 +1,7 @@
 import React from 'react';
 import { FolderOpen, Play, RotateCcw, Film, Music } from 'lucide-react';
 import { fmtDate } from '../../presentation/formatters.js';
+import { siteInfo } from '../../presentation/sitePresentation.js';
 
 // One completed download. missing: the file was moved or deleted since.
 export default function HistoryRow({ entry, missing, onOpen, onShow, onRequeue }) {
@@ -10,7 +11,7 @@ export default function HistoryRow({ entry, missing, onOpen, onShow, onRequeue }
       <div className="row-info">
         <div className="row-name">{entry.name}</div>
         <div className="row-meta">
-          {[entry.site, fmtDate(entry.completedAt)].filter(Boolean).join(' · ')}
+          {[siteInfo(entry.site)?.name, fmtDate(entry.completedAt)].filter(Boolean).join(' · ')}
           {missing && <span className="tag-muted"> · הקובץ הועבר או נמחק</span>}
         </div>
       </div>

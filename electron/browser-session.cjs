@@ -189,10 +189,13 @@ async function withSessionCookies(reference, work) {
   }
 }
 
+// A job that no longer needs its page's cookies (finished, removed, looked up again).
+function forgetCookies(reference) { cookieSnapshots.delete(reference); }
+
 function disconnectBrowser() {
   if (client) client.disconnect();
   // Called on app shutdown, including while a download is being cancelled.
   for (const dir of activeCookieDirs) fs.rmSync(dir, { recursive: true, force: true });
   activeCookieDirs.clear();
 }
-module.exports = { connectBrowser, defaultBrowser, chooseTarget, rememberCookies, withSessionCookies, disconnectBrowser, CdpClient, readEndpoint };
+module.exports = { connectBrowser, defaultBrowser, chooseTarget, rememberCookies, withSessionCookies, forgetCookies, disconnectBrowser, CdpClient, readEndpoint };
