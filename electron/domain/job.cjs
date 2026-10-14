@@ -11,6 +11,8 @@
 //   error        -> lookup or download failed (retry is offered)
 // Exactly one owner moves jobs between these states: the DownloadCoordinator.
 
+const { linkHasSecret, stripLinksInText } = require('./secrets.cjs');
+
 const STATES = ['waiting', 'analyzing', 'ready', 'queued', 'downloading', 'paused', 'done', 'error'];
 
 // Fields the renderer sees. Session material (cookie handles, request headers), signed media
@@ -28,13 +30,19 @@ function toPublic(job) {
 }
 
 // Fields kept across restarts. Not kept: cookies, request context, signed media URLs, lookup
-// files (they expire, and they are sensitive).
+// files and thumbnails (they expire, and they can carry signatures). needsSession records only
+// that the lookup used a browser session, so the job is looked up again before it downloads.
 const DURABLE_FIELDS = ['id', 'url', 'label', 'name', 'nameEdited', 'status', 'progress', 'site', 'siteKey', 'duration', 'height',
-  'thumbnail', 'title', 'error', 'analyzeFailed', 'autoRetried', 'forcePage', 'autoQueue', 'fromPage', 'outputBase', 'signInHint'];
+  'title', 'error', 'analyzeFailed', 'autoRetried', 'forcePage', 'autoQueue', 'fromPage', 'needsSession', 'outputBase', 'signInHint'];
 
+// -> the job as saved in queue.json, or null when it can't be saved safely: a pasted link that
+// itself carries a token, signature or credentials is not written to disk (that job is not
+// restored after a restart).
 function toDurable(job) {
+  if (linkHasSecret(job.url)) return null;
   const out = {};
   for (const key of DURABLE_FIELDS) if (job[key] !== undefined && job[key] !== null) out[key] = job[key];
+  if (out.error) out.error = { ...out.error, message: stripLinksInText(out.error.message) };
   return out;
 }
 
@@ -44,7 +52,9 @@ function toDurable(job) {
 function restore(saved) {
   if (!saved || typeof saved !== 'object' || typeof saved.id !== 'string' || typeof saved.url !== 'string' || !STATES.includes(saved.status)) return null;
   if (saved.status === 'done') return null;
-  const job = { ...toDurable(saved), progress: Number(saved.progress) || 0 };
+  const durable = toDurable(saved);
+  if (!durable) return null;
+  const job = { ...durable, progress: Number(saved.progress) || 0 };
   if (job.status === 'downloading' || job.status === 'queued') job.status = 'paused';
   if (job.status === 'analyzing') job.status = 'waiting';
   return job;

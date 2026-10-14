@@ -137,6 +137,7 @@ async function connectBrowser({ endpointFile, browser = endpointFile ? { name: '
     catch (error) { connected.disconnect(); throw sessionError(error.message, 'browserSession', browser); }
     connected.browser = browser;
     connected.endpoint = endpoint;
+    watchConnection(connected);
     client = connected;
     connected.once('disconnected', () => { if (client === connected) client = null; });
     return connected;
@@ -168,7 +169,14 @@ async function chooseTarget(cdp, pageUrl, { refresh = false } = {}) {
 
 // The page cookies captured by a lookup, behind opaque handles (see infrastructure/cookie-vault.cjs).
 const vault = new CookieVault();
-const rememberCookies = (cookies) => vault.remember(cookies);
+const rememberCookies = (cookies, options) => vault.remember(cookies, options);
+
+// When the connection to the user's browser is lost (browser closed, connection revoked), the
+// account cookies it gave are dropped: a job that still needs them is looked up again (GRB-07).
+function watchConnection(cdp) {
+  cdp.once('disconnected', () => vault.forgetSource('browser'));
+  return cdp;
+}
 const withSessionCookies = (reference, work) => vault.withJar(reference, work);
 
 // A job that no longer needs its page's cookies (finished, removed, looked up again).
@@ -180,4 +188,4 @@ function disconnectBrowser() {
   if (client) client.disconnect();
   vault.clear();
 }
-module.exports = { connectBrowser, defaultBrowser, chooseTarget, rememberCookies, withSessionCookies, forgetCookies, disconnectBrowser, scavengeCookieJars: () => vault.scavenge(), CdpClient, readEndpoint };
+module.exports = { connectBrowser, defaultBrowser, chooseTarget, rememberCookies, withSessionCookies, forgetCookies, watchConnection, disconnectBrowser, scavengeCookieJars: () => vault.scavenge(), CdpClient, readEndpoint };

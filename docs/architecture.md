@@ -78,8 +78,12 @@ and `paused` after a restart. Only the coordinator changes states.
   it always triggers a new page lookup, never a download without the session.
 - Pause/stop ends the whole yt-dlp/ffmpeg tree; the next attempt waits until it has exited.
 - A process exit of 0 counts only when the output file exists.
-- Quitting keeps running/queued jobs as `paused` in `queue.json` (no cookies, headers, signed URLs
-  or lookup files are saved); nothing starts by itself after a restart.
+- Quitting keeps running/queued jobs as `paused` in `queue.json` (no cookies, headers, media
+  addresses, lookup files or thumbnails; a pasted link carrying a token/signature/credentials is
+  not saved at all); nothing starts by itself after a restart.
+- A job whose lookup used a browser session keeps only a `needsSession` flag on disk. Without a
+  live cookie handle (after a restart, or after the browser connection was lost, which drops the
+  account cookies) it is looked up again before any request is sent.
 
 ## IPC
 

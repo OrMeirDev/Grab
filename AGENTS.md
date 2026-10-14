@@ -34,7 +34,11 @@ rule only together with docs/architecture.md and an ADR.
 ## Rules that protect users
 
 - No cookies, cookie files, request headers, signed media URLs or lookup files in renderer
-  snapshots, history, `queue.json`, logs or diagnostics (`infrastructure/diagnostics.cjs` redacts).
+  snapshots, history, `queue.json`, logs or diagnostics (`infrastructure/diagnostics.cjs` redacts;
+  `domain/secrets.cjs` keeps token-bearing pasted links out of `queue.json`). Exception, by design:
+  history keeps the link the user pasted, because "download again" needs it.
+- A job that needed the user's session must never send a request without it: no live handle →
+  look it up again first (`needsSession` in the coordinator).
 - Cookies live only in `CookieVault` behind opaque handles; an expired handle is an error that
   triggers a new lookup, never a download without the session.
 - Every engine process goes through `process-runner.cjs` (deadline, bounded output, tree stop).

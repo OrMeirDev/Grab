@@ -132,7 +132,7 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
     ];
     const urls = [...new Set([pageUrl, ...candidates.map((c) => c.url)])];
     const { cookies = [] } = await cdp.send('Network.getCookies', { urls }, rootSessionId);
-    return { candidates, title: title.trim(), reusedTab: !target.created, requestContext: { userAgent, referer: pageUrl }, protected: drm && !media.some((m) => m.kind === 'file'), cookieRef: browserSession.rememberCookies(cookies), diagnostics };
+    return { candidates, title: title.trim(), reusedTab: !target.created, requestContext: { userAgent, referer: pageUrl }, protected: drm && !media.some((m) => m.kind === 'file'), cookieRef: browserSession.rememberCookies(cookies, { source: 'browser' }), diagnostics };
   } finally {
     cdp.removeListener('event', onEvent);
     // Detach from existing tabs; only close the background tab created for this lookup.

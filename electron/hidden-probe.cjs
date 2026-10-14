@@ -123,7 +123,7 @@ async function findMedia(pageUrl, { timeoutMs = 20000 } = {}) {
     ...media.map((m) => ({ url: m.url, kind: m.kind, size: m.size, requestContext: context(m.url) })),
     ...playerEmbeds(embeds, pageUrl, isNotPlayer).map((u) => ({ url: u, kind: 'embed', size: 0, requestContext: { userAgent: UA, referer: pageUrl } })),
   ];
-  const cookieRef = cookies.length ? browserSession.rememberCookies(cookies) : null;
+  const cookieRef = cookies.length ? browserSession.rememberCookies(cookies, { source: 'probe' }) : null;
   cookies = null;
   return { candidates, title: title.trim(), protected: drm && !media.some((m) => m.kind === 'file'), cookieRef, diagnostics };
 }

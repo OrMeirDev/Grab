@@ -115,7 +115,7 @@ class DownloadCoordinator {
   async flush() {
     if (this.saveTimer) { this.d.clock.clearTimeout(this.saveTimer); this.saveTimer = null; }
     if (!this.d.store) return;
-    try { await this.d.store.save(this.jobs.filter((j) => j.status !== 'done').map(toDurable)); } catch { /* next change saves again */ }
+    try { await this.d.store.save(this.jobs.filter((j) => j.status !== 'done').map(toDurable).filter(Boolean)); } catch { /* next change saves again */ }
   }
 
   clearTimers() {
@@ -333,8 +333,18 @@ class DownloadCoordinator {
       // Found inside the page's player: download from that address, as the page does.
       mediaUrl: info.mediaUrl || null, referer: info.referer || null, fromPage: !!info.mediaUrl,
       cookieRef: info.cookieRef || null, requestContext: info.requestContext || null,
+      // The lookup needed a browser session: without a live handle for it, look up again.
+      needsSession: !!info.cookieRef,
     });
     if (autoQueue) { this.running = true; this.changed(); this.pumpDownloads(); }
+  }
+
+  // Looks a job up again and queues it once found (inside the page's player when that is where it
+  // came from); used when its session is gone. Not counted as the automatic retry.
+  relookup(job) {
+    this.forget(job);
+    this.update(job.id, { status: 'waiting', forcePage: !!job.fromPage, autoQueue: true });
+    this.pumpLookups();
   }
 
   retryLater(fn) {
@@ -352,6 +362,13 @@ class DownloadCoordinator {
       this.running = false;
       if (this.restTimer) { this.d.clock.clearTimeout(this.restTimer); this.restTimer = null; }
       this.changed();
+      return;
+    }
+    // Its session is gone (Grab restarted, or the browser disconnected and the snapshot was
+    // dropped): look it up again first, never send the site a request without the session.
+    if (next.needsSession && !next.cookieRef) {
+      this.relookup(next);
+      this.pumpDownloads();
       return;
     }
     const isYouTube = !next.site || /youtube/i.test(next.site);
@@ -415,11 +432,9 @@ class DownloadCoordinator {
       this.update(job.id, { status: 'queued' });
       this.retryLater(() => this.pumpDownloads());
     } else if (r.kind === 'contextExpired') {
-      // The page's session snapshot expired (or Grab restarted): never download without it; look
-      // the page up again for a fresh one. This is not the job's one automatic retry.
-      this.forget(job);
-      this.update(job.id, { status: 'waiting', forcePage: true, autoQueue: true });
-      this.pumpLookups();
+      // The session snapshot expired or was dropped (the browser disconnected) before anything was
+      // sent: look it up again for a fresh one. This is not the job's one automatic retry.
+      this.relookup(job);
     } else if (r.kind === 'blocked') {
       this.update(job.id, { status: 'queued', infoFile: null }); // resumes from where it stopped
       this.block(job.siteKey);

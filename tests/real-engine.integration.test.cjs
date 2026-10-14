@@ -46,3 +46,58 @@ test('real yt-dlp: session cookies and context, template escaping, progress, ver
     fs.rmSync(out, { recursive: true, force: true });
   }
 });
+
+test('real yt-dlp: a session download resumed after a restart is looked up again and never reaches the site without the cookie', { skip, timeout: 120000 }, async () => {
+  const site = await require('./fixtures/media-site.cjs').start();
+  const engine = require('../electron/engine.cjs');
+  const browser = require('../electron/browser-session.cjs');
+  const { DownloadCoordinator } = require('../electron/application/download-coordinator.cjs');
+  const { createDownloadRunner } = require('../electron/application/download-runner.cjs');
+  const { OutputAllocator } = require('../electron/infrastructure/output-allocator.cjs');
+  engine.setUserBinDir(DIR);
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-real-restart-'));
+  const saved = {};
+  const page = site.base + '/watch';
+  // The lookup a signed-in browser would give: the player's source, its context, the session cookie.
+  const lookup = async () => ({
+    ok: true, title: 'Session lesson', site: 'Generic', mediaUrl: site.base + '/media/big.mp4', referer: page,
+    requestContext: { userAgent: 'Grab test', referer: page },
+    cookieRef: browser.rememberCookies([{ domain: '127.0.0.1', path: '/', name: 'play', value: 'granted', session: true }], { source: 'browser' }),
+  });
+  const run = () => {
+    const runner = createDownloadRunner({ engine, browserSession: browser, allocator: new OutputAllocator() });
+    let lookups = 0;
+    const c = new DownloadCoordinator({
+      random: () => 0,
+      store: { load: async () => saved.list || [], save: async (l) => { saved.list = JSON.parse(JSON.stringify(l)); } },
+      getSettings: async () => ({ folder: out, format: 'mp4', quality: 'best' }),
+      recordCompletion: async () => {},
+      discover: async () => { lookups++; return lookup(); },
+      startDownload: (plan, p) => runner.start(plan, p),
+    });
+    return { c, lookups: () => lookups };
+  };
+  const until = async (fn, ms = 60000) => { const t0 = Date.now(); while (!fn() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 50)); };
+  try {
+    const one = run();
+    one.c.add([{ url: page }]);
+    await until(() => one.c.jobs[0]?.status === 'ready');
+    await one.c.shutdown();
+    browser.disconnectBrowser(); // quitting Grab
+    const before = site.log.length;
+
+    const two = run();
+    await two.c.init();
+    two.c.downloadOne(two.c.jobs[0].id);
+    await until(() => ['done', 'error'].includes(two.c.jobs[0].status));
+    assert.equal(two.c.jobs[0].status, 'done', JSON.stringify(two.c.jobs[0].error));
+    assert.equal(two.lookups(), 1, 'looked up again after the restart');
+    // Every request the site saw after the restart (page or media) carried the session.
+    const after = site.log.slice(before);
+    assert.ok(after.some((l) => l.url === '/media/big.mp4'));
+    assert.deepEqual(after.filter((l) => !/play=granted/.test(l.cookie || '')).map((l) => l.url), [], 'no request without the session cookie');
+  } finally {
+    await site.close();
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+});

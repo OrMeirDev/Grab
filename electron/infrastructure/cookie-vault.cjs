@@ -25,9 +25,11 @@ class CookieVault {
     this.activeDirs = new Set();
   }
 
-  remember(cookies) {
+  // source: 'browser' (the user's signed-in browser; the default) or 'probe' (the hidden probe's
+  // throwaway session). Browser snapshots are dropped when that connection is lost.
+  remember(cookies, { source = 'browser' } = {}) {
     const reference = crypto.randomUUID();
-    this.snapshots.set(reference, { cookies: Array.isArray(cookies) ? cookies : [], at: this.now() });
+    this.snapshots.set(reference, { cookies: Array.isArray(cookies) ? cookies : [], at: this.now(), source });
     this.prune();
     return reference;
   }
@@ -37,6 +39,12 @@ class CookieVault {
   }
 
   forget(reference) { this.snapshots.delete(reference); }
+
+  // Drops every snapshot from one source. Jars already handed to a running yt-dlp stay until
+  // that run ends (it reads and rewrites its jar); no new run can get one.
+  forgetSource(source) {
+    for (const [key, value] of this.snapshots) if (value.source === source) this.snapshots.delete(key);
+  }
 
   has(reference) {
     const s = this.snapshots.get(reference);
