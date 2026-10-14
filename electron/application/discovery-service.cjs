@@ -7,6 +7,15 @@
 // Each candidate found by 2 or 3 is checked with yt-dlp, with the page's cookies and request
 // headers. DRM-protected players are reported as such, never touched.
 //
+// requireSession: the job is known to need the user's signed-in browser session (it needed it
+// before; see domain/job.cjs requiresBrowserSession). Then 1 and 2 are skipped: the session is
+// acquired from the browser first, and every request of the lookup carries it. If the browser
+// can't be reached or refuses the connection, the lookup ends with 'sessionRequired' before
+// anything is sent to the site; there is no fallback to a lookup without the session.
+//
+// Results carry sessionSource: 'browser' (the cookies are the user's account session) or 'probe'
+// (the hidden probe's throwaway public-page cookies).
+//
 // Dependencies are injected (engine, probes, browser session) so this is testable without Electron.
 const { budget } = require('../domain/candidate-policy.cjs');
 
@@ -33,9 +42,19 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
     return r;
   }
 
-  async function lookup(url, { forcePage = false, onPhase = () => {}, signal } = {}) {
+  async function lookup(url, { forcePage = false, requireSession = false, onPhase = () => {}, signal } = {}) {
     const deadline = now() + LOOKUP_BUDGET_MS;
     const outOfTime = () => signal?.aborted || now() > deadline;
+    const context = { forcePage, requireSession, onPhase, signal, outOfTime };
+    if (requireSession) {
+      // No request without the session: neither yt-dlp without cookies nor the clean browser.
+      // forcePage (where the video came from) still decides between the site's own extractor
+      // (tried first, with the session) and the page's player.
+      const first = forcePage
+        ? { ok: false, kind: 'notfound', error: 'Unsupported URL' }
+        : { ok: false, kind: 'private', error: 'The site needs your browser session' };
+      return browserLookup(url, first, context);
+    }
     // forcePage: what yt-dlp found at the link didn't download, so go straight to the page's player.
     const first = forcePage ? { ok: false, kind: 'notfound', error: 'Unsupported URL' } : await engine.analyze(url, { signal });
     if (first.ok || !['notfound', 'private', 'blocked', 'other'].includes(first.kind)) return first;
@@ -55,9 +74,13 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
       if (hidden.protected) return { ok: false, kind: 'protected', error: 'DRM' };
     }
     if (signal?.aborted) return { ok: false, kind: 'cancelled', error: 'cancelled' };
+    return browserLookup(url, first, context);
+  }
 
-    // 2. Backup: the user's default browser, when its remote debugging is on. If it isn't,
-    //    report what the clean lookup found, with how to turn it on.
+  // 2. The user's default browser, when its remote debugging is on. If it isn't, report what the
+  //    clean lookup found, with how to turn it on (or, when the session is required, that it is).
+  async function browserLookup(url, first, { forcePage, requireSession, onPhase, signal, outOfTime }) {
+    const host = (() => { try { return new URL(url).host; } catch { return ''; } })();
     const browser = browserSession.defaultBrowser();
     onPhase('browser', browser.name);
     const connect = () => browserSession.connectBrowser({ browser });
@@ -68,8 +91,13 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
       if (probe.reusedTab && !probe.candidates.length) probe = await pageprobe.findMedia(url, { refresh: true, connect });
       record('probe', { url, probe: 'browser', browser: browser.name, reusedTab: !!probe.reusedTab, candidates: probe.candidates.length, protected: !!probe.protected, diagnostics: probe.diagnostics || null });
     } catch (err) {
-      record('probe', { url, probe: 'browser', browser: browser.name, failed: err.kind || 'error' });
+      record('probe', { url, probe: 'browser', browser: browser.name, failed: err.kind || 'error', requireSession });
       if (err.kind === 'browserContext') return { ...first, kind: 'browserContext', browser: { name: browser.name } };
+      if (requireSession) {
+        // Closed, debugging off, connection refused, or a browser that can't be used: the site
+        // hasn't been contacted, and isn't without the session.
+        return { ok: false, kind: 'sessionRequired', error: String(err.message || 'The browser session is not available'), browser: { name: browser.name, scheme: browser.scheme, supported: browser.supported !== false } };
+      }
       // The browser can't be reached (closed, debugging off, or not supported): say how to fix it.
       const hint = ['browserSession', 'browserUnsupported'].includes(err.kind)
         ? { browser: { name: browser.name, scheme: browser.scheme, supported: browser.supported !== false } } : {};
@@ -79,7 +107,7 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
       // An authenticated extractor may understand the page better than its embedded sources.
       if (!forcePage && ['private', 'blocked'].includes(first.kind)) {
         const authenticated = await engine.analyze(url, { cookieFile, requestContext: probe.requestContext, signal });
-        if (authenticated.ok) return { ...authenticated, cookieRef: probe.cookieRef, requestContext: probe.requestContext };
+        if (authenticated.ok) return { ...authenticated, cookieRef: probe.cookieRef, sessionSource: 'browser', requestContext: probe.requestContext };
       }
       let last;
       for (const c of budget(probe.candidates)) {
@@ -89,7 +117,7 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
         const r = await engine.analyze(c.url, { cookieFile, requestContext, referer: url, title: c.kind === 'embed' ? undefined : probe.title, signal });
         if (r.ok) {
           if (first.kind === 'notfound') signedInSites.add(host);
-          return { ...r, mediaUrl: c.url, referer: requestContext?.referer || url, requestContext, cookieRef: probe.cookieRef };
+          return { ...r, mediaUrl: c.url, referer: requestContext?.referer || url, requestContext, cookieRef: probe.cookieRef, sessionSource: 'browser' };
         }
         last = r;
       }
@@ -109,7 +137,7 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
         if (outOfTime()) return null;
         const requestContext = c.requestContext;
         const r = await engine.analyze(c.url, { cookieFile, requestContext, referer: url, title: c.kind === 'embed' ? undefined : hidden.title, signal });
-        if (r.ok) return { ...r, mediaUrl: c.url, referer: requestContext?.referer || url, requestContext: requestContext || null, cookieRef: hidden.cookieRef || null };
+        if (r.ok) return { ...r, mediaUrl: c.url, referer: requestContext?.referer || url, requestContext: requestContext || null, cookieRef: hidden.cookieRef || null, sessionSource: hidden.cookieRef ? 'probe' : null };
       }
       return null;
     });

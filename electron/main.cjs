@@ -57,6 +57,7 @@ const coordinator = new DownloadCoordinator({
   getSettings: () => settingsRepo.get(),
   recordCompletion: (entry) => historyRepo.add(entry),
   // A job's private lookup data ends with it: its cookie snapshot, its lookup file, its file name.
+  hasSession: (cookieRef) => browserSession.hasCookies(cookieRef),
   releaseContext: (job, { finished }) => {
     if (job.cookieRef) browserSession.forgetCookies(job.cookieRef);
     if (job.infoFile && engine.isInfoFile(job.infoFile)) fs.rm(job.infoFile, { force: true }, () => {});

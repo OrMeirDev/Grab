@@ -178,6 +178,8 @@ function watchConnection(cdp) {
   return cdp;
 }
 const withSessionCookies = (reference, work) => vault.withJar(reference, work);
+// Whether a cookie handle is still usable (not expired, forgotten or dropped by a disconnect).
+const hasCookies = (reference) => !!reference && vault.has(reference);
 
 // A job that no longer needs its page's cookies (finished, removed, looked up again).
 function forgetCookies(reference) { vault.forget(reference); }
@@ -188,4 +190,4 @@ function disconnectBrowser() {
   if (client) client.disconnect();
   vault.clear();
 }
-module.exports = { connectBrowser, defaultBrowser, chooseTarget, rememberCookies, withSessionCookies, forgetCookies, watchConnection, disconnectBrowser, scavengeCookieJars: () => vault.scavenge(), CdpClient, readEndpoint };
+module.exports = { connectBrowser, defaultBrowser, chooseTarget, rememberCookies, withSessionCookies, forgetCookies, hasCookies, watchConnection, disconnectBrowser, scavengeCookieJars: () => vault.scavenge(), CdpClient, readEndpoint };

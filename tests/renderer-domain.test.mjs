@@ -49,6 +49,8 @@ test('update and error messages', () => {
   assert.equal(errorLabel('protected', 'x'), 'הסרטון מוגן בהגנת העתקה (DRM), ואי אפשר להוריד אותו');
   assert.equal(errorLabel('weird', 'fallback'), 'fallback');
   assert.match(errorLabel('browserContext', 'x', { name: 'Brave' }), /Brave/);
+  assert.equal(errorLabel('sessionRequired', 'x', { name: 'Edge' }), 'האתר דורש את Edge שבו אתה מחובר. פתח אותו, אשר את החיבור ונסה שוב');
+  assert.match(errorLabel('sessionRequired', 'x', null), /הדפדפן/);
 });
 
 test('site search: links reduce to their name, adult sites only on exact search', () => {

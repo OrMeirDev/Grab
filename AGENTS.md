@@ -37,8 +37,11 @@ rule only together with docs/architecture.md and an ADR.
   snapshots, history, `queue.json`, logs or diagnostics (`infrastructure/diagnostics.cjs` redacts;
   `domain/secrets.cjs` keeps token-bearing pasted links out of `queue.json`). Exception, by design:
   history keeps the link the user pasted, because "download again" needs it.
-- A job that needed the user's session must never send a request without it: no live handle →
-  look it up again first (`needsSession` in the coordinator).
+- A job that needed the user's session must never send a request without it, during lookups as
+  well as downloads: no live handle → look it up again with `requireSession` (browser session
+  first, no cookieless yt-dlp, no clean hidden probe, `sessionRequired` if the browser is
+  unavailable). Missing provenance never allows a fallback. Tests for this must run the real
+  coordinator and the real discovery service (`tests/session-discovery.test.cjs`).
 - Cookies live only in `CookieVault` behind opaque handles; an expired handle is an error that
   triggers a new lookup, never a download without the session.
 - Every engine process goes through `process-runner.cjs` (deadline, bounded output, tree stop).

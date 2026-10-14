@@ -31,9 +31,15 @@ function toPublic(job) {
 
 // Fields kept across restarts. Not kept: cookies, request context, signed media URLs, lookup
 // files and thumbnails (they expire, and they can carry signatures). needsSession records only
-// that the lookup used a browser session, so the job is looked up again before it downloads.
+// that the lookup used cookies, and sessionSource where they came from ('browser': the user's
+// signed-in browser; 'probe': the hidden probe's throwaway public-page session).
 const DURABLE_FIELDS = ['id', 'url', 'label', 'name', 'nameEdited', 'status', 'progress', 'site', 'siteKey', 'duration', 'height',
-  'title', 'error', 'analyzeFailed', 'autoRetried', 'forcePage', 'autoQueue', 'fromPage', 'needsSession', 'outputBase', 'signInHint'];
+  'title', 'error', 'analyzeFailed', 'autoRetried', 'forcePage', 'autoQueue', 'fromPage', 'needsSession', 'sessionSource', 'outputBase', 'signInHint'];
+
+// A job whose site is known to need the user's signed-in browser session: every request for it,
+// lookups included, must carry that session. Unknown provenance (a job saved by an older version)
+// counts as the browser: missing metadata never allows a request without the session.
+const requiresBrowserSession = (job) => !!job.needsSession && job.sessionSource !== 'probe';
 
 // -> the job as saved in queue.json, or null when it can't be saved safely: a pasted link that
 // itself carries a token, signature or credentials is not written to disk (that job is not
@@ -60,4 +66,4 @@ function restore(saved) {
   return job;
 }
 
-module.exports = { STATES, toPublic, toDurable, restore };
+module.exports = { STATES, toPublic, toDurable, restore, requiresBrowserSession };

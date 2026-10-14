@@ -81,9 +81,17 @@ and `paused` after a restart. Only the coordinator changes states.
 - Quitting keeps running/queued jobs as `paused` in `queue.json` (no cookies, headers, media
   addresses, lookup files or thumbnails; a pasted link carrying a token/signature/credentials is
   not saved at all); nothing starts by itself after a restart.
-- A job whose lookup used a browser session keeps only a `needsSession` flag on disk. Without a
-  live cookie handle (after a restart, or after the browser connection was lost, which drops the
-  account cookies) it is looked up again before any request is sent.
+- A job whose lookup used cookies keeps only `needsSession` and `sessionSource` (`browser` for the
+  user's account session, `probe` for the hidden probe's public-page cookies) on disk.
+  `requiresBrowserSession(job)` (domain/job.cjs) is true for `needsSession` unless the source is
+  `probe`; missing provenance counts as the browser. Without a live cookie handle (after a
+  restart, an expiry, or a browser disconnect, which drops account cookies; checked with
+  `hasSession` before any network work) the job is looked up again. For a job that requires the
+  browser session, that lookup (`discover(..., { requireSession })`) skips the cookieless yt-dlp
+  call and the clean hidden probe, acquires the session from the user's browser first, and tries
+  the site's own extractor with it before the page's player (unless the video came from the
+  player). If the browser can't be reached it ends with `sessionRequired` without contacting the
+  site. So no lookup or download request for such a job is sent without the session.
 
 ## IPC
 

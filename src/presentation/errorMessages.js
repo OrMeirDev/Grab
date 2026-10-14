@@ -14,6 +14,9 @@ const ERROR_LABELS = {
 export const LOOKUP_FAILED = 'לא נמצא סרטון בקישור';
 export const DOWNLOAD_FAILED = 'ההורדה נכשלה';
 
-export const errorLabel = (kind, fallback, browser) => (kind === 'browserContext' && browser
-  ? `העמוד פתוח בכמה סשנים של ${browser.name}; השאר אותו פתוח בסשן שבו אתה מחובר`
-  : ERROR_LABELS[kind] || fallback);
+export const errorLabel = (kind, fallback, browser) => {
+  if (kind === 'browserContext' && browser) return `העמוד פתוח בכמה סשנים של ${browser.name}; השאר אותו פתוח בסשן שבו אתה מחובר`;
+  // A site that needs the user's browser session, while that browser can't be reached.
+  if (kind === 'sessionRequired') return `האתר דורש את ${browser?.name || 'הדפדפן'} שבו אתה מחובר. פתח אותו, אשר את החיבור ונסה שוב`;
+  return ERROR_LABELS[kind] || fallback;
+};

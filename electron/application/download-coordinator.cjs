@@ -14,7 +14,7 @@
 //
 // Everything outside is injected: discover, startDownload, history, settings, store, clock, random.
 const { siteKey, sameLinkKey } = require('../domain/site-policy.cjs');
-const { toPublic, toDurable, restore } = require('../domain/job.cjs');
+const { toPublic, toDurable, restore, requiresBrowserSession } = require('../domain/job.cjs');
 
 const LOOKUP_GAP_MS = 2000; // plus up to the same again at random
 const DOWNLOAD_REST_MS = 5000; // 5–10 seconds between YouTube downloads
@@ -30,6 +30,8 @@ class DownloadCoordinator {
   //   getSettings() -> Promise<{ folder, format, quality }>
   //   recordCompletion(entry) -> Promise (history)
   //   releaseContext(job) -> forget the job's private lookup data (cookies, info file, name)
+  //   hasSession(cookieRef) -> whether that cookie snapshot is still usable (not expired, not
+  //     dropped by a browser disconnect); checked before any network work for the job
   //   store: { load(), save(list) } for the durable queue (optional)
   //   onChange(snapshot), clock, random, newId
   constructor(deps) {
@@ -282,11 +284,14 @@ class DownloadCoordinator {
     const controller = new AbortController();
     this.lookup = { jobId: job.id, controller };
     const { forcePage = false, autoQueue = false } = job;
+    // Known to need the user's browser session: the lookup acquires it before contacting the site.
+    const requireSession = requiresBrowserSession(job);
     this.update(job.id, { status: 'analyzing', error: null, signInHint: false, phase: forcePage ? 'page' : null, phaseBrowser: null });
     let info;
     try {
       info = await this.d.discover(job.url, {
         forcePage,
+        requireSession,
         signal: controller.signal,
         onPhase: (phase, browser) => {
           const j = this.find(job.id);
@@ -333,14 +338,17 @@ class DownloadCoordinator {
       // Found inside the page's player: download from that address, as the page does.
       mediaUrl: info.mediaUrl || null, referer: info.referer || null, fromPage: !!info.mediaUrl,
       cookieRef: info.cookieRef || null, requestContext: info.requestContext || null,
-      // The lookup needed a browser session: without a live handle for it, look up again.
+      // The lookup used cookies: without a live handle for them, look up again. Their source decides
+      // whether that lookup must go through the user's browser (anything not labelled 'probe' does).
       needsSession: !!info.cookieRef,
+      sessionSource: info.cookieRef ? (info.sessionSource === 'probe' ? 'probe' : 'browser') : null,
     });
     if (autoQueue) { this.running = true; this.changed(); this.pumpDownloads(); }
   }
 
   // Looks a job up again and queues it once found (inside the page's player when that is where it
-  // came from); used when its session is gone. Not counted as the automatic retry.
+  // came from); used when its session is gone. A job that needs the user's browser session is
+  // looked up through that session only (see runLookup). Not counted as the automatic retry.
   relookup(job) {
     this.forget(job);
     this.update(job.id, { status: 'waiting', forcePage: !!job.fromPage, autoQueue: true });
@@ -366,7 +374,7 @@ class DownloadCoordinator {
     }
     // Its session is gone (Grab restarted, or the browser disconnected and the snapshot was
     // dropped): look it up again first, never send the site a request without the session.
-    if (next.needsSession && !next.cookieRef) {
+    if (next.needsSession && (!next.cookieRef || (this.d.hasSession && !this.d.hasSession(next.cookieRef)))) {
       this.relookup(next);
       this.pumpDownloads();
       return;
