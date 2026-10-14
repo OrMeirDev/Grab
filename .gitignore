@@ -5,3 +5,4 @@ release/
 bin/
 .claude/
 *.log
+e2e/output/

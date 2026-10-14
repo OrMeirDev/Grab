@@ -1,0 +1,42 @@
+// Glass menu check: Grab's quality field in the action bar (second monitor, throwaway profile).
+const { app, BrowserWindow, screen } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const APP_DIR = path.join(__dirname, '..');
+const OUT_DIR = path.join(__dirname, 'output', path.basename(__filename, '.cjs'));
+fs.mkdirSync(OUT_DIR, { recursive: true });
+const dir = APP_DIR;
+const out = OUT_DIR;
+app.setPath('userData', fs.mkdtempSync(path.join(require('os').tmpdir(), 'menu-')));
+app.on('window-all-closed', () => {});
+app.whenReady().then(async () => {
+  require(path.join(dir, 'electron', 'main.cjs'));
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  setTimeout(() => app.exit(1), 90000);
+  let win; while (!(win = BrowserWindow.getAllWindows()[0])) await wait(30);
+  win.webContents.setZoomFactor(1); win.setContentSize(1347, 852);
+  const d = screen.getAllDisplays().find((x) => x.id !== screen.getPrimaryDisplay().id); if (d) win.setPosition(d.workArea.x + 40, d.workArea.y + 40);
+  win.show(); win.focus();
+  const js = (c) => win.webContents.executeJavaScript(c);
+  const shot = async (n) => { win.webContents.invalidate(); await wait(200); fs.writeFileSync(path.join(out, n), (await win.webContents.capturePage()).toPNG()); };
+  while (!(await js(`document.querySelectorAll('.gselect').length`))) await wait(50);
+  await wait(1200);
+  console.log('field:', await js(`document.querySelector('.action-bar .gselect').textContent`));
+  await js(`document.querySelector('.action-bar .gselect').click()`); await wait(400);
+  console.log('menu open:', await js(`!!document.querySelector('.gmenu')`), 'options:', await js(`[...document.querySelectorAll('.gm-item')].map((x) => x.textContent + (x.classList.contains('sel') ? ' ✓' : '')).join(' | ')`));
+  await shot('menu-open.png');
+  await js(`document.querySelector('.action-bar .gselect').focus()`);
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Down' }); await wait(80);
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Down' }); await wait(160);
+  await shot('menu-moving.png'); await wait(500);
+  await shot('menu-down2.png');
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); await wait(500);
+  console.log('after Enter: menu', await js(`!!document.querySelector('.gmenu')`), 'field:', await js(`document.querySelector('.action-bar .gselect').textContent`));
+  // settings page field too
+  await js(`[...document.querySelectorAll('.nav-item')].at(-1).click()`); await wait(700);
+  await js(`document.querySelector('.settings .gselect, .setting .gselect').click()`); await wait(400);
+  await shot('menu-settings.png');
+  await js(`document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`); await wait(300);
+  console.log('closed by outside click:', !(await js(`!!document.querySelector('.gmenu')`)));
+  app.exit(0);
+});

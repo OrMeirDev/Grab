@@ -12,7 +12,11 @@
     "start": "electron .",
     "dist": "vite build && electron-builder --win nsis --x64",
     "release": "vite build && electron-builder --win nsis --x64 --publish always",
-    "fetch-bin": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fetch-bin.ps1"
+    "fetch-bin": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fetch-bin.ps1",
+    "e2e:glass-menu": "vite build && electron e2e/glass-menu.cjs",
+    "e2e:layout": "vite build && electron e2e/layout.cjs",
+    "e2e:liquid-glass": "vite build && electron e2e/liquid-glass.cjs",
+    "e2e:screenshots": "vite build && electron e2e/screenshots.cjs"
   },
   "repository": "github:OrMeirDev/Grab",
   "devDependencies": {
