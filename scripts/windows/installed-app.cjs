@@ -8,7 +8,8 @@
 // node scripts/windows/installed-app.cjs --exe <Grab.exe> --user-data <%APPDATA%\Grab>
 //   --fixture <http://127.0.0.1:port> --fixture-log <file> --folder <download folder>
 //   --out <results dir> --version <expected app version> --media <the fixture's media file>
-const { spawn, execFileSync } = require('child_process');
+const { spawn, execFile, execFileSync } = require('child_process');
+const execFileAsync = require('util').promisify(execFile);
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -54,10 +55,25 @@ const diagnostics = () => {
   return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
 };
 
-// Samples the engine processes in the background: the most yt-dlp.exe ever alive at once.
+// Download attempts running now. The official yt-dlp.exe is a one-file bundle: each run is a
+// launcher plus its child, both named yt-dlp.exe, so an attempt is a yt-dlp.exe whose parent is not.
+async function engineAttempts() {
+  const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-Command', "Get-CimInstance Win32_Process -Filter \"Name='yt-dlp.exe'\" | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId)\" }"], { encoding: 'utf8' });
+  const procs = stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => l.split(/\s+/).map(Number));
+  const pids = new Set(procs.map(([pid]) => pid));
+  return { processes: procs.length, attempts: procs.filter(([, parent]) => !pids.has(parent)).map(([pid]) => pid) };
+}
+
+// Samples the engine in the background: the most attempts ever alive at once, and every attempt seen.
 function watchProcesses() {
-  const w = { max: 0, samples: 0, stop: false };
-  (async () => { while (!w.stop) { const p = processes(); w.max = Math.max(w.max, p.ytdlp); w.samples++; await wait(150); } })();
+  const w = { max: 0, maxProcesses: 0, samples: 0, attempts: new Set(), stop: false };
+  (async () => {
+    while (!w.stop) {
+      const a = await engineAttempts().catch(() => null);
+      if (a) { w.max = Math.max(w.max, a.attempts.length); w.maxProcesses = Math.max(w.maxProcesses, a.processes); a.attempts.forEach((pid) => w.attempts.add(pid)); w.samples++; }
+      await wait(100);
+    }
+  })();
   return w;
 }
 
@@ -112,7 +128,8 @@ async function quitApp({ force = false } = {}) {
 const nav = (label) => js(`[...document.querySelectorAll('.nav-item')].find((b) => b.textContent.includes(${JSON.stringify(label)}))?.click()`);
 const click = (text) => js(`(() => { const b = [...document.querySelectorAll('button')].find((x) => x.textContent.includes(${JSON.stringify(text)}) && !x.disabled); if (b) b.click(); return !!b; })()`);
 const clickTitle = (title) => js(`(() => { const b = document.querySelector('.queue-item button[title=${JSON.stringify(title)}]'); if (b) b.click(); return !!b; })()`);
-const rows = () => js(`[...document.querySelectorAll('.queue-item')].map((r) => ({ state: r.className.match(/is-(\\w+)/)?.[1], text: r.innerText.replace(/\\s+/g, ' ').slice(0, 160) }))`);
+// The row's name is an editable field, so it is not part of the row's text.
+const rows = () => js(`[...document.querySelectorAll('.queue-item')].map((r) => ({ state: r.className.match(/is-(\\w+)/)?.[1], name: r.querySelector('input.name-input')?.value || '', text: r.innerText.replace(/\\s+/g, ' ').slice(0, 160) }))`);
 const until = async (fn, ms = 90000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const v = await fn(); if (v) return v; await wait(250); } return null; };
 const rowIn = (states, ms) => until(async () => { const r = await rows(); return r.length && states.includes(r[r.length - 1].state) ? r[r.length - 1] : null; }, ms);
 
@@ -219,7 +236,7 @@ async function scenarioPauseResume() {
   r = await rowIn(['done', 'error'], 240000);
   watch.stop = true;
   const files = outputs().filter((f) => /^pause/i.test(f));
-  record('W-06a', 'pause ends yt-dlp/ffmpeg; resume completes; never two attempts at once', !!gone && paused?.state === 'paused' && r?.state === 'done' && watch.max <= 1 && files.length === 1 && !files.some((f) => /\.part$/.test(f)), { afterPause: gone, paused, final: r, maxConcurrentYtdlp: watch.max, samples: watch.samples, files });
+  record('W-06a', 'pause ends yt-dlp/ffmpeg; resume completes; never two attempts at once', !!gone && paused?.state === 'paused' && r?.state === 'done' && watch.max === 1 && watch.attempts.size === 2 && files.length === 1 && !files.some((f) => /\.part$/.test(f)), { afterPause: gone, paused, final: r, maxConcurrentAttempts: watch.max, maxYtdlpProcesses: watch.maxProcesses, attempts: [...watch.attempts], samples: watch.samples, files });
   await clearQueue();
 }
 
@@ -237,7 +254,7 @@ async function scenarioQuitDuringDownload() {
   const after = processes();
   record('W-07a', 'quitting during a download ends yt-dlp/ffmpeg and saves the job as paused', after.ytdlp === 0 && after.ffmpeg === 0 && after.grab === 0 && saved?.status === 'paused', { processesAfterQuit: after, left, saved });
   await launch();
-  const restored = (await rows()).find((x) => /quit/.test(x.text));
+  const restored = (await rows()).find((x) => x.name === 'quit');
   record('W-07b', 'after reopening, the interrupted download is shown paused and nothing started by itself', restored?.state === 'paused' && processes().ytdlp === 0, restored);
   await shot('07-restored-paused');
   await clickTitle('המשך');
