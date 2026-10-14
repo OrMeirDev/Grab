@@ -149,3 +149,21 @@ test('browser connections are per endpoint: same browser name, different profile
     for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
   }
 });
+
+test('diagnostics keep the facts and drop every secret', () => {
+  const { Diagnostics, redact } = require('../electron/infrastructure/diagnostics.cjs');
+  const d = new Diagnostics();
+  const e = d.record('lookup', {
+    url: 'https://stream.mux.com/abc.m3u8?token=header.payload.signature#t=3',
+    ok: false, kind: 'private', ms: 1200,
+    error: 'HTTP Error 403 for https://cdn.example/v.mp4?Signature=xyz&Expires=1',
+    cookieRef: 'handle', cookieFile: '/tmp/grab-cookies-1/cookies.txt', requestContext: { userAgent: 'UA', referer: 'https://p.example/?sid=1' },
+    diagnostics: { framesScanned: 3, rejected: { ad: 2 } }, headers: { Cookie: 'a=b', Authorization: 'Bearer x' },
+  });
+  const text = JSON.stringify(e);
+  for (const secret of ['token=', 'signature', 'Signature=', 'Expires', 'handle', 'cookies.txt', 'UA', 'sid=1', 'a=b', 'Bearer', '#t=3']) assert.equal(text.includes(secret), false, secret);
+  assert.equal(e.url, 'https://stream.mux.com/abc.m3u8');
+  assert.equal(e.error, 'HTTP Error 403 for https://cdn.example/v.mp4');
+  assert.deepEqual(e.diagnostics, { framesScanned: 3, rejected: { ad: 2 } });
+  assert.equal(d.recent(1)[0], e);
+});

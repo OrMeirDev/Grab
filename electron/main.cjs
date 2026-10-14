@@ -20,6 +20,7 @@ const { createDownloadRunner } = require('./application/download-runner.cjs');
 const { DownloadCoordinator } = require('./application/download-coordinator.cjs');
 const { JsonStore } = require('./infrastructure/json-store.cjs');
 const { FORMATS, QUALITIES } = require('./domain/records.cjs');
+const { Diagnostics } = require('./infrastructure/diagnostics.cjs');
 
 const DEV_URL = process.env.VITE_DEV ? 'http://localhost:5173' : null;
 const INDEX_FILE = path.join(__dirname, '..', 'dist', 'index.html');
@@ -34,7 +35,9 @@ const settingsRepo = new SettingsRepository(app.getPath('userData'), {
 });
 const historyRepo = new HistoryRepository(app.getPath('userData'));
 const allocator = new OutputAllocator();
-const discovery = createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession });
+// Redacted facts about lookups and downloads for support (no cookies, headers or signed links).
+const diagnostics = new Diagnostics({ dir: path.join(app.getPath('userData'), 'logs') });
+const discovery = createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession, record: (e, d) => diagnostics.record(e, d) });
 const downloadRunner = createDownloadRunner({ engine, browserSession, allocator });
 
 // The download queue's single owner. Its snapshots go to the window; it survives a renderer
@@ -43,7 +46,13 @@ const coordinator = new DownloadCoordinator({
   discover: (url, options) => discovery.analyze(url, options),
   startDownload: (plan, onProgress) => {
     fs.mkdirSync(plan.folder, { recursive: true });
-    return downloadRunner.start(plan, onProgress);
+    const started = Date.now();
+    const run = downloadRunner.start(plan, onProgress);
+    run.done.then((r) => diagnostics.record('download', {
+      url: plan.mediaUrl || plan.url, ok: !!r.ok, kind: r.ok ? null : r.kind || null, stopped: !!r.stopped,
+      error: r.ok ? null : r.error || null, ms: Date.now() - started, delivered: r.delivered || null, format: plan.format, quality: plan.quality,
+    }));
+    return run;
   },
   getSettings: () => settingsRepo.get(),
   recordCompletion: (entry) => historyRepo.add(entry),
@@ -261,6 +270,7 @@ app.whenReady().then(async () => {
   engine.cleanInfoCache();
   browserSession.scavengeCookieJars();
   approvedFolders.add((await settingsRepo.get()).folder);
+  diagnostics.record('start', { app: app.getVersion(), electron: process.versions.electron, engine: await engine.version().catch(() => null), packaged: app.isPackaged });
   await coordinator.init();
   createWindow();
 });

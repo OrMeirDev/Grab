@@ -1,8 +1,7 @@
-// Pure renderer modules: link parsing, site keys, formatting, site search, row display rules.
+// Pure renderer modules: link parsing, formatting, site search, row display rules.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseLinks } from '../src/domain/intake/parseLinks.js';
-import { siteKey } from '../src/domain/sites/siteKey.js';
 import { fmtDuration, fmtQuality, fmtSize, isAudio } from '../src/presentation/formatters.js';
 import { siteInfo, siteLabel } from '../src/presentation/sitePresentation.js';
 import { engineMessage, appUpdateMessage } from '../src/presentation/updateMessages.js';
@@ -18,12 +17,6 @@ test('parseLinks: one link per line, text before it becomes the label, signed qu
   assert.deepEqual(parseLinks('Lesson 3 – https://c.example/z "quoted"'), [{ url: 'https://c.example/z', label: 'Lesson 3' }]);
   assert.deepEqual(parseLinks(''), []);
   assert.deepEqual(parseLinks('ftp://x.example/file'), []);
-});
-
-test('siteKey groups YouTube hosts and falls back to unknown for bad links', () => {
-  for (const u of ['https://www.youtube.com/watch?v=1', 'https://youtu.be/1', 'https://m.youtube.com/x', 'https://www.youtube-nocookie.com/embed/1']) assert.equal(siteKey(u), 'youtube', u);
-  assert.equal(siteKey('https://vimeo.com/1'), 'vimeo');
-  assert.equal(siteKey('not a url'), 'unknown');
 });
 
 test('formatters', () => {

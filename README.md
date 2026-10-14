@@ -12,36 +12,44 @@ The installer is not code-signed, so Windows SmartScreen warns on first run: cli
 
 - Paste many links at once; text before a link (e.g. `שיעור 2: https://…`) becomes the file name
 - Looks up title, length and thumbnail, then downloads one at a time with live progress
-- MP4 (H.264, plays everywhere) or MP3, quality cap, per-row or "download all"
-- Pauses the whole queue the moment YouTube starts rate-limiting, instead of making it worse
+- MP4 or MP3, per-row or "download all". MP4 prefers H.264/AAC (plays on almost every device); when a site offers no such format, the best available codec is saved in an MP4 file. The quality setting is a preference: Grab picks the closest available, and if nothing at or below it exists, a higher one. History records the resolution and codec actually delivered
+- Pauses a site's downloads the moment it starts rate-limiting (other sites carry on), until you resume it
+- The queue survives a window reload and a restart (running downloads come back paused)
 - History, library of downloaded files, searchable list of supported sites
 - One-click update of the yt-dlp engine
 - Finds embedded Mux and other players inside open Shadow DOM and frames, with network manifest discovery
 
 ## Pages that use your browser session
 
-Grab connects to your running Chrome profile when yt-dlp cannot read a page or needs authentication. It does not open a sign-in window or create a separate profile.
+Grab connects to your running default browser when yt-dlp cannot read a page or needs authentication. It does not open a sign-in window or create a separate profile.
 
-1. Use Chrome 144 or newer and enable remote debugging at `chrome://inspect/#remote-debugging` once.
-2. Leave Chrome running in the profile where you are already signed in. Accept Chrome's connection permission when Grab first connects (Chrome asks again after a new connection).
+Supported: Chromium-based default browsers (Chrome, Edge, Brave, Vivaldi, Opera, Chromium). Chrome is the reference; the others use the same protocol but are **not yet verified on Windows**. Firefox can't be used for this.
+
+1. Use a current browser (Chrome 144 or newer) and enable remote debugging once at `<browser>://inspect/#remote-debugging` (Grab's guide shows the exact address).
+2. Leave the browser running in the profile where you are already signed in. Accept its connection permission when Grab first connects (it asks again after a new connection).
 3. Paste the page URL in Grab as usual. An exact open tab is scanned without navigation or playback changes; otherwise Grab opens a background tab in the existing context and closes that tab when lookup finishes.
 
 Lookup reads player attributes (including signed Mux manifest URLs), open Shadow DOM, frame execution contexts and media network requests. Cookies for the page and discovered URLs are passed to yt-dlp in a temporary domain-scoped cookie jar, together with the player request's User-Agent, Referer and Origin. The jar is deleted after lookup/download. A failed download of an embedded source is looked up again to refresh expiring URLs.
 
-This connection currently discovers the standard Chrome user-data directory. Custom user-data directories and other browsers need an additional endpoint selection option. If the requested page exists in multiple browser contexts, Grab asks you to leave it open in the intended context.
+Cookies from the page are kept in memory for at most 4 hours and only for the job that needs them. This connection discovers the browser's standard user-data directory; custom user-data directories need an endpoint selection option that doesn't exist yet. If the requested page exists in multiple browser contexts, Grab asks you to leave it open in the intended context.
 
 ## Develop
 
 ```bash
 npm install
-npm run fetch-bin   # downloads yt-dlp, ffmpeg and deno into bin/ (not in git: too large)
+npm run fetch-bin   # yt-dlp, ffmpeg and deno into bin/, exactly as pinned in native-tools.lock.json (hash-checked)
 npm run dev         # app with hot reload
-npm test            # session, collector and download-context regression tests
+npm test            # unit + integration tests (the real-Chromium/real-yt-dlp ones skip when absent)
+npm run e2e:queue-cooldown   # end-to-end checks in the real app; see e2e/README.md
+npm run verify-bin  # bin/ matches native-tools.lock.json (also runs before dist/release)
 npm run dist        # build the installer into release/
 npm run release     # build and publish a GitHub release (needs GH_TOKEN)
 ```
 
-To publish an update: bump `version` in `package.json`, then run `npm run release`.
+Architecture and contributor rules: [docs/architecture.md](docs/architecture.md), [AGENTS.md](AGENTS.md).
+CI (`.github/workflows/ci.yml`) runs the tests on Linux and Windows and the end-to-end checks.
+
+To publish an update: bump `version` in `package.json`, then run `npm run release` (see docs/handoff.md for the release checks still to automate).
 
 ## Not supported
 

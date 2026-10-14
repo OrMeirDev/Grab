@@ -15,14 +15,25 @@ const { budget } = require('../domain/candidate-policy.cjs');
 // queue for long.
 const LOOKUP_BUDGET_MS = 6 * 60 * 1000;
 
-function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession, now = () => Date.now() }) {
+// record(event, details): optional diagnostics (redacted by infrastructure/diagnostics.cjs).
+function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession, now = () => Date.now(), record = () => {} }) {
   // Sites whose videos only the user's signed-in browser could see: later links from them skip
   // the hidden browser, so a batch of lessons from one course goes straight to the browser.
   const signedInSites = new Set();
 
   // onPhase(phase, browserName): 'page' (looking inside the player) or 'browser' (using the
   // user's browser). signal: AbortSignal that cancels the lookup.
-  async function analyze(url, { forcePage = false, onPhase = () => {}, signal } = {}) {
+  // The lookup, with a diagnostics record of how it ended and which strategy found the video.
+  async function analyze(url, options = {}) {
+    const started = now();
+    let strategy = options.forcePage ? 'page' : 'yt-dlp';
+    const r = await lookup(url, { ...options, onPhase: (phase, browser) => { strategy = phase === 'browser' ? 'browser' : 'hidden-browser'; (options.onPhase || (() => {}))(phase, browser); } })
+      .catch((error) => ({ ok: false, kind: 'other', error: String(error.message || error) }));
+    record('lookup', { url, ok: !!r.ok, kind: r.ok ? null : r.kind || null, strategy: r.ok ? (r.mediaUrl ? strategy : 'yt-dlp') : strategy, site: r.site || null, ms: now() - started, error: r.ok ? null : r.error || null });
+    return r;
+  }
+
+  async function lookup(url, { forcePage = false, onPhase = () => {}, signal } = {}) {
     const deadline = now() + LOOKUP_BUDGET_MS;
     const outOfTime = () => signal?.aborted || now() > deadline;
     // forcePage: what yt-dlp found at the link didn't download, so go straight to the page's player.
@@ -37,6 +48,7 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
       onPhase('page');
       let hidden = { candidates: [] };
       try { hidden = await hiddenProbe.findMedia(url); } catch { /* fall through to the backup */ }
+      record('probe', { url, probe: 'hidden', candidates: hidden.candidates.length, protected: !!hidden.protected, diagnostics: hidden.diagnostics || null });
       const found = await tryCandidates(hidden, url, { signal, outOfTime });
       if (found) return found;
       browserSession.forgetCookies?.(hidden.cookieRef);
@@ -54,7 +66,9 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
       probe = await pageprobe.findMedia(url, { refresh: forcePage, connect });
       // A blob player may have loaded its manifest before attachment and discarded resource entries.
       if (probe.reusedTab && !probe.candidates.length) probe = await pageprobe.findMedia(url, { refresh: true, connect });
+      record('probe', { url, probe: 'browser', browser: browser.name, reusedTab: !!probe.reusedTab, candidates: probe.candidates.length, protected: !!probe.protected, diagnostics: probe.diagnostics || null });
     } catch (err) {
+      record('probe', { url, probe: 'browser', browser: browser.name, failed: err.kind || 'error' });
       if (err.kind === 'browserContext') return { ...first, kind: 'browserContext', browser: { name: browser.name } };
       // The browser can't be reached (closed, debugging off, or not supported): say how to fix it.
       const hint = ['browserSession', 'browserUnsupported'].includes(err.kind)
