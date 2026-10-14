@@ -255,6 +255,7 @@ app.on('second-instance', focusMain);
 
 app.whenReady().then(async () => {
   engine.setUserBinDir(path.join(app.getPath('userData'), 'bin'));
+  engine.configure({ allowSystemTools: !app.isPackaged });
   await engine.reconcileEngine();
   // Left behind by a crash: lookup files (signed media addresses) and cookie jars.
   engine.cleanInfoCache();

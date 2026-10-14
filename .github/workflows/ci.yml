@@ -31,6 +31,16 @@ jobs:
           cache: npm
       # Lifecycle scripts are not needed for unit tests or the renderer build.
       - run: npm ci --ignore-scripts --no-fund --no-audit
+      # The pinned yt-dlp (Linux build of the version in native-tools.lock.json), hash-checked,
+      # for tests/real-engine.integration.test.cjs.
+      - name: pinned yt-dlp for the engine integration test
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p "$RUNNER_TEMP/ytdlp"
+          curl -sSL -o "$RUNNER_TEMP/ytdlp/yt-dlp" https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp
+          echo "1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6  $RUNNER_TEMP/ytdlp/yt-dlp" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/ytdlp/yt-dlp"
+          echo "GRAB_TEST_YTDLP_DIR=$RUNNER_TEMP/ytdlp" >> "$GITHUB_ENV"
       - run: npm test
       - run: npm run build
 

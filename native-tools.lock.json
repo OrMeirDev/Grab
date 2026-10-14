@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "about": "The exact third-party programs bundled in bin/ (GRB-06). scripts/fetch-bin.ps1 downloads these releases and refuses any file whose SHA-256 differs; scripts/verify-native-tools.cjs checks bin/ against this file before packaging. To move to a newer release, change it here (url, archive and file hashes, checked against the upstream checksum file) in its own reviewed change.",
+  "verified": "2026-10-14: archive hashes match the upstream checksum files (yt-dlp SHA2-256SUMS, FFmpeg-Builds checksums.sha256, deno .sha256sum); file hashes computed from those archives.",
+  "tools": [
+    {
+      "name": "yt-dlp",
+      "version": "2026.08.19",
+      "license": "Unlicense",
+      "source": "https://github.com/yt-dlp/yt-dlp/tree/2026.08.19",
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe",
+      "sha256": "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a",
+      "upstreamChecksums": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/SHA2-256SUMS",
+      "files": { "yt-dlp.exe": "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a" },
+      "licenseFiles": [
+        { "url": "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.08.19/LICENSE", "name": "yt-dlp-LICENSE.txt", "sha256": "7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c" }
+      ]
+    },
+    {
+      "name": "ffmpeg",
+      "version": "N-127511-g01cf1a5396",
+      "release": "autobuild-2026-10-13-20-20",
+      "license": "GPL-3.0-or-later (gpl build)",
+      "source": "https://github.com/FFmpeg/FFmpeg/commit/01cf1a5396 (build scripts and component versions: https://github.com/yt-dlp/FFmpeg-Builds/tree/autobuild-2026-10-13-20-20)",
+      "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-10-13-20-20/ffmpeg-N-127511-g01cf1a5396-win64-gpl.zip",
+      "sha256": "cc4c8f3e15b317be771bce75e4f7cba40ab89991cf1a6bfc4c9385e3ae50baec",
+      "upstreamChecksums": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-10-13-20-20/checksums.sha256",
+      "files": {
+        "ffmpeg.exe": "c1caa84cccf6fe4658f5b021d837d035d175e398a47e456bd557b19773485011",
+        "ffprobe.exe": "e499affa4b94221e7ee496ccc96428d116bd5929a8279e71db72ed72e5f1208d"
+      },
+      "licenseFiles": [
+        { "archivePath": "ffmpeg-N-127511-g01cf1a5396-win64-gpl/LICENSE.txt", "name": "ffmpeg-LICENSE.txt", "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903" }
+      ]
+    },
+    {
+      "name": "deno",
+      "version": "2.9.7",
+      "license": "MIT",
+      "source": "https://github.com/denoland/deno/tree/v2.9.7",
+      "url": "https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-pc-windows-msvc.zip",
+      "sha256": "a0c3101b4158d1dfb7d6a78a7bf0f3de80c96bb423c152beec8beb22786f2238",
+      "upstreamChecksums": "https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-pc-windows-msvc.zip.sha256sum",
+      "files": { "deno.exe": "e020f3e232bd16e33768dee528e5983349c962952051ced0a5d58ad42f5d9b33" },
+      "licenseFiles": [
+        { "url": "https://raw.githubusercontent.com/denoland/deno/v2.9.7/LICENSE.md", "name": "deno-LICENSE.txt", "sha256": "f62497fffecc0852960c8d3e6934b9db86d16396e9b604072e923892cae3a588" }
+      ]
+    }
+  ]
+}

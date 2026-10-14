@@ -17,13 +17,21 @@ const EXE = IS_WIN ? '.exe' : '';
 // updating Grab never overwrites it with an older copy. It takes priority over the bundled one.
 let userBinDir = null;
 function setUserBinDir(dir) { userBinDir = dir; }
+
+// Tools from the machine itself (WinGet, PATH) are a development convenience only: the installed
+// app runs the tools it ships (pinned in native-tools.lock.json) or the user's updated yt-dlp, so
+// what it runs never depends on what else is installed (GRB-06).
+let allowSystemTools = true;
+function configure(options = {}) {
+  if ('allowSystemTools' in options) allowSystemTools = !!options.allowSystemTools;
+}
 const userEnginePath = () => userBinDir && path.join(userBinDir, 'yt-dlp' + EXE);
 
 function bundledDirs() {
   const dirs = [];
   if (process.resourcesPath) dirs.push(path.join(process.resourcesPath, 'bin'));
   dirs.push(path.join(__dirname, '..', 'bin'));
-  if (IS_WIN && process.env.LOCALAPPDATA) dirs.push(path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links'));
+  if (allowSystemTools && IS_WIN && process.env.LOCALAPPDATA) dirs.push(path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links'));
   return dirs;
 }
 
@@ -40,7 +48,7 @@ function findIn(dirs, name) {
 }
 
 function findBinary(name) {
-  return findIn(candidateDirs(), name) || name; // fall back to PATH
+  return findIn(candidateDirs(), name) || (allowSystemTools ? name : path.join(bundledDirs()[0], name + EXE)); // PATH only in development
 }
 
 // winget installs ffmpeg in its own package folder without a Links shortcut, so look there too.
@@ -51,7 +59,7 @@ function ffmpegDir() {
   for (const dir of candidateDirs()) {
     if (fs.existsSync(path.join(dir, 'ffmpeg' + EXE))) return (ffmpegDirCache = dir);
   }
-  const pkgs = IS_WIN && process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Packages');
+  const pkgs = allowSystemTools && IS_WIN && process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Packages');
   if (pkgs && fs.existsSync(pkgs)) {
     for (const pkg of fs.readdirSync(pkgs).filter((n) => /ffmpeg/i.test(n))) {
       const root = path.join(pkgs, pkg);
@@ -68,7 +76,7 @@ function spawnEnv() {
   const extra = candidateDirs().filter((d) => fs.existsSync(d));
   return {
     ...process.env,
-    PATH: [...extra, process.env.PATH || ''].join(path.delimiter),
+    PATH: [...extra, ...(allowSystemTools ? [process.env.PATH || ''] : [process.env.SystemRoot ? path.join(process.env.SystemRoot, 'System32') : '']) ].filter(Boolean).join(path.delimiter),
     PYTHONIOENCODING: 'utf-8',
     PYTHONUTF8: '1',
   };
@@ -161,7 +169,10 @@ async function updateEngine() {
     const after = await version(userExe, { internal: true });
     extractorsCache = null; // a new version may support different sites
     if (code !== 0 || !after) return { ok: false, before, after, error: cleanError(err || out) };
-    return { ok: true, before, after, updated: compareVersions(after, before || '0') > 0 };
+    const updated = compareVersions(after, before || '0') > 0;
+    // A record of what the in-app updater changed, next to the updated engine.
+    try { fs.writeFileSync(path.join(userBinDir, 'engine-update.json'), JSON.stringify({ before, after, at: new Date().toISOString() }, null, 2)); } catch { /* not essential */ }
+    return { ok: true, before, after, updated };
   } finally {
     replacing = false;
   }
@@ -240,7 +251,9 @@ function downloadArgs({ url, mediaUrl, referer, requestContext, cookieFile, outp
   // --print implies quiet mode, so --progress is needed to keep the progress lines coming.
   const common = ['--newline', '--progress', '--no-playlist', '--no-warnings', '-R', '10', '--fragment-retries', '10',
     '--progress-template', 'download:GRAB|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s',
-    '--print', 'after_move:GRABFILE|%(filepath)s', '-o', out];
+    '--print', 'after_move:GRABFILE|%(filepath)s',
+    // What was actually delivered (the quality setting is a preference, not a guarantee): GRB-11.
+    '--print', 'after_move:GRABMETA|%(height)s|%(vcodec)s|%(acodec)s|%(ext)s', '-o', out];
   if (ffmpegDir()) common.push('--ffmpeg-location', ffmpegDir());
   if (format === 'mp3') {
     return [...common, '-f', 'ba/b', '-x', '--audio-format', 'mp3', '--audio-quality', '0', ...source];
@@ -262,6 +275,7 @@ function verifiedFile(reported, { outputBase, findOutput } = {}) {
 // { ok: false, stopped: true } when stop() (pause, remove, quit) ended it.
 function download(opts, onProgress) {
   let file = null;
+  let delivered = null;
   const job = run(downloadArgs(opts), {
     kind: 'download',
     onLine: (line) => {
@@ -270,6 +284,10 @@ function download(opts, onProgress) {
         onProgress({ percent: parseFloat(pct) || 0, speed: (speed || '').trim(), eta: (eta || '').trim() });
       } else if (line.startsWith('GRABFILE|')) {
         file = line.slice(9).trim();
+      } else if (line.startsWith('GRABMETA|')) {
+        const [, height, vcodec, acodec, ext] = line.split('|').map((x) => (x || '').trim());
+        const val = (x) => (x && x !== 'NA' && x !== 'none' ? x : null);
+        delivered = { height: Number(val(height)) || null, vcodec: val(vcodec), acodec: val(acodec), ext: val(ext) };
       }
     },
   });
@@ -279,7 +297,7 @@ function download(opts, onProgress) {
     const err = stopNote(r) || r.err;
     if (r.code !== 0 || r.idle) return { ok: false, error: cleanError(err), kind: r.idle ? 'network' : errorKind(err) };
     const verified = verifiedFile(file, opts);
-    return verified ? { ok: true, file: verified } : { ok: false, error: 'Download finished without an output file', kind: 'other' };
+    return verified ? { ok: true, file: verified, delivered } : { ok: false, error: 'Download finished without an output file', kind: 'other' };
   });
   return { child: job.child, done, stop: job.stop };
 }
@@ -327,4 +345,4 @@ const stopAll = (timeoutMs) => registry.stopAll(timeoutMs);
 // A lookup result file Grab wrote itself (the only info file a download may load).
 const isInfoFile = (p) => typeof p === 'string' && path.dirname(path.resolve(p)) === path.resolve(INFO_DIR) && /^[0-9a-f]{40}-\d+\.json$/.test(path.basename(p));
 
-module.exports = { version, analyze, download, safeName, extractors, cleanInfoCache, setUserBinDir, reconcileEngine, updateEngine, busy, stopAll, isInfoFile };
+module.exports = { configure, version, analyze, download, safeName, extractors, cleanInfoCache, setUserBinDir, reconcileEngine, updateEngine, busy, stopAll, isInfoFile };

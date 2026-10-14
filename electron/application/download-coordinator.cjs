@@ -404,6 +404,9 @@ class DownloadCoordinator {
       // paused or removed by the user; nothing else changes
     } else if (r.ok) {
       const entry = { name: job.name, url: job.url, file: r.file || null, site: job.site || null, format: r.format };
+      // What was actually delivered (resolution, video codec), when yt-dlp reported it (GRB-11).
+      if (r.delivered?.height) entry.height = r.delivered.height;
+      if (r.delivered?.vcodec) entry.vcodec = r.delivered.vcodec;
       try { await this.d.recordCompletion(entry); } catch { /* the file is saved even if history isn't */ }
       this.d.releaseContext(job, { finished: true });
       Object.assign(job, { infoFile: null, mediaUrl: null, referer: null, cookieRef: null, requestContext: null });
