@@ -17,8 +17,20 @@ function Get-File($url, $out) {
     Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
 }
 
+# Hashing and unzipping go through .NET, not Get-FileHash/Expand-Archive: Windows PowerShell 5.1
+# started from a PowerShell 7 window (npm in Windows Terminal, CI) inherits 7's module path and
+# cannot load those cmdlets.
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+function Get-Sha256($file) {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    $stream = [IO.File]::OpenRead($file)
+    try { return ([BitConverter]::ToString($sha.ComputeHash($stream)) -replace '-', '').ToLowerInvariant() }
+    finally { $stream.Dispose(); $sha.Dispose() }
+}
+
 function Assert-Hash($file, $expected, $what) {
-    $actual = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLowerInvariant()
+    $actual = Get-Sha256 $file
     if ($actual -ne $expected.ToLowerInvariant()) {
         throw "SHA-256 mismatch for ${what}: expected $expected, got $actual. Nothing was installed from it."
     }
@@ -33,7 +45,7 @@ try {
 
         $staging = Join-Path $tmp $tool.name
         New-Item -ItemType Directory -Force $staging | Out-Null
-        if ($name -like '*.zip') { Expand-Archive $download -DestinationPath $staging } else { Copy-Item $download $staging }
+        if ($name -like '*.zip') { [IO.Compression.ZipFile]::ExtractToDirectory($download, $staging) } else { Copy-Item $download $staging }
 
         foreach ($entry in $tool.files.PSObject.Properties) {
             $found = Get-ChildItem $staging -Recurse -File -Filter $entry.Name | Select-Object -First 1
