@@ -103,3 +103,35 @@ test('nothing imports the app shell except the entry point', () => {
     for (const spec of specifiers(file)) assert.doesNotMatch(spec, /AppShell/, rel(file));
   }
 });
+
+// ---- main process ------------------------------------------------------------------------------
+const main = files(path.join(ROOT, 'electron'), /\.cjs$/);
+const mainArea = (file) => rel(file).split('/')[1].replace(/\.cjs$/, '');
+
+test('main-process domain rules and contracts are pure (no Electron, filesystem, processes or network)', () => {
+  const pure = main.filter((f) => ['domain'].includes(mainArea(f)) || rel(f) === 'electron/ipc/contracts.cjs');
+  assert.ok(pure.length >= 3);
+  for (const file of pure) {
+    for (const spec of specifiers(file)) {
+      assert.ok(spec.startsWith('./') || spec.startsWith('../domain/'), `${rel(file)} requires ${spec}`);
+      const t = path.resolve(path.dirname(file), spec);
+      assert.ok(rel(t).startsWith('electron/domain/') || rel(t) === 'electron/ipc/contracts.cjs', `${rel(file)} requires ${spec}`);
+    }
+  }
+});
+
+test('application services get Electron and the platform injected, never required', () => {
+  for (const file of main.filter((f) => mainArea(f) === 'application')) {
+    for (const spec of specifiers(file)) {
+      assert.ok(spec !== 'electron' && !NODE_BUILTINS.has(spec), `${rel(file)} requires ${spec}`);
+      assert.ok(!spec.startsWith('.') || /^\.\.?\/(domain|application)\//.test(spec) || /^\.\/[\w-]+\.cjs$/.test(spec), `${rel(file)} requires ${spec}`);
+    }
+  }
+});
+
+test('only the composition root, the window policy and the Electron adapters require electron', () => {
+  const allowed = new Set(['electron/main.cjs', 'electron/preload.cjs', 'electron/hidden-probe.cjs']);
+  for (const file of main) {
+    if (specifiers(file).includes('electron')) assert.ok(allowed.has(rel(file)), `${rel(file)} requires electron`);
+  }
+});

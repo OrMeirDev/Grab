@@ -1,9 +1,14 @@
 // Wraps yt-dlp: resolves the binaries, reads video info, runs downloads with live progress.
-const { spawn } = require('child_process');
+// Every run has a deadline, bounded output and a stop that ends its whole process tree
+// (process-runner.cjs); all runs are tracked so the engine is never replaced while one is active.
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 const path = require('path');
+const { runProcess } = require('./infrastructure/process-runner.cjs');
+const { ProcessRegistry } = require('./infrastructure/process-registry.cjs');
+const { errorKind, cleanError } = require('./domain/engine-errors.cjs');
+const { safeName } = require('./domain/output-names.cjs');
 
 const IS_WIN = process.platform === 'win32';
 const EXE = IS_WIN ? '.exe' : '';
@@ -69,31 +74,42 @@ function spawnEnv() {
   };
 }
 
-function run(args, { onLine, exe } = {}) {
-  const child = spawn(exe || findBinary('yt-dlp'), ['--encoding', 'utf-8', ...args], { env: spawnEnv(), windowsHide: true });
-  let out = '';
-  let err = '';
-  const bufs = { out: '', err: '' };
-  const feed = (key, d) => {
-    if (!onLine) return;
-    bufs[key] += d;
-    const lines = bufs[key].split(/\r?\n/);
-    bufs[key] = lines.pop();
-    lines.forEach(onLine);
-  };
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (d) => { out += d; feed('out', d); });
-  child.stderr.on('data', (d) => { err += d; feed('err', d); });
-  const done = new Promise((resolve) => {
-    child.on('error', (e) => resolve({ code: -1, out, err: String(e.message || e) }));
-    child.on('close', (code) => resolve({ code, out, err }));
+// Deadlines per kind of run. A download has none overall (files can be hours long) but is stopped
+// when yt-dlp and ffmpeg print nothing at all for DOWNLOAD_IDLE_MS.
+const LIMITS = {
+  version: { timeoutMs: 30 * 1000 },
+  analyze: { timeoutMs: 3 * 60 * 1000 },
+  extractors: { timeoutMs: 60 * 1000 },
+  update: { timeoutMs: 5 * 60 * 1000 },
+  download: { idleTimeoutMs: 30 * 60 * 1000 },
+};
+
+// All engine processes Grab has running. While the engine is being replaced no new run starts.
+const registry = new ProcessRegistry();
+let replacing = false;
+
+// --ignore-config: a yt-dlp configuration file on the user's PC never changes how Grab runs it.
+function run(args, { onLine, exe, kind = 'analyze', signal, internal = false } = {}) {
+  if (replacing && !internal) {
+    const result = { code: -1, out: '', err: 'ERROR: the download engine is being updated', engineUpdating: true };
+    return { child: null, done: Promise.resolve(result), stop: () => {} };
+  }
+  return runProcess(exe || findBinary('yt-dlp'), ['--ignore-config', '--encoding', 'utf-8', ...args], {
+    env: spawnEnv(), onLine, signal, registry, label: kind, ...LIMITS[kind],
   });
-  return { child, done };
 }
 
-async function version(exe) {
-  const { code, out } = await run(['--version'], { exe }).done;
+// A run that ended because of its deadline, its silence limit or a cancel, as a yt-dlp-like error.
+function stopNote(r) {
+  if (r.timedOut) return 'ERROR: timed out';
+  if (r.idle) return 'ERROR: timed out (no progress for 30 minutes)';
+  if (r.truncated) return 'ERROR: Unreadable response (too large)';
+  if (r.aborted) return 'ERROR: cancelled';
+  return '';
+}
+
+async function version(exe, { internal = false } = {}) {
+  const { code, out } = await run(['--version'], { exe, kind: 'version', internal }).done;
   return code === 0 ? out.trim() : null;
 }
 
@@ -114,7 +130,7 @@ async function reconcileEngine() {
   if (!userExe || !fs.existsSync(userExe)) return;
   const bundled = findIn(bundledDirs(), 'yt-dlp');
   if (!bundled) return;
-  const [vUser, vBundled] = await Promise.all([version(userExe), version(bundled)]);
+  const [vUser, vBundled] = await Promise.all([version(userExe, { internal: true }), version(bundled, { internal: true })]);
   if (!vUser || (vBundled && compareVersions(vBundled, vUser) >= 0)) {
     try { fs.unlinkSync(userExe); } catch { /* in use; try again next start */ }
   }
@@ -122,40 +138,33 @@ async function reconcileEngine() {
 
 // Self-update via `yt-dlp -U` on the user's own copy (the install folder may be read-only
 // and gets replaced on reinstall). Downloads the new release from yt-dlp's GitHub.
+// Refused (busy) while any engine process runs: Windows can't replace yt-dlp.exe in use, and a
+// lookup or download must never run half on the old engine and half on the new one.
 async function updateEngine() {
   const userExe = userEnginePath();
   if (!userExe) return { ok: false, error: 'no user folder' };
-  const before = await version();
+  if (registry.size || replacing) return { ok: false, busy: true };
+  replacing = true;
   try {
-    if (!fs.existsSync(userExe)) {
-      const bundled = findIn(bundledDirs(), 'yt-dlp');
-      if (!bundled) return { ok: false, before, error: 'yt-dlp not found' };
-      fs.mkdirSync(userBinDir, { recursive: true });
-      fs.copyFileSync(bundled, userExe);
+    const before = await version(undefined, { internal: true });
+    try {
+      if (!fs.existsSync(userExe)) {
+        const bundled = findIn(bundledDirs(), 'yt-dlp');
+        if (!bundled) return { ok: false, before, error: 'yt-dlp not found' };
+        fs.mkdirSync(userBinDir, { recursive: true });
+        fs.copyFileSync(bundled, userExe);
+      }
+    } catch (e) {
+      return { ok: false, before, error: String(e.message || e) };
     }
-  } catch (e) {
-    return { ok: false, before, error: String(e.message || e) };
+    const { code, out, err } = await run(['-U'], { exe: userExe, kind: 'update', internal: true }).done;
+    const after = await version(userExe, { internal: true });
+    extractorsCache = null; // a new version may support different sites
+    if (code !== 0 || !after) return { ok: false, before, after, error: cleanError(err || out) };
+    return { ok: true, before, after, updated: compareVersions(after, before || '0') > 0 };
+  } finally {
+    replacing = false;
   }
-  const { code, out, err } = await run(['-U'], { exe: userExe }).done;
-  const after = await version(userExe);
-  extractorsCache = null; // a new version may support different sites
-  if (code !== 0 || !after) return { ok: false, before, after, error: cleanError(err || out) };
-  return { ok: true, before, after, updated: compareVersions(after, before || '0') > 0 };
-}
-
-// Classify failures so the UI can say what actually happened.
-function errorKind(err) {
-  if (/not a bot|Sign in to confirm|HTTP Error 429|Too Many Requests/i.test(err)) return 'blocked';
-  if (/Private video|members-only|Join this channel|login required|requires authentication|logged[- ]in/i.test(err)) return 'private';
-  if (/Unsupported URL|No video formats|is not a valid URL|Unable to extract/i.test(err)) return 'notfound';
-  if (/Video unavailable|removed|does not exist|HTTP Error 404/i.test(err)) return 'unavailable';
-  if (/getaddrinfo|Network is unreachable|timed out|Connection reset/i.test(err)) return 'network';
-  return 'other';
-}
-
-function cleanError(err) {
-  const line = err.split(/\r?\n/).reverse().find((l) => l.includes('ERROR')) || err.trim().split(/\r?\n/).pop() || '';
-  return line.replace(/^ERROR:\s*/, '').replace(/^\[[^\]]+\]\s*[\w-]+:\s*/, '').slice(0, 200);
 }
 
 // The lookup result is saved so the download can reuse it instead of asking the site again.
@@ -184,10 +193,15 @@ function sessionArgs({ referer, requestContext = {}, cookieFile } = {}) {
   return args;
 }
 
-async function analyze(url, { title: pageTitle, ...context } = {}) {
+// signal: an AbortSignal that cancels the lookup.
+async function analyze(url, { title: pageTitle, signal, ...context } = {}) {
   const extra = sessionArgs(context);
-  const { code, out, err } = await run(['-J', '--no-playlist', '--no-warnings', '--skip-download', '--sleep-requests', '1', ...extra, url]).done;
-  if (code !== 0) return { ok: false, error: cleanError(err), kind: errorKind(err) };
+  const r = await run(['-J', '--no-playlist', '--no-warnings', '--skip-download', '--sleep-requests', '1', ...extra, '--', url], { kind: 'analyze', signal }).done;
+  const { code, out } = r;
+  const err = stopNote(r) || r.err;
+  if (r.aborted) return { ok: false, error: 'cancelled', kind: 'cancelled' };
+  if (r.engineUpdating) return { ok: false, error: 'engine updating', kind: 'engineUpdating' };
+  if (code !== 0 || r.truncated || r.timedOut) return { ok: false, error: cleanError(err), kind: r.timedOut ? 'network' : errorKind(err) };
   try {
     const j = JSON.parse(out);
     let infoFile = null;
@@ -211,20 +225,18 @@ async function analyze(url, { title: pageTitle, ...context } = {}) {
   }
 }
 
-const INVALID = /[<>:"/\\|?*\u0000-\u001f]/g;
-function safeName(name) {
-  return (name || 'video').replace(INVALID, ' ').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '').slice(0, 180) || 'video';
-}
-
 function freshInfo(infoFile, infoAt) {
   return !!infoFile && Date.now() - (infoAt || 0) < INFO_MAX_AGE_MS && fs.existsSync(infoFile);
 }
 
-function downloadArgs({ url, mediaUrl, referer, requestContext, cookieFile, name, folder, format, quality, infoFile, infoAt }) {
-  const out = path.join(folder, safeName(name) + '.%(ext)s');
+// outputBase: the job's file path without extension, chosen by the output allocator (unique and
+// safe). folder/name are the older form, still accepted for callers that don't allocate.
+function downloadArgs({ url, mediaUrl, referer, requestContext, cookieFile, outputBase, name, folder, format, quality, infoFile, infoAt }) {
+  // A literal % in the name must not be read as part of yt-dlp's output template.
+  const out = (outputBase || path.join(folder, safeName(name))).replace(/%/g, '%%') + '.%(ext)s';
   // Reuse the lookup result when it's still fresh; otherwise fetch the page again, slowly.
   // A video found inside a page's player is fetched from its own address, as that page does.
-  const source = freshInfo(infoFile, infoAt) ? ['--load-info-json', infoFile] : ['--sleep-requests', '1', mediaUrl || url];
+  const source = freshInfo(infoFile, infoAt) ? ['--load-info-json', infoFile] : ['--sleep-requests', '1', '--', mediaUrl || url];
   source.unshift(...sessionArgs({ referer, requestContext, cookieFile }));
   // --print implies quiet mode, so --progress is needed to keep the progress lines coming.
   const common = ['--newline', '--progress', '--no-playlist', '--no-warnings', '-R', '10', '--fragment-retries', '10',
@@ -240,9 +252,19 @@ function downloadArgs({ url, mediaUrl, referer, requestContext, cookieFile, name
   return [...common, '-f', 'bv*+ba/b', '-S', sort, '--merge-output-format', 'mp4', '--remux-video', 'mp4', ...source];
 }
 
+// Exit code 0 is not enough: the finished file must exist. When yt-dlp didn't print its path,
+// findOutput(base) may still find it (see output-allocator.cjs).
+function verifiedFile(reported, { outputBase, findOutput } = {}) {
+  if (reported) return fs.existsSync(reported) ? reported : null;
+  return outputBase && findOutput ? findOutput(outputBase) : null;
+}
+
+// -> { child, done, stop }. done resolves { ok, file } or { ok: false, error, kind } or
+// { ok: false, stopped: true } when stop() (pause, remove, quit) ended it.
 function download(opts, onProgress) {
   let file = null;
   const job = run(downloadArgs(opts), {
+    kind: 'download',
     onLine: (line) => {
       if (line.startsWith('GRAB|')) {
         const [, pct, speed, eta] = line.split('|');
@@ -252,8 +274,15 @@ function download(opts, onProgress) {
       }
     },
   });
-  const done = job.done.then(({ code, err }) => (code === 0 ? { ok: true, file } : { ok: false, error: cleanError(err), kind: errorKind(err) }));
-  return { child: job.child, done };
+  const done = job.done.then((r) => {
+    if (r.aborted) return { ok: false, stopped: true };
+    if (r.engineUpdating) return { ok: false, error: 'engine updating', kind: 'engineUpdating' };
+    const err = stopNote(r) || r.err;
+    if (r.code !== 0 || r.idle) return { ok: false, error: cleanError(err), kind: r.idle ? 'network' : errorKind(err) };
+    const verified = verifiedFile(file, opts);
+    return verified ? { ok: true, file: verified } : { ok: false, error: 'Download finished without an output file', kind: 'other' };
+  });
+  return { child: job.child, done, stop: job.stop };
 }
 
 // Adult sites stay downloadable but are hidden from the browsable list; the UI only confirms
@@ -275,7 +304,7 @@ const isAdult = (name) => ADULT.some((a) => name.toLowerCase().startsWith(a));
 let extractorsCache;
 async function extractors() {
   if (extractorsCache) return extractorsCache;
-  const { code, out } = await run(['--list-extractors']).done;
+  const { code, out } = await run(['--list-extractors'], { kind: 'extractors' }).done;
   if (code !== 0) return [];
   const groups = new Map();
   for (const raw of out.split(/\r?\n/)) {
@@ -292,4 +321,11 @@ async function extractors() {
   return extractorsCache;
 }
 
-module.exports = { version, analyze, download, safeName, extractors, cleanInfoCache, setUserBinDir, reconcileEngine, updateEngine };
+// True while any engine process runs (a lookup, a download, a version or site-list query).
+const busy = () => registry.size > 0 || replacing;
+// Stops every engine process and waits for the process trees to exit (app quit, app update).
+const stopAll = (timeoutMs) => registry.stopAll(timeoutMs);
+// A lookup result file Grab wrote itself (the only info file a download may load).
+const isInfoFile = (p) => typeof p === 'string' && path.dirname(path.resolve(p)) === path.resolve(INFO_DIR) && /^[0-9a-f]{40}-\d+\.json$/.test(path.basename(p));
+
+module.exports = { version, analyze, download, safeName, extractors, cleanInfoCache, setUserBinDir, reconcileEngine, updateEngine, busy, stopAll, isInfoFile };
