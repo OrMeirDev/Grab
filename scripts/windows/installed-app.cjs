@@ -64,6 +64,12 @@ async function engineAttempts() {
   return { processes: procs.length, attempts: procs.filter(([, parent]) => !pids.has(parent)).map(([pid]) => pid) };
 }
 
+// What each running yt-dlp.exe was asked to do (a version check, a lookup, a download).
+async function engineCommands() {
+  const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-Command', "Get-CimInstance Win32_Process -Filter \"Name='yt-dlp.exe'\" | ForEach-Object { $_.CommandLine }"], { encoding: 'utf8' });
+  return stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => l.replace(/\s+/g, ' ').slice(0, 300));
+}
+
 // Samples the engine in the background: the most attempts ever alive at once, and every attempt seen.
 function watchProcesses() {
   const w = { max: 0, maxProcesses: 0, samples: 0, attempts: new Set(), stop: false };
@@ -253,13 +259,30 @@ async function scenarioQuitDuringDownload() {
   await wait(1000);
   const after = processes();
   record('W-07a', 'quitting during a download ends yt-dlp/ffmpeg and saves the job as paused', after.ytdlp === 0 && after.ffmpeg === 0 && after.grab === 0 && saved?.status === 'paused', { processesAfterQuit: after, left, saved });
+  const from = fixtureLog().length;
   await launch();
+  const commands = await engineCommands();
+  await wait(3000);
   const restored = (await rows()).find((x) => x.name === 'quit');
-  record('W-07b', 'after reopening, the interrupted download is shown paused and nothing started by itself', restored?.state === 'paused' && processes().ytdlp === 0, restored);
+  const requested = fixtureLog().slice(from).filter((l) => l.url.includes('quit.mp4'));
+  record('W-07b', 'after reopening, the interrupted download is shown paused and nothing started by itself', restored?.state === 'paused' && requested.length === 0 && !commands.some((c) => c.includes('quit.mp4')), { restored, requestsForTheFile: requested.length, ytdlpRunningAtStart: commands });
   await shot('07-restored-paused');
   await clickTitle('המשך');
   const done = await rowIn(['done', 'error'], 240000);
   record('W-07c', 'resuming the restored download completes it', done?.state === 'done', done);
+  await clearQueue();
+}
+
+// Removing a download while it runs (the row's remove button) ends yt-dlp and deletes its jar.
+async function scenarioCancelCleanup() {
+  await paste(`${FIXTURE}/player\n`);
+  await rowIn(['ready', 'error'], 120000);
+  await clickTitle('הורד רק את זה');
+  await rowIn(['downloading']);
+  const jarsDuring = await until(() => (cookieJars().length ? cookieJars() : null), 30000);
+  await clickTitle('הסר מהרשימה');
+  const cleared = await until(async () => { const p = processes(); return !cookieJars().length && p.ytdlp === 0 && !(await rows()).length ? p : null; }, 30000);
+  record('W-08c', 'removing a running download ends yt-dlp and deletes its cookie jar', !!jarsDuring && !!cleared, { jarsDuring, cleared, jarsAfter: cookieJars(), partialFiles: outputs().filter((f) => /\.part$|\.ytdl$/.test(f)) });
   await clearQueue();
 }
 
@@ -309,6 +332,7 @@ async function scenarioSessionRequired() {
     await step('dup', scenarioDuplicates);
     await step('pause', scenarioPauseResume);
     await step('quit', scenarioQuitDuringDownload);
+    await step('cancel', scenarioCancelCleanup);
     await step('kill', scenarioForcedKillCleanup);
     await step('session', scenarioSessionRequired);
   } catch (e) {
