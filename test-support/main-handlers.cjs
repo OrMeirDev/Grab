@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const { createRequire } = require('node:module');
 const browser = require('../electron/browser-session.cjs');
 
-function mainHandlers(engine, pageprobe, hiddenProbe = { findMedia: async () => ({ candidates: [] }) }, session = browser) {
+function mainHandlers(engine, pageprobe, hiddenProbe = { findMedia: async () => ({ candidates: [] }) }, session = browser, budgets) {
   const handlers = new Map();
   const entry = path.join(__dirname, '../electron/main.cjs');
   const nativeRequire = createRequire(entry);
@@ -18,6 +18,7 @@ function mainHandlers(engine, pageprobe, hiddenProbe = { findMedia: async () => 
     if (name === './pageprobe.cjs') return pageprobe;
     if (name === './hidden-probe.cjs') return hiddenProbe;
     if (name === './browser-session.cjs') return session;
+    if (name === './lookup-budget.cjs' && budgets) return budgets;
     return nativeRequire(name);
   }, process, console, setTimeout, setInterval, __dirname: path.dirname(entry) };
   vm.runInNewContext(fs.readFileSync(entry, 'utf8'), sandbox, { filename: entry });
