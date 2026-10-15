@@ -125,6 +125,7 @@ async function analyzeImpl(e, url, { forcePage = false, id, browser: pickedBrows
   const edgeFirst = resolved ? resolved.source === 'site-rule' : browserSession.isMakoPage(url);
   const first = forcePage || edgeFirst ? { ok: false, kind: 'notfound', error: 'Unsupported URL' } : await engine.analyze(url, { signal });
   if (signal.aborted) return { ok: false, kind: 'cancelled', error: 'Cancelled' };
+  if (first.httpStatus === 429) return first;
   if (first.ok || !['notfound', 'notmedia', 'private', 'blocked', 'forbidden', 'other'].includes(first.kind)) return first;
   const missingMedia = ['notfound', 'notmedia'].includes(first.kind);
   const phase = (p, browserName) => { if (!e.sender.isDestroyed()) e.sender.send('engine:lookup-phase', { url, phase: p, browser: browserName }); };
@@ -305,6 +306,7 @@ ipcMain.handle('folder:open', (_e, dir) => { fs.mkdirSync(dir, { recursive: true
 
 // ---- browser integration (extension bridge, browser selection) ----
 let browserService = null;
+let browserServiceError = '';
 const sendToWindow = (channel, payload) => {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
 };
@@ -332,7 +334,7 @@ async function startBrowserService() {
   sendToWindow('browser:changed', null);
 }
 const unavailable = { unavailable: true };
-ipcMain.handle('browser:state', () => (browserService ? browserService.state() : unavailable));
+ipcMain.handle('browser:state', () => (browserService ? browserService.state() : { ...unavailable, error: browserServiceError }));
 ipcMain.handle('browser:refresh', () => (browserService ? browserService.refresh() : unavailable));
 ipcMain.handle('browser:set', (_e, patch) => (browserService ? browserService.setSettings(patch) : unavailable));
 ipcMain.handle('browser:resolve', (_e, url, explicit) => (browserService ? browserService.resolve(String(url || ''), { browser: explicit }) : unavailable));
@@ -364,7 +366,11 @@ app.whenReady().then(async () => {
   await engine.reconcileEngine();
   engine.cleanInfoCache();
   createWindow();
-  startBrowserService().catch((err) => console.error('Browser integration failed to start:', err && err.message));
+  startBrowserService().catch((err) => {
+    browserServiceError = 'לא ניתן להפעיל את החיבור לדפדפן. הפעל מחדש את Grab ובדוק שקבצי ההתקנה קיימים.';
+    console.error('Browser integration failed to start:', err && err.message);
+    sendToWindow('browser:changed', null);
+  });
 });
 app.on('window-all-closed', () => {
   for (const child of jobs.values()) child && child.kill();

@@ -372,9 +372,9 @@ export default function App() {
       update(id, { bphase: phase, bbrowser: browser?.name, binstance: instance });
     });
     // "Send to GRAB" from the extension: queue it once, in the browser it came from.
-    const offIncoming = api.onBrowserIncoming?.(({ ref, url, browserId, instanceKey }) => {
-      if (queueRef.current.some((x) => x.url === url)) { api.replyBrowserIncoming(ref, 'duplicate'); return; }
-      setQueue((q) => [...q, newItem(url, '', { browserRef: ref, browserPick: browserId, instancePick: instanceKey, autoQueue: true })]);
+    const offIncoming = api.onBrowserIncoming?.(({ ref, sourceId, url, browserId, instanceKey }) => {
+      if (queueRef.current.some((x) => x.sourceId === sourceId && !['done', 'error'].includes(x.status))) { api.replyBrowserIncoming(ref, 'duplicate'); return; }
+      setQueue((q) => [...q, newItem(url, '', { sourceId, browserRef: ref, browserPick: browserId, instancePick: instanceKey, autoQueue: true })]);
       setPage('downloads');
       api.replyBrowserIncoming(ref, 'accepted');
     });

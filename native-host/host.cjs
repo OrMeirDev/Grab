@@ -10,9 +10,9 @@
 const net = require('net');
 const path = require('path');
 const { encodeFrame, FrameParser, MAX_FRAME_BYTES } = require('./framing.cjs');
-const { pipePath, readToken, proof } = require('./ipc-paths.cjs');
+const { pipePath, readToken, proof, proofMatches } = require('./ipc-paths.cjs');
 
-const HOST_VERSION = 1;
+const HOST_VERSION = 2;
 const integrationDir = process.env.GRAB_INTEGRATION_DIR || path.resolve(__dirname, '..');
 const origin = process.argv.slice(2).find((a) => /^[a-z-]+-extension:\/\//.test(a)) || '';
 const browserKind = ['edge', 'chrome', 'brave'].includes(process.env.GRAB_BROWSER) ? process.env.GRAB_BROWSER : 'unknown';
@@ -46,14 +46,23 @@ function connect() {
   const token = readToken(integrationDir);
   if (!token) { appStatus(false); scheduleRetry(); return; }
   const sock = net.connect(pipePath(integrationDir));
+  let challenge = null;
   socket = sock;
   ready = false;
   const parser = new FrameParser({
     onError: (e) => { log('bad frame from app', e.code); if (e.code === 'oversize') sock.destroy(); },
     onMessage: (message) => {
-      if (message.type === 'challenge' && typeof message.nonce === 'string') {
+      if (message.type === 'challenge' && /^[0-9a-f]{32}$/.test(message.nonce)) {
+        challenge = message.nonce;
         sock.write(encodeFrame({ type: 'host-hello', proof: proof(token, message.nonce), browserKind, origin, hostVersion: HOST_VERSION, pid: process.pid }));
       } else if (message.type === 'ready') {
+        // Authenticate the desktop as well as the host. A process squatting on the pipe must
+        // not receive queued browser messages or inject commands without knowing the token.
+        if (!challenge || !proofMatches(token, 'app:' + challenge, message.proof)) {
+          log('desktop authentication failed');
+          sock.destroy();
+          return;
+        }
         ready = true;
         attempt = 0;
         appStatus(true);
@@ -61,7 +70,7 @@ function connect() {
       } else if (message.type === 'rejected') {
         log('app rejected this host:', String(message.reason || '').slice(0, 80));
         toBrowser({ v: 1, id: 'hrej' + Date.now().toString(36), type: 'error', code: 'host_rejected', message: String(message.reason || '').slice(0, 200) });
-      } else if (message.type === 'relay' && message.message && typeof message.message === 'object') {
+      } else if (ready && message.type === 'relay' && message.message && typeof message.message === 'object') {
         toBrowser(message.message);
       }
     },

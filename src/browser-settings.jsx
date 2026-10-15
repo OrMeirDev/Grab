@@ -47,7 +47,7 @@ export default function BrowserSettings() {
   const [ruleError, setRuleError] = useState('');
   const [copied, setCopied] = useState('');
 
-  const load = useCallback(() => api?.browserState?.().then((s) => setState(s?.unavailable ? null : s)).catch(() => {}), []);
+  const load = useCallback(() => api?.browserState?.().then(setState).catch(() => setState({ unavailable: true, error: 'לא ניתן לקרוא את מצב החיבור לדפדפן. נסה שוב.' })), []);
   useEffect(() => {
     load();
     const off = api?.onBrowserChanged?.(load);
@@ -56,6 +56,7 @@ export default function BrowserSettings() {
 
   if (!api?.browserState) return null;
   if (!state) return <section className="card settings"><div className="setting"><div className="setting-title">דפדפן והרחבה</div><div className="row-meta">טוען…</div></div></section>;
+  if (state.unavailable) return <section className="card settings"><div className="setting"><div><div className="setting-title">דפדפן והרחבה</div><div className="row-meta">{state.error || 'החיבור לדפדפן עדיין לא זמין.'}</div></div><button className="btn-ghost" onClick={load}><RefreshCw size={16} /> נסה שוב</button></div></section>;
 
   const act = async (name, fn) => { setBusy(name); try { await fn(); } finally { setBusy(''); load(); } };
   const refresh = () => act('refresh', () => api.browserRefresh().then((s) => setState(s)));

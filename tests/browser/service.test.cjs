@@ -308,6 +308,38 @@ test('Send to GRAB is rejected when the app window cannot take it', async (t) =>
   assert.equal(ack.reason, 'app_not_ready');
 });
 
+test('Send to GRAB reserves pending jobs and keeps same-page browser sessions independent', async (t) => {
+  const r = await rig(t, { settings: fast });
+  const edge = await r.connect({ browser: 'edge', instanceId: 'e-send' });
+  const brave = await r.connect({ browser: 'brave', instanceId: 'b-send' });
+  let release;
+  const requests = [];
+  r.svc.askRenderer = async (_channel, data) => {
+    requests.push(data);
+    assert.ok(r.svc.incoming.has(data.ref), 'session hint exists before the renderer can start analysis');
+    if (requests.length === 1) await new Promise((resolve) => { release = resolve; });
+    return 'accepted';
+  };
+  const url = 'https://site.test/two';
+  const first = protocol.make('send-to-grab', { url });
+  edge.write(first);
+  while (!release) await sleep(10);
+  const repeated = protocol.make('send-to-grab', { url });
+  edge.write(repeated);
+  await sleep(40);
+  assert.equal(requests.length, 1);
+  release();
+  const a = await edge.waitFor((m) => m.type === 'ack' && m.replyTo === first.id);
+  const duplicate = await edge.waitFor((m) => m.type === 'ack' && m.replyTo === repeated.id);
+  assert.equal(a.status, 'accepted');
+  assert.equal(duplicate.status, 'duplicate');
+  assert.equal(a.ref, duplicate.ref);
+  const other = protocol.make('send-to-grab', { url });
+  brave.write(other);
+  assert.equal((await brave.waitFor((m) => m.type === 'ack' && m.replyTo === other.id)).status, 'accepted');
+  assert.notEqual(requests[0].sourceId, requests[1].sourceId, 'one page in another session is a distinct request');
+});
+
 test('deadlines default sensibly, accept valid saved values and ignore out-of-range ones', async (t) => {
   const r = await rig(t, { settings: {} });
   assert.deepEqual(r.svc.deadlines(), { connectMs: 10000, discoveryMs: 60000, probeMs: 45000, downloadIdleMs: 180000 });

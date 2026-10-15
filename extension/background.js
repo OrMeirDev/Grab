@@ -71,10 +71,11 @@ async function connect() {
   }
   port = mine;
   setConn({ state: 'connecting', error: '', errorKind: '', welcomed: false, appOnline: false });
-  mine.onMessage.addListener((m) => onNative(m));
+  mine.onMessage.addListener((m) => { if (port === mine) onNative(m); });
   mine.onDisconnect.addListener(() => {
     const text = (chrome.runtime.lastError && chrome.runtime.lastError.message) || '';
-    if (port === mine) port = null;
+    if (port !== mine) return; // a replaced connection must not tear down the new one
+    port = null;
     clearInterval(keepalive);
     keepalive = null;
     setConn({ state: 'disconnected', error: text, errorKind: classifyDisconnect(text), welcomed: false, appOnline: false });
@@ -192,6 +193,7 @@ function noteHost(tabId, host) {
 
 chrome.webNavigation.onCommitted.addListener((d) => {
   if (d.frameId !== 0) return;
+  for (const [id, req] of requests) if (req.tabId === d.tabId) requests.delete(id);
   // A new document in this tab: observations of the previous page must not leak into it.
   withTab(d.tabId, async () => {
     const prev = await loadTab(d.tabId);
@@ -199,6 +201,7 @@ chrome.webNavigation.onCommitted.addListener((d) => {
   });
 });
 chrome.tabs.onRemoved.addListener((tabId) => {
+  for (const [id, req] of requests) if (req.tabId === tabId) requests.delete(id);
   withTab(tabId, () => chrome.storage.session.remove(tabKey(tabId)));
   for (const job of jobs.values()) if (job.tabId === tabId && job.owned) { job.owned = false; job.tabGone = true; }
 });
@@ -210,10 +213,11 @@ const SEGMENT_PATH = /\.(ts|m4s|cmfv|cmfa)$/i;
 
 // One entry per request id. A redirect keeps the id but changes the URL (onBeforeRedirect, then the
 // later events carry the new URL), so every event re-syncs the URL and records the hop it left behind.
-function track(d) {
+function track(d, create = false) {
   if (d.tabId < 0) return null;
   let r = requests.get(d.requestId);
   if (!r) {
+    if (!create) return null; // old document/request, or one whose start we did not observe
     if (requests.size >= MAX_REQUESTS) requests.delete(requests.keys().next().value);
     r = { tabId: d.tabId, frameId: d.frameId, url: d.url, redirects: [], context: null };
     requests.set(d.requestId, r);
@@ -231,7 +235,7 @@ chrome.webRequest.onBeforeRedirect.addListener((d) => {
 }, { urls: ['http://*/*', 'https://*/*'], types: ['xmlhttprequest', 'media', 'other', 'object'] });
 
 chrome.webRequest.onBeforeRequest.addListener((d) => {
-  const r = track(d);
+  const r = track(d, true);
   if (!r) return;
   try {
     const u = new URL(d.url);
@@ -540,6 +544,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
     }
     if (msg.type === 'popup:reconnect') {
       clearTimeout(reconnectTimer); reconnectTimer = null; backoff = 1000;
+      clearInterval(keepalive); keepalive = null;
       if (port) { try { port.disconnect(); } catch (e) { /* ignore */ } port = null; }
       await connect();
       return { ok: true };

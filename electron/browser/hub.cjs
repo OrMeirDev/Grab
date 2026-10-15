@@ -10,7 +10,7 @@ const crypto = require('crypto');
 const { EventEmitter } = require('events');
 const protocol = require('../../extension/lib/protocol.js');
 const { encodeFrame, FrameParser } = require('../../native-host/framing.cjs');
-const { pipePath, ensureToken, proofMatches } = require('../../native-host/ipc-paths.cjs');
+const { pipePath, ensureToken, proof, proofMatches } = require('../../native-host/ipc-paths.cjs');
 
 const BROWSER_KINDS = ['edge', 'chrome', 'brave'];
 
@@ -84,7 +84,7 @@ class BrowserHub extends EventEmitter {
           clearTimeout(authTimer);
           conn.host = { browserKind: BROWSER_KINDS.includes(m.browserKind) ? m.browserKind : 'unknown', origin, hostVersion: m.hostVersion, pid: Number.isInteger(m.pid) ? m.pid : 0 };
           conn.state = 'hello';
-          raw({ type: 'ready' });
+          raw({ type: 'ready', proof: proof(this.token, 'app:' + conn.nonce) });
           helloTimer = setTimeout(() => { if (!conn.instance) { this.fail('no_hello', 'The extension did not introduce itself', conn.host.browserKind); sock.destroy(); } }, this.helloTimeoutMs);
           return;
         }

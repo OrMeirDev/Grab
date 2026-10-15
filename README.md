@@ -20,6 +20,12 @@ The installer is not code-signed, so Windows SmartScreen warns on first run: cli
 
 ## Pages that use your browser session
 
+On the browser-extension feature branch, use **Settings → דפדפן והרחבה** to set up the unpacked extension and select Edge, Chrome or Brave. This uses the browser/profile where you are already signed in, supports both pasting URLs and **Send to GRAB**, and does not require remote debugging. The initial `mako.co.il → Edge` rule is editable and does not change the browser for unrelated sites.
+
+See [browser extension setup, testing and troubleshooting](docs/browser-extension.md) for the complete one-time setup, Windows build commands and manual mako checklist.
+
+### Legacy connection (when the extension has not been set up)
+
 For Mako (`mako.co.il` and its subdomains), Grab looks up the page's player directly in your running Edge profile. Other sites use your Windows default browser when yt-dlp cannot read a page or needs authentication. It does not open a sign-in window or create a separate profile.
 
 1. Open the browser named in the link's connection guide and enable **Allow remote debugging** at its displayed address: `edge://inspect/#remote-debugging` for Mako, or the default browser's equivalent for other sites.

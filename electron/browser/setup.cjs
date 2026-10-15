@@ -16,6 +16,7 @@ const { execFile } = require('child_process');
 const protocol = require('../../extension/lib/protocol.js');
 
 const HOST_NAME = protocol.HOST_NAME;
+const INTEGRATION_VERSION = 2;
 const HOST_FILES = ['host.cjs', 'framing.cjs', 'ipc-paths.cjs'];
 
 const REGISTRY_KEYS = {
@@ -144,7 +145,7 @@ async function install({ sourceRoot, integrationDir = defaultIntegrationDir(), b
     await registry.set(REGISTRY_KEYS[browser](hostName), manifest);
     registered.push(browser);
   }
-  const record = { appVersion, runtime, extensionId: identity.id, extensionVersion: identity.version, browsers: registered, hostName, at: new Date().toISOString() };
+  const record = { appVersion, integrationVersion: INTEGRATION_VERSION, runtime, extensionId: identity.id, extensionVersion: identity.version, browsers: registered, hostName, at: new Date().toISOString() };
   fs.writeFileSync(installFile(integrationDir), JSON.stringify(record, null, 2));
   return { ...record, extensionDir: path.join(integrationDir, 'extension'), origin: identity.origin };
 }
@@ -185,7 +186,7 @@ async function health({ integrationDir = defaultIntegrationDir(), registry = win
       } catch { problems.push('manifest_invalid'); }
       if (record.runtime && !fs.existsSync(record.runtime)) problems.push('runtime_missing');
       if (HOST_FILES.some((f) => !fs.existsSync(path.join(integrationDir, 'native-host', f)))) problems.push('host_script_missing');
-      if (record.appVersion !== appVersion) problems.push('stale_version');
+      if (record.appVersion !== appVersion || record.integrationVersion !== INTEGRATION_VERSION || record.extensionVersion !== expected?.version) problems.push('stale_version');
     }
     if (record && !fs.existsSync(path.join(integrationDir, 'extension', 'manifest.json'))) problems.push('extension_folder_missing');
     const live = instances.filter((i) => i.browser === browser);
@@ -201,6 +202,6 @@ async function health({ integrationDir = defaultIntegrationDir(), registry = win
 }
 
 module.exports = {
-  HOST_NAME, REGISTRY_KEYS, BROWSER_IDS, defaultIntegrationDir, extensionIdFromKey, readExtensionIdentity,
+  HOST_NAME, INTEGRATION_VERSION, REGISTRY_KEYS, BROWSER_IDS, defaultIntegrationDir, extensionIdFromKey, readExtensionIdentity,
   install, uninstall, health, windowsRegistry, resolveRuntime, launcherText, readInstall,
 };

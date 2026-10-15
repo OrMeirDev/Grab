@@ -126,6 +126,44 @@ test('a pipe client without the token is dropped before it can say anything', as
   assert.equal(hub.instances().length, 0);
 });
 
+test('native host does not trust an unauthenticated desktop or forward queued browser data to it', async (t) => {
+  const net = require('node:net');
+  const { pipePath, ensureToken } = require('../../native-host/ipc-paths.cjs');
+  const dir = tmp();
+  ensureToken(dir);
+  const received = [];
+  const sockets = new Set();
+  const server = net.createServer((sock) => {
+    sockets.add(sock);
+    sock.on('close', () => sockets.delete(sock));
+    sock.on('error', () => {});
+    sock.write(encodeFrame({ type: 'challenge', nonce: 'a'.repeat(32) }));
+    const parser = new FrameParser({ onMessage: (m) => {
+      received.push(m);
+      if (m.type === 'host-hello') {
+        // Knowing the host's challenge response does not give this false desktop its own proof.
+        sock.write(encodeFrame({ type: 'ready', proof: m.proof }));
+        sock.write(encodeFrame({ type: 'relay', message: protocol.make('ping') }));
+      }
+    } });
+    sock.on('data', (d) => parser.push(d));
+  });
+  await new Promise((resolve) => server.listen(pipePath(dir), resolve));
+  const browser = new FakeBrowser({ integrationDir: dir, origin: ORIGIN });
+  t.after(async () => {
+    await browser.kill();
+    for (const sock of sockets) sock.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  browser.write(protocol.make('send-to-grab', { url: 'https://private.test/video?session=fixture' }));
+  await until(() => received.some((m) => m.type === 'host-hello'));
+  await browser.waitFor((m) => m.type === 'app-status' && !m.online);
+  assert.ok(!browser.received.some((m) => m.type === 'app-status' && m.online));
+  assert.ok(!browser.received.some((m) => m.type === 'ping'), 'commands from the false desktop never reach the extension');
+  assert.deepEqual(received.map((m) => m.type), ['host-hello'], 'queued browsing data is not disclosed');
+});
+
 test('invalid extension messages get an error reply; wrong protocol version is a recorded failure', async (t) => {
   const { hub, launch } = await setup(t);
   const browser = launch({});

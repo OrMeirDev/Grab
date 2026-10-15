@@ -2,6 +2,7 @@
 // discovery jobs, the handoff of one job's session context to the downloader, and "Send to GRAB".
 // It holds the authoritative state of a browser-assisted lookup; the renderer only displays it.
 const path = require('path');
+const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
 const { EventEmitter } = require('events');
 const protocol = require('../../extension/lib/protocol.js');
@@ -84,7 +85,8 @@ class BrowserService extends EventEmitter {
   async autoRepair() {
     const record = setup.readInstall(this.integrationDir);
     if (!record || !record.browsers || !record.browsers.length) return;
-    if (record.appVersion === this.appVersion && record.runtime === setup.resolveRuntime()) return;
+    if (record.appVersion === this.appVersion && record.runtime === setup.resolveRuntime() &&
+      record.integrationVersion === setup.INTEGRATION_VERSION && record.extensionVersion === this.identity.version) return;
     try { await setup.install({ sourceRoot: this.sourceRoot, integrationDir: this.integrationDir, browsers: record.browsers, appVersion: this.appVersion, registry: this.registry }); } catch { /* shown by health */ }
     await this.refreshHealth();
   }
@@ -294,6 +296,7 @@ class BrowserService extends EventEmitter {
           instance = await connectInstance({ hub: this.hub, browser, getInstance: this.getInstanceFn(browser.id, explicitInstance), settings: cfg, deps: this.deps, signal: abort.signal });
           candidates = [hint.candidate];
           scopeKey = hint.scopeKey;
+          title = hint.title || '';
         } else {
           entry.jobId = protocol.newId('job');
           discovery = await discover({
@@ -370,17 +373,41 @@ class BrowserService extends EventEmitter {
   // ---------------------------------------------------------------- Send to GRAB
   async onSend(instance, m) {
     const page = m.url.split('#')[0];
-    const recent = this.recentSends.get(page);
+    const sendKey = JSON.stringify([instance.key, page, m.candidate?.url || '']);
+    let recent = this.recentSends.get(sendKey);
     const reply = (status, extra = {}) => this.hub.sendTo(instance.key, 'ack', { status, ...extra }, m.id);
+    if (recent?.pending) { await recent.pending; recent = this.recentSends.get(sendKey); }
     if (recent && (!recent.terminal || Date.now() - recent.at < 120000)) { reply('duplicate', { ref: recent.ref }); return; }
     const ref = protocol.newId('ref');
-    const answer = await this.askRenderer('browser:incoming', { ref, url: m.url, title: m.title || '', browserId: instance.browser, instanceKey: instance.key, hasCandidate: !!m.candidate }, 3000);
-    if (answer !== 'accepted' && answer !== 'duplicate') { reply('rejected', { reason: answer === 'unavailable' ? 'app_not_ready' : 'refused' }); return; }
-    if (answer === 'duplicate') { reply('duplicate'); return; }
-    this.incoming.set(ref, { instanceKey: instance.key, scopeKey: m.id, candidate: m.candidate || null, url: m.url, terminal: '' });
-    this.recentSends.set(page, { ref, at: Date.now(), terminal: '' });
-    for (const [k, v] of this.recentSends) if (Date.now() - v.at > 30 * 60 * 1000) this.recentSends.delete(k);
-    reply('accepted', { ref });
+    let release;
+    const reservation = { ref, at: Date.now(), terminal: '', pending: new Promise((resolve) => { release = resolve; }) };
+    // Reserve before notifying React: a fast renderer may start analysis before its acknowledgment,
+    // and a double-click must not create two jobs while the first acknowledgment is pending.
+    this.recentSends.set(sendKey, reservation);
+    this.incoming.set(ref, { instanceKey: instance.key, scopeKey: m.id, candidate: m.candidate || null, title: m.title || '', url: m.url, sendKey, terminal: '' });
+    try {
+      const sourceId = crypto.createHash('sha256').update(sendKey).digest('hex');
+      const answer = await this.askRenderer('browser:incoming', { ref, sourceId, url: m.url, title: m.title || '', browserId: instance.browser, instanceKey: instance.key, hasCandidate: !!m.candidate }, 3000);
+      if (answer !== 'accepted') {
+        this.incoming.delete(ref);
+        this.recentSends.delete(sendKey);
+        if (answer === 'duplicate') reply('duplicate');
+        else reply('rejected', { reason: answer === 'unavailable' ? 'app_not_ready' : 'refused' });
+        return;
+      }
+      reply('accepted', { ref });
+    } catch {
+      this.incoming.delete(ref);
+      this.recentSends.delete(sendKey);
+      reply('rejected', { reason: 'app_not_ready' });
+    } finally {
+      reservation.pending = null;
+      release();
+    }
+    for (const [k, v] of this.recentSends) if (v.terminal && Date.now() - v.at > 30 * 60 * 1000) {
+      this.recentSends.delete(k);
+      this.incoming.delete(v.ref);
+    }
   }
 
   // Phase and terminal result of a Send-to-GRAB job, reported back to the browser that sent it.
@@ -390,7 +417,7 @@ class BrowserService extends EventEmitter {
     if (rec.terminal) return false;
     if (terminal) {
       rec.terminal = terminal;
-      const recent = this.recentSends.get(rec.url.split('#')[0]);
+      const recent = this.recentSends.get(rec.sendKey);
       if (recent) recent.terminal = terminal;
     }
     return this.hub.sendTo(rec.instanceKey, 'job-status', { ref, phase: String(phase).slice(0, 40), ...(terminal ? { terminal } : {}), ...(reason ? { reason: String(reason).slice(0, 120) } : {}) });
