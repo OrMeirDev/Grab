@@ -211,6 +211,8 @@ personal browser on the runner); owner decision (§5).
 
 Run on a Windows PC with the latest test installers (or a newer run's), only with profiles,
 accounts and content the owner authorizes. Throwaway profiles on the runner do not count here.
+Step-by-step version (Hebrew, with backup, expected texts and restore):
+[windows-manual-checklist.md](windows-manual-checklist.md).
 
 - [ ] Personal Chrome, Edge and Brave profiles (each the default browser in turn): the
       remote-debugging permission prompt, exact-tab reuse with no reload, background tab closed,
