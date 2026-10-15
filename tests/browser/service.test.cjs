@@ -149,6 +149,7 @@ test('an expired or refused signed URL gets exactly one fresh discovery in the s
   assert.equal(ok.ok, true);
   assert.equal(ok.mediaUrl, 'https://cdn.test/v/r2.m3u8?token=2');
   assert.equal(round, 2);
+  assert.deepEqual(b.received.filter((m) => m.type === 'discover').map((m) => m.refresh), [false, true], 'retry really bypasses the existing tab and cached URL');
 
   round = 0;
   r.engine.result = () => ({ ok: false, kind: 'forbidden', httpStatus: 403, error: 'HTTP 403' });
@@ -167,6 +168,44 @@ test('an already expired signed URL is not even tried', async (t) => {
   const out = await r.svc.analyze('https://x.test/p', { itemId: 8, browser: 'edge' });
   assert.equal(out.ok, false);
   assert.equal(r.analyzeCalls.length, 0);
+});
+
+test('playback action reveals the live discovery tab before candidates have arrived', async (t) => {
+  const r = await rig(t, { settings: fast });
+  const b = await r.connect();
+  b.script.discover = (m) => [protocol.make('progress', { jobId: m.jobId, state: 'playback_required' })];
+  const pending = r.svc.analyze('https://x.test/p', { itemId: 60, browser: 'edge' });
+  const request = await b.waitFor((m) => m.type === 'discover');
+  assert.equal(r.svc.revealPlayback(60), true);
+  const reveal = await b.waitFor((m) => m.type === 'reveal-tab');
+  assert.equal(reveal.jobId, request.jobId);
+  r.svc.cancel(60);
+  assert.equal((await pending).kind, 'cancelled');
+  assert.equal(r.svc.revealPlayback(60), false);
+});
+
+test('a source rate limit stops at once without another source or session refresh', async (t) => {
+  const r = await rig(t, { settings: fast });
+  const b = await r.connect();
+  r.engine.result = () => ({ ok: false, kind: 'blocked', httpStatus: 429, error: 'HTTP 429' });
+  const out = await r.svc.analyze('https://x.test/p', { itemId: 61, browser: 'edge' });
+  assert.equal(out.kind, 'blocked');
+  assert.equal(out.httpStatus, 429);
+  assert.equal(r.analyzeCalls.length, 1);
+  assert.equal(b.received.filter((m) => m.type === 'discover').length, 1);
+});
+
+test('video choices cannot be reused for another page, item or browser session', async (t) => {
+  const r = await rig(t, { settings: fast });
+  const b = await r.connect();
+  b.script.discover = (m) => [protocol.make('candidates', { jobId: m.jobId, final: true, candidates: [cand('https://cdn.test/a/one.m3u8'), cand('https://cdn.test/b/two.m3u8')] })];
+  const first = await r.svc.analyze('https://x.test/p', { itemId: 62, browser: 'edge' });
+  const choice = { token: first.token, index: 0 };
+  assert.equal((await r.svc.analyze('https://other.test/p', { itemId: 62, browser: 'edge', choice })).kind, 'videoChoiceExpired');
+  assert.equal((await r.svc.analyze('https://x.test/p', { itemId: 63, browser: 'edge', choice })).kind, 'videoChoiceExpired');
+  assert.equal((await r.svc.analyze('https://x.test/p', { itemId: 62, browser: 'chrome', choice })).kind, 'videoChoiceExpired');
+  assert.equal((await r.svc.analyze('https://x.test/p', { itemId: 62, browser: 'edge', choice })).ok, true);
+  assert.equal((await r.svc.analyze('https://x.test/p', { itemId: 62, browser: 'edge', choice })).kind, 'videoChoiceExpired');
 });
 
 test('several plausible videos produce a small choice that resolves without a second discovery', async (t) => {

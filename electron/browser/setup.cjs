@@ -124,8 +124,11 @@ async function install({ sourceRoot, integrationDir = defaultIntegrationDir(), b
   const hostDir = path.join(integrationDir, 'native-host');
   fs.mkdirSync(hostDir, { recursive: true });
   for (const f of HOST_FILES) fs.copyFileSync(path.join(sourceRoot, 'native-host', f), path.join(hostDir, f));
+  // Adding Chrome after Edge must not erase Edge from the install record or auto-repair list.
+  const previous = readInstall(integrationDir);
+  const requested = [...new Set([...(previous?.browsers || []).filter((b) => BROWSER_IDS.includes(b)), ...browsers])];
   const registered = [];
-  for (const browser of browsers) {
+  for (const browser of requested) {
     const launcher = path.join(hostDir, `grab-host-${browser}.cmd`);
     fs.writeFileSync(launcher, launcherText({ runtime, hostScript: path.join(hostDir, 'host.cjs'), browser, integrationDir }));
     const manifestDir = path.join(integrationDir, 'manifests', browser);
@@ -181,6 +184,7 @@ async function health({ integrationDir = defaultIntegrationDir(), registry = win
         if ((manifest.allowed_origins || []).some((o) => /\*/.test(o) || !/^chrome-extension:\/\/[a-p]{32}\/$/.test(o))) problems.push('bad_origin');
       } catch { problems.push('manifest_invalid'); }
       if (record.runtime && !fs.existsSync(record.runtime)) problems.push('runtime_missing');
+      if (HOST_FILES.some((f) => !fs.existsSync(path.join(integrationDir, 'native-host', f)))) problems.push('host_script_missing');
       if (record.appVersion !== appVersion) problems.push('stale_version');
     }
     if (record && !fs.existsSync(path.join(integrationDir, 'extension', 'manifest.json'))) problems.push('extension_folder_missing');

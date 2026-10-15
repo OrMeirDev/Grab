@@ -257,6 +257,9 @@ class BrowserService extends EventEmitter {
     const previous = this.active.get(itemId);
     if (previous) previous.abort.abort();
     const abort = new AbortController();
+    const onAbort = () => abort.abort();
+    if (opts.signal?.aborted) abort.abort();
+    else opts.signal?.addEventListener('abort', onAbort, { once: true });
     const entry = { abort, jobId: null, instance: null };
     this.active.set(itemId, entry);
     const cfg = this.deadlines();
@@ -267,6 +270,14 @@ class BrowserService extends EventEmitter {
 
     try {
       let pendingChoice = opts.choice && this.choices.get(opts.choice.token);
+      if (opts.choice) {
+        // A video choice belongs to one page, queue item and browser session, and is single-use.
+        if (!pendingChoice || pendingChoice.itemId !== itemId || pendingChoice.url !== url ||
+          pendingChoice.instance.browser !== browser.id || (explicitInstance && pendingChoice.instance.key !== explicitInstance) ||
+          Date.now() - pendingChoice.at > 10 * 60 * 1000 || !Number.isInteger(opts.choice.index) ||
+          !pendingChoice.candidates[opts.choice.index]) return this.fail('videoChoiceExpired', browser);
+        this.choices.delete(opts.choice.token);
+      }
       let lastFailure = null;
       for (let round = 0; round < 2; round++) {
         let candidates;
@@ -276,6 +287,7 @@ class BrowserService extends EventEmitter {
         let title = '';
         if (pendingChoice) {
           ({ candidates, instance, scopeKey, title } = pendingChoice);
+          if (!this.hub.instances().some((i) => i.key === instance.key)) throw new BrowserError('browserDisconnected');
           candidates = [candidates[opts.choice.index]].filter(Boolean);
           pendingChoice = null;
         } else if (round === 0 && hint && hint.candidate) {
@@ -283,10 +295,11 @@ class BrowserService extends EventEmitter {
           candidates = [hint.candidate];
           scopeKey = hint.scopeKey;
         } else {
+          entry.jobId = protocol.newId('job');
           discovery = await discover({
             hub: this.hub, browser, url, getInstance: this.getInstanceFn(browser.id, explicitInstance), settings: cfg, deps: this.deps,
-            signal: abort.signal, jobId: protocol.newId('job'),
-            onPhase: (name, extra) => { if (name !== 'connecting' && discovery) entry.instance = entry.instance; phase(name, extra || {}); },
+            signal: abort.signal, jobId: entry.jobId, refresh: round > 0 || !!opts.refresh,
+            onPhase: (name, extra) => { if (extra?.instance) entry.instance = extra.instance; phase(name, extra || {}); },
           });
           entry.instance = discovery.instance;
           entry.jobId = discovery.jobId;
@@ -300,7 +313,7 @@ class BrowserService extends EventEmitter {
           if (ranked.ambiguous && !opts.choice) {
             const token = protocol.newId('choice');
             const plausible = ranked.plausible.slice(0, 4);
-            this.choices.set(token, { candidates: plausible, instance, scopeKey, title, url, at: Date.now() });
+            this.choices.set(token, { candidates: plausible, instance, scopeKey, title, url, itemId, at: Date.now() });
             for (const [k, v] of this.choices) if (Date.now() - v.at > 10 * 60 * 1000) this.choices.delete(k);
             return { ok: false, kind: 'videoChoice', error: 'multiple videos', token, browser: { id: browser.id, name: browser.name }, choices: plausible.map((c, index) => ({ index, label: this.describeChoice(c) })) };
           }
@@ -317,23 +330,26 @@ class BrowserService extends EventEmitter {
             cookieFile, requestContext: c.context, referer: url, title: title || undefined, signal: abort.signal, timeoutMs: cfg.probeMs,
           }));
           if (abort.signal.aborted) throw new BrowserError('cancelled');
+          // Rate limiting is not a session-expiry signal. Stop immediately, preserving queue backoff.
+          if (r.kind === 'blocked' || r.httpStatus === 429) return { ...r, ok: false, kind: 'blocked', browser: { id: browser.id, name: browser.name } };
           if (r.ok) {
             return { ...r, mediaUrl: c.url, referer: (c.context && c.context.referer) || url, requestContext: c.context, cookieRef, browser: { id: browser.id, name: browser.name }, instanceKey: instance.key };
           }
           lastFailure = r;
         }
         // An expired or refused signed URL gets ONE fresh discovery in the same session; never a loop.
-        const stale = lastFailure && (['forbidden', 'private', 'blocked'].includes(lastFailure.kind) || [401, 403, 410].includes(lastFailure.httpStatus));
+        const stale = lastFailure && (['forbidden', 'private'].includes(lastFailure.kind) || [401, 403, 410].includes(lastFailure.httpStatus));
         if (!stale || round === 1) break;
         phase('discovering', { instance });
         opts = { ...opts, choice: undefined };
       }
-      if (lastFailure && (['forbidden', 'private', 'blocked'].includes(lastFailure.kind) || [401, 403, 410].includes(lastFailure.httpStatus))) return this.fail('sessionExpired', browser);
+      if (lastFailure && (['forbidden', 'private'].includes(lastFailure.kind) || [401, 403, 410].includes(lastFailure.httpStatus))) return this.fail('sessionExpired', browser);
       if (lastFailure && lastFailure.kind === 'cancelled') return this.fail('cancelled', browser);
       return { ...(lastFailure || {}), ok: false, kind: lastFailure && lastFailure.kind === 'probeTimeout' ? 'probeTimeout' : 'engineFailure', error: (lastFailure && lastFailure.error) || 'engine', browser: { id: browser.id, name: browser.name } };
     } catch (error) {
       return this.mapError(error, browser);
     } finally {
+      opts.signal?.removeEventListener('abort', onAbort);
       if (this.active.get(itemId) === entry) this.active.delete(itemId);
     }
   }

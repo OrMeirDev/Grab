@@ -11,6 +11,10 @@ const { CdpClient } = require('../electron/browser-session.cjs');
 
 function findChromium() {
   if (process.env.GRAB_TEST_CHROMIUM && fs.existsSync(process.env.GRAB_TEST_CHROMIUM)) return process.env.GRAB_TEST_CHROMIUM;
+  try {
+    const exe = require('playwright').chromium.executablePath();
+    if (fs.existsSync(exe)) return exe;
+  } catch { /* optional browser not downloaded yet */ }
   const base = process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'ms-playwright');
   if (!base || !fs.existsSync(base)) return null;
   const dirs = fs.readdirSync(base).filter((d) => /^chromium-\d+$/.test(d)).sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1]));

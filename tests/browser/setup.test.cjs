@@ -88,6 +88,23 @@ test('uninstall removes only Grab-owned registrations and folders', async (t) =>
   assert.deepEqual((await setup.uninstall({ integrationDir: dir, registry })).removed, [], 'second run is a no-op');
 });
 
+test('adding a second browser preserves the first registration and repairs both on the next install', async (t) => {
+  const dir = tmpDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const registry = memoryRegistry();
+  const args = { sourceRoot: root, integrationDir: dir, runtime: process.execPath, appVersion: '1', registry };
+  await setup.install({ ...args, browsers: ['edge'] });
+  await setup.install({ ...args, browsers: ['chrome'] });
+  assert.deepEqual(setup.readInstall(dir).browsers, ['edge', 'chrome']);
+  const report = await setup.health({ ...args, detected: [{ id: 'edge' }, { id: 'chrome' }] });
+  for (const id of ['edge', 'chrome']) assert.deepEqual(report.results.find((r) => r.browser === id).problems, [], id);
+  fs.rmSync(path.join(dir, 'native-host', 'framing.cjs'));
+  assert.ok((await setup.health(args)).results.find((r) => r.browser === 'edge').problems.includes('host_script_missing'));
+  await setup.install({ ...args, browsers: ['chrome'], appVersion: '2' });
+  assert.ok(fs.existsSync(path.join(dir, 'native-host', 'framing.cjs')));
+  assert.equal(setup.readInstall(dir).browsers.length, 2);
+});
+
 test('health distinguishes not installed, ID mismatch, missing host, stale version and a live connection', async (t) => {
   const dir = tmpDir();
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

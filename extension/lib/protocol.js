@@ -50,7 +50,7 @@
     ping: { dir: 'both', check: () => true },
     pong: { dir: 'both', check: () => true },
     error: { dir: 'both', check: (m) => isStr(m.code, 64) && optStr(m.message, 300) },
-    discover: { dir: 'app', check: (m) => isId(m.jobId) && isHttpUrl(m.url) && Number.isInteger(m.deadlineMs) && m.deadlineMs > 0 && m.deadlineMs <= 600000 },
+    discover: { dir: 'app', check: (m) => isId(m.jobId) && isHttpUrl(m.url) && Number.isInteger(m.deadlineMs) && m.deadlineMs > 0 && m.deadlineMs <= 600000 && (m.refresh === undefined || typeof m.refresh === 'boolean') },
     cancel: { dir: 'app', check: (m) => isId(m.jobId) },
     'reveal-tab': { dir: 'app', check: (m) => isId(m.jobId) },
     progress: { dir: 'ext', check: (m) => isId(m.jobId) && ['locating', 'opening', 'discovering', 'playback_required', 'probing'].includes(m.state) },

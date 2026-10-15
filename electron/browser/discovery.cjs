@@ -57,7 +57,7 @@ async function connectInstance({ hub, browser, getInstance, settings = {}, deps 
 }
 
 // deps: { isRunning(browserId) -> Promise<bool>, launch(exe) -> void }
-async function discover({ hub, browser, url, jobId = protocol.newId('job'), getInstance, settings = {}, deps = {}, signal, onPhase = () => {}, onSettle }) {
+async function discover({ hub, browser, url, jobId = protocol.newId('job'), refresh = false, getInstance, settings = {}, deps = {}, signal, onPhase = () => {}, onSettle }) {
   const cfg = { ...DEFAULTS, ...settings };
   const abort = new AbortController();
   const onOuterAbort = () => abort.abort();
@@ -98,7 +98,7 @@ async function discover({ hub, browser, url, jobId = protocol.newId('job'), getI
       const onAbortNow = () => done(reject, new BrowserError('cancelled'));
       abort.signal.addEventListener('abort', onAbortNow, { once: true });
       cleanup.push(() => abort.signal.removeEventListener('abort', onAbortNow));
-      if (!hub.sendTo(instance.key, 'discover', { jobId, url, deadlineMs: cfg.discoveryMs })) done(reject, new BrowserError('browserDisconnected'));
+      if (!hub.sendTo(instance.key, 'discover', { jobId, url, deadlineMs: cfg.discoveryMs, refresh })) done(reject, new BrowserError('browserDisconnected'));
       if (abort.signal.aborted) onAbortNow();
     });
     return { ...result, instance, jobId };

@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('grab', {
   browserSet: (patch) => ipcRenderer.invoke('browser:set', patch),
   browserResolve: (url, explicit) => ipcRenderer.invoke('browser:resolve', url, explicit),
   browserSetup: (opts) => ipcRenderer.invoke('browser:setup', opts),
+  browserUninstall: () => ipcRenderer.invoke('browser:uninstall'),
   browserTest: (id) => ipcRenderer.invoke('browser:test', id),
   openExtensionFolder: () => ipcRenderer.invoke('browser:open-extension-folder'),
   revealPlayback: (id) => ipcRenderer.invoke('browser:reveal-playback', id),

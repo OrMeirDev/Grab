@@ -17,11 +17,15 @@ const { discover } = require('../electron/browser/discovery.cjs');
 const { pickInstance } = require('../electron/browser/selection.cjs');
 const { Chromium, findChromium, sleep } = require('../test-support/chromium-harness.cjs');
 const { createSessionFixture, ffmpegAvailable } = require('../test-support/session-fixture.cjs');
+const { BrowserService } = require('../electron/browser/service.cjs');
+const engine = require('../electron/engine.cjs');
+const session = require('../electron/browser-session.cjs');
 
 const root = path.join(__dirname, '..');
 const binDir = path.join(root, 'bin');
 const env = { ...process.env, PATH: [fs.existsSync(binDir) ? binDir : '', process.env.PATH].filter(Boolean).join(path.delimiter) };
 const skip = process.platform !== 'win32' ? 'Windows only' : !findChromium() ? 'no Chromium found' : !ffmpegAvailable(env) ? 'ffmpeg not available' : false;
+if (process.env.GRAB_REQUIRE_EXTENSION_TEST === '1' && skip) throw new Error('Required extension verification cannot run: ' + skip);
 
 const edge = { id: 'chrome', name: 'Chromium (test)', exe: null };
 const cfg = { connectMs: 15000, launchGraceMs: 15000, discoveryMs: 40000 };
@@ -42,6 +46,7 @@ test('real Chromium + real extension + real native host + hub', { skip, timeout:
     remove: (k) => setup.windowsRegistry.remove(k.replace('Google\\Chrome', 'Chromium')),
   };
   const chromiumKey = 'HKCU\\Software\\Chromium\\NativeMessagingHosts\\' + protocol.HOST_NAME;
+  const previousRegistration = await setup.windowsRegistry.get(chromiumKey);
   const installed = await setup.install({ sourceRoot: root, integrationDir: dir, browsers: ['chrome'], runtime: process.execPath, appVersion: 'e2e', registry });
   const hub = new BrowserHub({ integrationDir: dir, allowedOrigins: [installed.origin], appVersion: 'e2e' });
   const browsers = [];
@@ -55,7 +60,8 @@ test('real Chromium + real extension + real native host + hub', { skip, timeout:
   t.after(async () => {
     for (const b of browsers) await b.stop();
     hub.stop();
-    await setup.windowsRegistry.remove(chromiumKey);
+    if (previousRegistration) await setup.windowsRegistry.set(chromiumKey, previousRegistration);
+    else await setup.windowsRegistry.remove(chromiumKey);
     await fixture.close();
     await sleep(300);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -96,6 +102,31 @@ test('real Chromium + real extension + real native host + hub', { skip, timeout:
     assert.equal(c.context.origin, fixture.pageOrigin);
     assert.ok(c.context.referer.startsWith(fixture.pageOrigin));
     assert.match(c.context.userAgent, /Mozilla/);
+  });
+
+  await run('real browser session → BrowserService → yt-dlp → verified MP4', async () => {
+    const svc = new BrowserService({
+      sourceRoot: root, integrationDir: dir, engine, session,
+      getSettings: () => ({ browser: { defaultBrowser: 'chrome', siteRules: [] } }),
+      saveSettings() {}, deps: { isRunning: async () => true },
+    });
+    svc.hub = hub;
+    svc.detected = { browsers: [{ id: 'chrome', exe: first.exe }], systemDefault: 'chrome' };
+    const analysis = await svc.analyze(fixture.url('/hls'), { itemId: 'real-download', browser: 'chrome', instance: key });
+    assert.equal(analysis.ok, true, JSON.stringify(analysis));
+    assert.equal(analysis.requestContext.origin, fixture.pageOrigin);
+    assert.ok(analysis.cookieRef, 'session obtained through the actual extension');
+    fixture.clearRequests();
+    const result = await session.withSessionCookies(analysis.cookieRef, (cookieFile) => engine.download({
+      ...analysis, cookieFile, url: fixture.url('/hls'), folder: dir, name: 'Browser session proof', format: 'mp4', quality: 'best',
+    }, () => {}).done);
+    try {
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.ok(fs.statSync(result.file).size > 1000);
+      const mediaRequests = fixture.requests.filter((r) => r.path.startsWith('/media/'));
+      assert.ok(mediaRequests.some((r) => /seg\d+\.ts$/.test(r.path)), 'the actual video segments were downloaded');
+      assert.ok(mediaRequests.every((r) => r.authorized), 'every manifest and segment request kept the session and playback context');
+    } finally { if (analysis.infoFile) fs.rmSync(analysis.infoFile, { force: true }); }
   });
 
   await run('HLS via XMLHttpRequest, DASH and an opaque URL (content-type only)', async () => {

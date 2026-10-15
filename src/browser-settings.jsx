@@ -9,6 +9,7 @@ const PROBLEM_TEXT = {
   manifest_missing: 'קבצי החיבור חסרים. לחץ "תיקון"',
   manifest_invalid: 'קבצי החיבור פגומים. לחץ "תיקון"',
   host_missing: 'רכיב החיבור חסר. לחץ "תיקון"',
+  host_script_missing: 'קבצי רכיב החיבור חסרים. לחץ "תיקון"',
   id_mismatch: 'מזהה ההרחבה לא תואם. לחץ "תיקון"',
   bad_origin: 'הגדרת ההרשאה לא תקינה. לחץ "תיקון"',
   runtime_missing: 'קובץ ההפעלה של Grab הועבר. לחץ "תיקון"',

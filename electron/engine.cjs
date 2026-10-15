@@ -381,4 +381,4 @@ async function extractors() {
   return extractorsCache;
 }
 
-module.exports = { run, version, analyze, download, safeName, extractors, cleanInfoCache, setUserBinDir, reconcileEngine, updateEngine };
+module.exports = { run, version, analyze, download, safeName, extractors, cleanInfoCache, setUserBinDir, reconcileEngine, updateEngine, mediaExpiry };

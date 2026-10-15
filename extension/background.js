@@ -417,7 +417,7 @@ async function waitTabComplete(tabId, until) {
 
 function startJob(m) {
   if (jobs.has(m.jobId)) return;
-  const job = { id: m.jobId, url: m.url, tabId: null, owned: false, aborted: null, deadlineAt: Date.now() + m.deadlineMs - DEADLINE_MARGIN_MS, state: 'locating', timer: null };
+  const job = { id: m.jobId, url: m.url, refresh: !!m.refresh, tabId: null, owned: false, aborted: null, deadlineAt: Date.now() + m.deadlineMs - DEADLINE_MARGIN_MS, state: 'locating', timer: null };
   jobs.set(job.id, job);
   job.timer = setTimeout(() => {
     if (jobs.get(job.id) !== job) return;
@@ -450,7 +450,7 @@ function deliver(job, ranked, dom) {
 async function runJob(job) {
   progress(job, 'locating');
   // 1) An existing tab of this exact page: fresh, attributable observations and the page's own players.
-  const existing = await findExistingTab(job.url);
+  const existing = job.refresh ? null : await findExistingTab(job.url);
   if (!alive(job)) return;
   if (existing) {
     const g = await gather(existing.id, { play: false });

@@ -19,7 +19,9 @@
     "e2e:layout": "vite build && electron e2e/layout.cjs",
     "e2e:liquid-glass": "vite build && electron e2e/liquid-glass.cjs",
     "e2e:screenshots": "vite build && electron e2e/screenshots.cjs",
-    "e2e:extension": "node --test --test-timeout=600000 e2e/extension-bridge.cjs"
+    "e2e:extension": "node --test --test-timeout=600000 e2e/extension-bridge.cjs",
+    "test:package": "node --test tests/browser/packaging.test.cjs",
+    "browser:setup": "node scripts/browser-integration.cjs"
   },
   "repository": "github:OrMeirDev/Grab",
   "devDependencies": {
@@ -29,6 +31,7 @@
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
     "lucide-react": "^0.460.0",
+    "playwright": "1.58.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "simple-icons": "^16.35.0",
@@ -45,12 +48,22 @@
     "files": [
       "dist/**",
       "electron/**",
+      "extension/lib/**",
+      "native-host/*.cjs",
       "package.json"
     ],
     "extraResources": [
       {
         "from": "bin",
         "to": "bin"
+      },
+      {
+        "from": "extension",
+        "to": "extension"
+      },
+      {
+        "from": "native-host",
+        "to": "native-host"
       },
       "THIRD_PARTY_NOTICES.md"
     ],

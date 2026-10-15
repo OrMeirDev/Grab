@@ -55,6 +55,7 @@ Object.assign(ERROR_LABELS, {
   wrongProfile: 'הפרופיל שנבחר בדפדפן לא מחובר',
   browserChoice: 'כמה פרופילים מחוברים: בחר באיזה להשתמש',
   videoChoice: 'נמצאו כמה סרטונים בעמוד: בחר את הנכון',
+  videoChoiceExpired: 'בחירת הסרטון פגה או השתנתה. לחץ נסה שוב לזיהוי מחדש',
   playbackRequired: 'צריך ללחוץ Play בדפדפן כדי שאזהה את הסרטון',
   noVideoBrowser: 'לא נמצא סרטון בעמוד שנפתח בדפדפן',
   browserDisconnected: 'הדפדפן התנתק באמצע הזיהוי',
@@ -415,6 +416,7 @@ export default function App() {
   // yt-dlp found at the link failed). autoQueue: download right away once found.
   const analyzeOne = useCallback(async (id, url, label, { forcePage = false, autoQueue = false, choice } = {}) => {
     const current = queueRef.current.find((x) => x.id === id) || {};
+    const shouldQueue = autoQueue || !!current.autoQueue;
     update(id, { status: 'analyzing', error: null, errorLabel: null, signInHint: false, fix: null, choices: null, bphase: null, bbrowser: null, binstance: null, phase: forcePage ? 'page' : null });
     let info;
     try { info = await api.analyze(url, { id, forcePage, browser: current.browserPick, instance: current.instancePick, ref: current.browserRef, choice }); }
@@ -440,7 +442,7 @@ export default function App() {
       return;
     }
     update(id, (x) => ({
-      status: autoQueue ? 'queued' : 'ready', forcePage: false, autoQueue: false,
+      status: shouldQueue ? 'queued' : 'ready', forcePage: false, autoQueue: false,
       analyzeFailed: false, site: info.site, duration: info.duration, height: info.height,
       thumbnail: info.thumbnail, title: info.title, name: x.nameEdited ? x.name : (label || info.title),
       infoFile: info.infoFile, infoAt: info.infoAt, infoExpiresAt: info.infoExpiresAt || null,
@@ -449,7 +451,7 @@ export default function App() {
       cookieRef: info.cookieRef || null, requestContext: info.requestContext || null,
       bphase: null, fix: null, choices: null,
     }));
-    if (autoQueue) setRunning(true);
+    if (shouldQueue) setRunning(true);
   }, [update, triggerBlock]);
 
   // Lookup runner: one "waiting" link at a time with a randomized gap, so sites don't flag us as a bot.

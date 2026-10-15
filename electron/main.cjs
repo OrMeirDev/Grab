@@ -101,7 +101,7 @@ ipcMain.handle('engine:analyze', async (e, url, opts = {}) => {
   if (opts.id != null) analyzeControllers.set(opts.id, ctl);
   try {
     const result = await analyzeImpl(e, url, opts, ctl.signal);
-    return ctl.signal.aborted && !result.ok ? { ok: false, kind: 'cancelled', error: 'Cancelled' } : result;
+    return ctl.signal.aborted ? { ok: false, kind: 'cancelled', error: 'Cancelled' } : result;
   } finally { if (analyzeControllers.get(opts.id) === ctl) analyzeControllers.delete(opts.id); }
 });
 ipcMain.handle('engine:cancel-analyze', (_e, id) => {
@@ -116,10 +116,11 @@ async function analyzeImpl(e, url, { forcePage = false, id, browser: pickedBrows
   const svc = browserService;
   const resolved = svc ? svc.resolve(url, { browser: pickedBrowser }) : null;
   const extSetUp = !!(svc && resolved && resolved.browserId && svc.isSetUp(resolved.browserId));
-  const extensionAnalyze = () => svc.analyze(url, { itemId: id, browser: pickedBrowser, instance: pickedInstance, ref, choice });
+  const extensionAnalyze = () => svc.analyze(url, { itemId: id, browser: pickedBrowser, instance: pickedInstance, ref, choice, refresh: forcePage, signal });
+  const host = (() => { try { return new URL(url).host; } catch { return ''; } })();
   // A browser that has the Grab extension set up is used first for sites with a browser rule (Mako -> Edge)
   // and for explicit choices / Send to GRAB. Without the extension the remote-debugging lookup below is unchanged.
-  if (extSetUp && (resolved.source === 'site-rule' || ref || pickedBrowser || pickedInstance || choice)) return extensionAnalyze();
+  if (extSetUp && (resolved.source === 'site-rule' || signedInSites.has(host) || forcePage || ref || pickedBrowser || pickedInstance || choice)) return extensionAnalyze();
   // A site with a browser rule must reach that browser before a page extractor or anonymous probe can accept another source.
   const edgeFirst = resolved ? resolved.source === 'site-rule' : browserSession.isMakoPage(url);
   const first = forcePage || edgeFirst ? { ok: false, kind: 'notfound', error: 'Unsupported URL' } : await engine.analyze(url, { signal });
@@ -127,12 +128,14 @@ async function analyzeImpl(e, url, { forcePage = false, id, browser: pickedBrows
   if (first.ok || !['notfound', 'notmedia', 'private', 'blocked', 'forbidden', 'other'].includes(first.kind)) return first;
   const missingMedia = ['notfound', 'notmedia'].includes(first.kind);
   const phase = (p, browserName) => { if (!e.sender.isDestroyed()) e.sender.send('engine:lookup-phase', { url, phase: p, browser: browserName }); };
+  // A configured extension owns browser-assisted lookup even if its browser is currently closed.
+  // Do not divert that job through a clean browser or silently require legacy remote debugging.
+  if (extSetUp) return extensionAnalyze();
 
   // 1. A hidden, clean browser (no cookies or accounts): works on public pages with no setup.
   //    Only when yt-dlp found no video; a clean visit doesn't get past a login or a bot check.
   //    Skipped for a site where it already failed and the user's browser found the video, so a
   //    batch of lessons from one course goes straight to the browser.
-  const host = (() => { try { return new URL(url).host; } catch { return ''; } })();
   if (!edgeFirst && missingMedia && !signedInSites.has(host)) {
     phase('page');
     let hidden = { candidates: [] };
@@ -150,7 +153,6 @@ async function analyzeImpl(e, url, { forcePage = false, id, browser: pickedBrows
 
   // 2. Backup: Edge for Mako, otherwise the user's default browser, when remote debugging is
   //    on. If it isn't, report what the clean lookup found, with how to turn it on.
-  if (extSetUp && svc.hasConnected(resolved.browserId)) return extensionAnalyze();
   const browser = browserSession.browserForPage(url, resolved && resolved.browserId);
   phase('browser', browser.name);
   const connect = () => browserSession.connectBrowser({ browser });

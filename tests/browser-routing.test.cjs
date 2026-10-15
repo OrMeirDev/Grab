@@ -83,6 +83,29 @@ test('a directly readable video from another site does not require a browser con
   assert.equal((await handlers.get('engine:analyze')({ sender }, 'https://lesson.example/episode')).ok, true);
 });
 
+test('a configured extension owns fallback even if its selected browser is initially closed', async () => {
+  const calls = [];
+  const service = {
+    resolve: () => ({ browserId: 'chrome', source: 'global', available: true }),
+    isSetUp: () => true,
+    analyze: async (_url, opts) => { calls.push('extension'); assert.ok(opts.signal); return { ok: true, title: 'Extension video' }; },
+  };
+  const handlers = mainHandlers({ analyze: async () => { calls.push('extractor'); return { ok: false, kind: 'private' }; } },
+    { findMedia: async () => assert.fail('must not fall back to CDP') },
+    { findMedia: async () => assert.fail('must not use a clean anonymous browser') }, undefined, service);
+  assert.equal((await handlers.get('engine:analyze')({ sender }, 'https://lesson.example/episode', { id: 501 })).title, 'Extension video');
+  assert.deepEqual(calls, ['extractor', 'extension']);
+});
+
+test('a late successful lookup cannot undo cancellation', async () => {
+  let finish;
+  const handlers = mainHandlers({ analyze: () => new Promise((r) => { finish = r; }) }, {});
+  const result = handlers.get('engine:analyze')({ sender }, 'https://lesson.example/episode', { id: 502 });
+  handlers.get('engine:cancel-analyze')({}, 502);
+  finish({ ok: true, title: 'Too late' });
+  assert.equal((await result).kind, 'cancelled');
+});
+
 for (const first of [{ ok: true, title: 'dxc', site: 'Generic' }, { ok: false, kind: 'notfound' }, { ok: false, kind: 'forbidden' }]) {
   test(`Mako uses its Edge player before page extractors or clean probes (${first.title || first.kind})`, async () => {
     const session = windowsBrowser();

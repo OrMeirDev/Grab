@@ -1,9 +1,10 @@
 // Local site that behaves like a members-only video site, for the extension and handoff tests.
-//   page host   http://127.0.0.1:PORT   (the site's pages)
-//   media host  http://localhost:PORT   (its CDN; a different host, so cookies are scoped to it)
+//   page origin   http://127.0.0.1:PAGE_PORT
+//   media origin  http://127.0.0.1:CDN_PORT (a different origin, with the same site)
 // Media on the CDN needs the HttpOnly session cookie (set by visiting /login on the CDN host)
 // AND the playback headers (User-Agent, Referer, Origin) of the page that loaded it. Everything
-// is generated; nothing contacts the internet.
+// is generated; nothing contacts the internet. Same-site origins keep this HTTP fixture independent
+// of third-party-cookie policy and avoid Secure cookies that an external HTTP downloader cannot send.
 const http = require('node:http');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -72,10 +73,10 @@ async function createSessionFixture({ env = process.env } = {}) {
     '/ssr-expired': () => page('Expired signed URL', `<video muted></video><script>fetch(${JSON.stringify(cdnOrigin + '/media/expired/master.m3u8' + sig)}, { credentials: 'include' }).then((r) => r.text());</script>`),
   };
 
-  const server = http.createServer((req, res) => {
+  const handler = (req, res) => {
     const url = new URL(req.url, pageOrigin);
     const host = (req.headers.host || '').split(':')[0];
-    const onCdn = host === 'localhost';
+    const onCdn = req.headers.host === new URL(cdnOrigin).host;
     const record = { host, path: url.pathname, search: url.search, cookie: /grabsid=/.test(req.headers.cookie || ''), cookieNames: (req.headers.cookie || '').split(';').map((c) => c.split('=')[0].trim()).filter(Boolean), ua: req.headers['user-agent'] || '', referer: req.headers.referer || '', origin: req.headers.origin || '', range: req.headers.range || '' };
     requests.push(record);
     const send = (status, type, body, headers = {}) => { res.writeHead(status, { 'Content-Type': type, ...headers }); res.end(body); };
@@ -83,7 +84,7 @@ async function createSessionFixture({ env = process.env } = {}) {
     if (req.method === 'OPTIONS') return send(204, 'text/plain', '', { ...cors, 'Access-Control-Allow-Headers': 'range' });
 
     if (url.pathname === '/login') {
-      return send(200, 'text/html', page('Signed in', 'ok'), { 'Set-Cookie': `grabsid=${secret}; Path=/; HttpOnly; Secure; SameSite=None` });
+      return send(200, 'text/html', page('Signed in', 'ok'), { 'Set-Cookie': `grabsid=${secret}; Path=/; HttpOnly; SameSite=Lax` });
     }
     if (pages[url.pathname]) return send(200, 'text/html; charset=utf-8', pages[url.pathname](), { 'Referrer-Policy': 'unsafe-url' });
     if (url.pathname.startsWith('/files/')) return send(200, 'video/mp4', mp4, { 'Accept-Ranges': 'none' });
@@ -101,7 +102,7 @@ async function createSessionFixture({ env = process.env } = {}) {
       const [, id, file] = m;
       // A fetch that followed a cross-origin redirect carries 'Origin: null' by specification.
       const headersOk = !!record.ua && record.referer.startsWith(pageOrigin) && (record.origin === pageOrigin || record.origin === 'null')
-        || (record.referer.startsWith(cdnOrigin) && record.origin === cdnOrigin); // an iframe player on the CDN host
+        || (record.referer.startsWith(cdnOrigin) && (!record.origin || record.origin === cdnOrigin)); // same-origin iframe requests may omit Origin
       const signedOk = url.search === sig;
       // A plain <video> element sends no Origin header, so direct files only need the session and the signature.
       const authorized = record.cookie && (headersOk || /.mp4$/.test(file)) && signedOk && id !== 'expired';
@@ -115,17 +116,24 @@ async function createSessionFixture({ env = process.env } = {}) {
     }
     if (url.pathname === '/hls' && onCdn) return send(200, 'text/html; charset=utf-8', page('HLS in a frame', hlsLoader('episode1')), { 'Referrer-Policy': 'unsafe-url' });
     send(404, 'text/plain', 'not found');
-  });
+  };
+  const server = http.createServer(handler);
+  const cdn = http.createServer(handler);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => cdn.listen(0, '127.0.0.1', resolve));
   const port = server.address().port;
   pageOrigin = `http://127.0.0.1:${port}`;
-  cdnOrigin = `http://localhost:${port}`;
+  cdnOrigin = `http://127.0.0.1:${cdn.address().port}`;
   return {
     dir, pageOrigin, cdnOrigin, requests, secret, sig,
     url: (p) => pageOrigin + p,
     mediaUrl: (id = 'episode1', file = 'master.m3u8') => `${cdnOrigin}/media/${id}/${file}${sig}`,
     clearRequests: () => { requests.length = 0; },
-    async close() { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); fs.rmSync(dir, { recursive: true, force: true }); },
+    async close() {
+      for (const s of [server, cdn]) s.closeAllConnections();
+      await Promise.all([server, cdn].map((s) => new Promise((resolve) => s.close(resolve))));
+      fs.rmSync(dir, { recursive: true, force: true });
+    },
   };
 }
 
