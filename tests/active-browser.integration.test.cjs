@@ -24,13 +24,17 @@ test(`active browser (${B.name}): exact tab reused untouched, own tab closed, co
   const site = await require('./fixtures/media-site.cjs').start();
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-chrome-'));
   const pageUrl = site.base + '/watch';
-  const chrome = spawn(B.path, ['--headless=new', '--no-sandbox', '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--autoplay-policy=no-user-gesture-required', pageUrl], { stdio: 'ignore' });
+  const chrome = spawn(B.path, ['--headless=new', '--no-sandbox', '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--autoplay-policy=no-user-gesture-required', pageUrl], { stdio: ['ignore', 'ignore', 'pipe'] });
+  // What the browser said, for a failure message (its stderr, last 2 KB).
+  let stderr = '';
+  chrome.stderr.on('data', (d) => { stderr = (stderr + d).slice(-2048); });
   const browserSession = require('../electron/browser-session.cjs');
   const { findMedia } = require('../electron/pageprobe.cjs');
   const endpointFile = path.join(profile, 'DevToolsActivePort');
   try {
-    for (let i = 0; i < 200 && !fs.existsSync(endpointFile); i++) await new Promise((r) => setTimeout(r, 100));
-    assert.ok(fs.existsSync(endpointFile), 'Chromium wrote its DevTools endpoint');
+    // A cold browser start can take long while other test files run in parallel (CI runners).
+    for (let i = 0; i < 600 && !fs.existsSync(endpointFile) && chrome.exitCode === null; i++) await new Promise((r) => setTimeout(r, 100));
+    assert.ok(fs.existsSync(endpointFile), `${B.name} wrote its DevTools endpoint (exit code ${chrome.exitCode}); stderr: ${stderr}`);
     const connect = () => browserSession.connectBrowser({ endpointFile });
     const cdp = await connect();
     const pages = async () => (await cdp.send('Target.getTargets')).targetInfos.filter((t) => t.type === 'page');
