@@ -307,7 +307,7 @@ async function scenarioQuitDuringDownload() {
   await wait(3000);
   const restored = (await rows()).find((x) => x.name === 'quit');
   const requested = fixtureLog().slice(from).filter((l) => l.url.includes('quit.mp4'));
-  record('W-07b', 'after reopening, the interrupted download is shown paused and nothing started by itself', restored?.state === 'paused' && requested.length === 0 && !commands.some((c) => c.includes('quit.mp4')), { restored, requestsForTheFile: requested.length, ytdlpRunningAtStart: commands });
+  record('W-07b', 'after reopening, the interrupted download is shown paused and nothing started by itself', restored?.state === 'paused' && requested.length === 0 && !commands.some((c) => c.includes('quit.%(ext)s')), { restored, requestsForTheFile: requested.length, ytdlpRunningAtStart: commands });
   await shot('07-restored-paused');
   await clickTitle('המשך');
   const done = await rowIn(['done', 'error'], 240000);
@@ -450,8 +450,10 @@ async function scenarioQueueRateLimit() {
   const perPath = Object.fromEntries(['q1', 'q2', 'q3', 'q4'].map((q) => [q, fixtureLog().filter((l) => l.url.endsWith(`/${q}.mp4`)).length]));
   record('W-02d', 'after "resume", the held jobs download; one attempt at a time; no job lost or downloaded twice',
     !!allDone && files.every((f) => f.length === 1 && /^q\d\.mp4$/.test(f[0])) && files.every((f) => sizeOf(path.join(FOLDER, f[0])) === sizeOf(MEDIA))
-    && JSON.stringify(dl) === JSON.stringify(['q1.mp4', 'q2.mp4(429)', 'q4.mp4', 'q2.mp4', 'q3.mp4']) && watch.max === 1 && watch.attempts.size === 5
-    && JSON.stringify(perPath) === JSON.stringify({ q1: 2, q2: 3, q3: 2, q4: 2 }),
+    // After a 429 Grab drops the job's saved lookup, so its next attempt fetches the link's
+    // information again before downloading: two requests, one attempt (5 attempts in all).
+    && JSON.stringify(dl) === JSON.stringify(['q1.mp4', 'q2.mp4(429)', 'q4.mp4', 'q2.mp4', 'q2.mp4', 'q3.mp4']) && watch.max === 1 && watch.attempts.size === 5
+    && JSON.stringify(perPath) === JSON.stringify({ q1: 2, q2: 4, q3: 2, q4: 2 }),
     { rows: allDone, downloadOrder: dl, requestsPerLink: perPath, files, maxConcurrentAttempts: watch.max, attempts: watch.attempts.size });
   await clearQueue();
 
@@ -541,11 +543,26 @@ async function scenarioUpdateWhileDownloading() {
     await paste(`${FIXTURE}/paced/150/update.mp4\n`);
     await until(async () => (await rows()).find((x) => x.name === 'update' && x.state === 'ready'), 120000);
     await clickTitle('הורד רק את זה');
-    const attempt = await until(async () => { const a = (await list('yt-dlp.exe')).filter((p) => p.cmd.includes('update.mp4')); return a.length ? a : null; }, 60000, 100);
+    // The download's yt-dlp (a launcher and its child): recognised by its output name (the link is
+    // not on its command line when it loads the lookup's saved information).
+    const attempt = await until(async () => { const a = (await list('yt-dlp.exe')).filter((p) => p.cmd.includes('update.%(ext)s')); return a.length ? a : null; }, 60000, 100);
     const flowing = await until(async () => { const r = (await rows()).find((x) => x.name === 'update'); return r?.state === 'downloading' && /[1-9]\d*(\.\d+)?%/.test(r.text) ? r : null; }, 60000);
     const servedBefore = fixtureLog().filter((l) => l.url.endsWith('/update.mp4')).length;
     await shot('13-update-ready-while-downloading');
     const attemptPids = (attempt || []).map((p) => p.pid);
+    const beforeInstall = { settings: fs.readFileSync(settingsFile, 'utf8'), history: fs.readFileSync(historyFile, 'utf8') };
+    // From the click until the new version is installed: which of the attempt's processes are
+    // alive, and which installer runs (with its creation time), every 200 ms or so.
+    const samples = [];
+    let sampling = true;
+    const sampler = (async () => {
+      while (sampling) {
+        const alive = (await list('yt-dlp.exe')).filter((p) => attemptPids.includes(p.pid)).map((p) => p.pid);
+        const inst = await procs('installers');
+        samples.push({ at: new Date().toISOString(), attemptAlive: alive, installers: Array.isArray(inst) ? inst : [] });
+        await wait(150);
+      }
+    })();
     const clickedAt = new Date();
     const oldApp = child;
     const oldExit = new Promise((r) => { if (oldApp.exitCode !== null) r(); else oldApp.once('exit', r); });
@@ -558,20 +575,28 @@ async function scenarioUpdateWhileDownloading() {
     const installed = await until(() => (registryVersion() === NEXT_VERSION ? true : null), 300000, 1000);
     const relaunched = await until(async () => { const g = await list('Grab.exe'); return g.length ? g : null; }, 120000, 500);
     await wait(5000);
+    sampling = false;
+    await sampler;
     const events = trace.read().filter((e) => e.ev === 'start' || e.ev === 'stop');
-    const t = (e) => Date.parse(e.t);
+    const t = (x) => Date.parse(x);
+    // When the attempt's processes ended (kernel stop events), and when the installer was created
+    // (its own creation time, read while it ran).
     const attemptStops = events.filter((e) => e.ev === 'stop' && attemptPids.includes(e.pid));
-    const installerStart = events.find((e) => e.ev === 'start' && /setup/i.test(e.name) && t(e) >= clickedAt.getTime() - 1000);
+    const installers = [...new Map(samples.flatMap((s) => s.installers).map((i) => [i.pid, i])).values()].sort((a, b) => t(a.created) - t(b.created));
+    const firstInstaller = installers.find((i) => t(i.created) >= clickedAt.getTime() - 1000) || null;
+    const lastAttemptStop = attemptStops.length ? Math.max(...attemptStops.map((e) => t(e.t))) : null;
+    const lastSeenAlive = samples.filter((s) => s.attemptAlive.length).at(-1)?.at || null;
+    const overlap = samples.filter((s) => s.attemptAlive.length && s.installers.length);
     const oldStop = events.find((e) => e.ev === 'stop' && e.pid === oldApp.pid);
-    const lastAttemptStop = attemptStops.length ? Math.max(...attemptStops.map(t)) : null;
     const saved = queueAtExit.find((j) => /update\.mp4/.test(j.url));
     record('W-07e', 'installing while a download runs: the download\'s processes end before the installer starts; the job is saved paused',
-      !!flowing && trace.ready?.ev === 'ready' && attemptPids.length > 0 && attemptStops.length === attemptPids.length && !!installerStart && lastAttemptStop < t(installerStart)
+      !!flowing && attemptPids.length > 0 && attemptStops.length === attemptPids.length && !!firstInstaller && lastAttemptStop < t(firstInstaller.created) && overlap.length === 0
       && saved?.status === 'paused' && saved.progress > 0 && partials.some((f) => /\.part$/.test(f)),
       { trace: trace.ready, row: flowing, attempt: (attempt || []).map((p) => ({ pid: p.pid, cmd: p.cmd.slice(0, 200) })), clickedAt: clickedAt.toISOString(),
-        attemptStopped: attemptStops.map((e) => e.t), installerStarted: installerStart || null, oldAppStopped: oldStop?.t || null,
-        msBetweenLastStopAndInstaller: installerStart && lastAttemptStop ? t(installerStart) - lastAttemptStop : null, saved, partials,
-        timeline: events.filter((e) => t(e) >= clickedAt.getTime() - 2000).map((e) => `${e.t} ${e.ev} ${e.name} ${e.pid}`) });
+        attemptStopped: attemptStops.map((e) => e.t), installerCreated: firstInstaller, installersSeen: installers, oldAppStopped: oldStop?.t || null,
+        msFromLastAttemptStopToInstaller: firstInstaller && lastAttemptStop ? t(firstInstaller.created) - lastAttemptStop : null,
+        attemptLastSeenAlive: lastSeenAlive, samplesWithBoth: overlap.length, samples: samples.length, saved, partials,
+        timeline: events.filter((e) => t(e.t) >= clickedAt.getTime() - 2000).map((e) => `${e.t} ${e.ev} ${e.name} ${e.pid}`) });
 
     // The version the installer started: nothing is downloaded by itself.
     const requestedAfterInstall = fixtureLog().filter((l) => l.url.endsWith('/update.mp4')).length - servedBefore;
@@ -583,15 +608,15 @@ async function scenarioUpdateWhileDownloading() {
     const after = { settings: fs.readFileSync(settingsFile, 'utf8'), history: fs.readFileSync(historyFile, 'utf8'), registry: registryVersion(), file: fileVersion() };
     const sidebar = await js(`document.querySelector('.sidebar-footer')?.innerText || ''`);
     record('W-07f', 'the installed version changed to the newer test version, in place; settings and history kept',
-      !!installed && after.registry === NEXT_VERSION && before.registry !== NEXT_VERSION && sidebar.includes(NEXT_VERSION) && after.settings === before.settings && after.history === before.history,
-      { before: { registry: before.registry, file: before.file }, after: { registry: after.registry, file: after.file }, sidebar, settingsSame: after.settings === before.settings, historySame: after.history === before.history });
+      !!installed && after.registry === NEXT_VERSION && before.registry !== NEXT_VERSION && sidebar.includes(NEXT_VERSION) && after.settings === beforeInstall.settings && after.history === beforeInstall.history && JSON.parse(after.history).length > 0,
+      { before: { registry: before.registry, file: before.file }, after: { registry: after.registry, file: after.file }, sidebar, settingsSame: after.settings === beforeInstall.settings, historySame: after.history === beforeInstall.history, historyEntries: JSON.parse(after.history).length });
     await wait(3000);
     const restored = (await rows()).find((x) => x.name === 'update');
     const running = await engineCommands();
     const requestedBeforeResume = fixtureLog().filter((l) => l.url.endsWith('/update.mp4')).length - servedBefore;
     await shot('14-after-update-restored-paused');
     record('W-07g', 'after the update, the interrupted download is restored paused and nothing started by itself',
-      !!relaunched && restored?.state === 'paused' && requestedAfterInstall === 0 && requestedBeforeResume === 0 && !running.some((c) => c.includes('update.mp4')),
+      !!relaunched && restored?.state === 'paused' && requestedAfterInstall === 0 && requestedBeforeResume === 0 && !running.some((c) => c.includes('update.%(ext)s')),
       { startedByInstaller: (relaunched || []).map((p) => p.cmd.slice(0, 200)), restored, requestsForTheFile: { whileInstallerStartedAppRan: requestedAfterInstall, untilResume: requestedBeforeResume }, ytdlpRunning: running });
 
     const watch = watchProcesses();

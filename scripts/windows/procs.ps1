@@ -6,6 +6,9 @@
 #   suspend <pid>       -> { status }   (NtSuspendProcess; 0 = done)
 #   resume <pid>        -> { status }
 #   alive <pid>         -> { alive }
+#   installers          -> [{ pid, ppid, name, created, path }] app installers running now (an
+#                          update's from the updater cache, or any Grab-Setup*.exe), with their
+#                          creation time (kernel timestamp, UTC)
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
 Add-Type @"
@@ -54,6 +57,11 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
       'suspend' { Write-Answer ([ordered]@{ status = [GrabTestProc]::Freeze([int]$arg, $true) }) }
       'resume' { Write-Answer ([ordered]@{ status = [GrabTestProc]::Freeze([int]$arg, $false) }) }
       'alive' { Write-Answer ([ordered]@{ alive = [bool](Get-Process -Id ([int]$arg) -ErrorAction SilentlyContinue) }) }
+      'installers' {
+        $items = @(Get-CimInstance Win32_Process -Filter "Name LIKE 'Grab-Setup%' OR ExecutablePath LIKE '%grab-updater%'" | ForEach-Object {
+          [ordered]@{ pid = [int]$_.ProcessId; ppid = [int]$_.ParentProcessId; name = [string]$_.Name; created = $_.CreationDate.ToUniversalTime().ToString('o'); path = [string]$_.ExecutablePath } })
+        Write-Answer $items
+      }
       default { Write-Answer ([ordered]@{ error = "unknown command $cmd" }) }
     }
   } catch {
