@@ -10,6 +10,7 @@ export default function SettingsPage({ settings, onChange, version, engine, app,
   return (
     <>
       <PageHeader title="הגדרות" subtitle="ברירות המחדל לכל הורדה חדשה. נשמרות אוטומטית." />
+      <div className="settings-scroll">
       <section className="card settings">
         <OutputPreferences settings={settings} onChange={onChange} />
         <div className="setting">
@@ -43,6 +44,7 @@ export default function SettingsPage({ settings, onChange, version, engine, app,
         </div>
       </section>
       {browserPanel}
+      </div>
     </>
   );
 }
