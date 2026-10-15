@@ -20,15 +20,15 @@ The installer is not code-signed, so Windows SmartScreen warns on first run: cli
 
 ## Pages that use your browser session
 
-Grab connects to your running Chrome profile when yt-dlp cannot read a page or needs authentication. It does not open a sign-in window or create a separate profile.
+When yt-dlp cannot read a page or needs authentication, Grab uses your running Edge profile for Mako (`mako.co.il` and its subdomains). Other sites use your Windows default browser. It does not open a sign-in window or create a separate profile.
 
-1. Use Chrome 144 or newer and enable remote debugging at `chrome://inspect/#remote-debugging` once.
-2. Leave Chrome running in the profile where you are already signed in. Accept Chrome's connection permission when Grab first connects (Chrome asks again after a new connection).
+1. Open the browser named in the link's connection guide and enable **Allow remote debugging** at its displayed address: `edge://inspect/#remote-debugging` for Mako, or the default browser's equivalent for other sites.
+2. Leave that browser running in the profile where you can play the video. Accept its connection permission when Grab connects.
 3. Paste the page URL in Grab as usual. An exact open tab is scanned without navigation or playback changes; otherwise Grab opens a background tab in the existing context and closes that tab when lookup finishes.
 
 Lookup reads player attributes (including signed Mux manifest URLs), open Shadow DOM, frame execution contexts and media network requests. Cookies for the page and discovered URLs are passed to yt-dlp in a temporary domain-scoped cookie jar, together with the player request's User-Agent, Referer and Origin. The jar is deleted after lookup/download. A failed download of an embedded source is looked up again to refresh expiring URLs.
 
-This connection currently discovers the standard Chrome user-data directory. Custom user-data directories and other browsers need an additional endpoint selection option. If the requested page exists in multiple browser contexts, Grab asks you to leave it open in the intended context.
+On Windows the connection discovers the standard profile directory for Edge, Chrome, Brave, Vivaldi, Opera and Chromium. Firefox is reported as unsupported. Custom user-data directories need an additional endpoint selection option. If the requested page exists in multiple browser contexts, Grab asks you to leave it open in the intended context.
 
 ## Develop
 

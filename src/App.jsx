@@ -226,7 +226,7 @@ function QueueItem({ item, index, actions, drag }) {
         {item.status === 'done' && <span className="pill pill-success"><Check size={15} /> הושלם</span>}
         {item.status === 'queued' && <span className="pill">בתור</span>}
         {isError && <span className="pill pill-danger" title={item.error}><AlertTriangle size={15} /> {item.errorLabel || 'לא נמצא סרטון בקישור'}</span>}
-        {isError && item.signInHint && <button className="link-btn" onClick={actions.signInGuide}>האתר דורש התחברות? כך מורידים ממנו</button>}
+        {isError && item.signInHint && <button className="link-btn" onClick={() => actions.signInGuide(item.url)}>האתר דורש התחברות? כך מורידים ממנו</button>}
       </div>
 
       <div className="item-actions">
@@ -270,7 +270,7 @@ export default function App() {
   const [sites, setSites] = useState(null);
   const [sitesError, setSitesError] = useState(false);
   const [sitesOpen, setSitesOpen] = useState(false);
-  const [guideOpen, setGuideOpen] = useState(false);
+  const [guide, setGuide] = useState(null);
 
   // Never leave the sites window spinning: any failure turns into an error with a retry button.
   const loadSites = useCallback(async () => {
@@ -501,7 +501,7 @@ export default function App() {
       setQueue((q) => q.filter((x) => x.id !== id));
     },
     show: (item) => (item.file ? api.showFile(item.file) : api.openFolder(settings.folder)),
-    signInGuide: () => setGuideOpen(true),
+    signInGuide: (url) => setGuide({ url }),
   };
 
   const dragFrom = useRef(null);
@@ -549,7 +549,7 @@ export default function App() {
           <SettingsPage
             settings={settings} onChange={saveSettings} version={version} engine={engine}
             app={{ version: appVersion, status: appUpdate, check: checkAppUpdate }}
-            onSignInGuide={() => setGuideOpen(true)}
+            onSignInGuide={() => setGuide({})}
           />
         )}
 
@@ -559,7 +559,7 @@ export default function App() {
             <h1>הורדה חדשה</h1>
             <p className="subtitle">
               מדביקים קישורים. אנחנו דואגים לשאר.{' '}
-              <button className="link-btn" onClick={() => setGuideOpen(true)}>קישור לשיעור באתר שצריך להתחבר אליו?</button>
+              <button className="link-btn" onClick={() => setGuide({})}>קישור לשיעור באתר שצריך להתחבר אליו?</button>
             </p>
           </div>
           <button className="icon-btn big" title="הדבק מהלוח" onClick={pasteFromClipboard}>
@@ -661,7 +661,7 @@ export default function App() {
         </>)}
       </main>
       {sitesOpen && <SitesModal sites={sites} error={sitesError} onRetry={loadSites} onClose={() => setSitesOpen(false)} />}
-      {guideOpen && <SignInGuideModal onClose={() => setGuideOpen(false)} />}
+      {guide && <SignInGuideModal pageUrl={guide.url} onClose={() => setGuide(null)} />}
     </div>
   );
 }

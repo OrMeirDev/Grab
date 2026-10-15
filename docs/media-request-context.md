@@ -11,7 +11,12 @@ This manual result is evidence for the regression, not a live verification of th
   candidate with its own User-Agent, Referer and Origin. It uses its runtime User-Agent
   instead of a fixed Chrome version. Relevant anonymous-session cookies retain their
   existing domain/path scope through temporary cookie jars.
-- The authorized default-browser probe correlates `requestWillBeSentExtraInfo` with
+- Mako page URLs (`mako.co.il` and its subdomains) use the existing Edge profile for the
+  authorized browser lookup, guide and connection check. Other sites keep the Windows
+  default browser. Missing Edge access asks for Edge; it does not silently try Brave.
+  Browser connections are cached per endpoint so overlapping Edge/default-browser work
+  cannot borrow or disconnect each other's session.
+- The authorized browser probe correlates `requestWillBeSentExtraInfo` with
   request IDs scoped to each CDP session. Out-of-order ExtraInfo and redirected request
   IDs are handled without borrowing another request's context.
 - Analyze IPC returns the selected candidate's context. The queue forwards it unchanged
@@ -30,7 +35,9 @@ This manual result is evidence for the regression, not a live verification of th
 ## Verification
 
 `npm test` covers CDP event ordering, request isolation, IPC context/cookie lifetime,
-expiry, redaction, bounded refresh and cancellation. Three regression cases were run
+expiry, redaction, bounded refresh, cancellation, Mako-only Edge routing and independent
+Edge/default-browser connections. Routing is tested with an isolated Windows registry/profile
+fixture, including a Brave default and lookalike domains. Three request-context regression cases were run
 against the original implementation and failed before the fix.
 
 `npm run test:media` requires yt-dlp, ffmpeg and ffprobe on PATH. It generates a short
@@ -44,6 +51,6 @@ blob player that fetches signed HLS through XHR/fetch. The first extractor miss 
 to exercise the fallback, while probe capture, candidate analysis, start IPC and media
 download are real. This uses a disposable profile and generated local media only.
 
-Windows/default-browser integration and a live Mako download inside GRAB require separate
+Windows/Edge integration and a live Mako download inside GRAB require separate
 verification on a suitable machine and authorized session. A green fixture check does not
 establish that a remote site's bot protection will accept a fresh session.

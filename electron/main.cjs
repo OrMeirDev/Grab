@@ -120,9 +120,9 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
     if (hidden.protected) return { ok: false, kind: 'protected', error: 'DRM' };
   }
 
-  // 2. Backup: the user's default browser, where they are signed in, when its remote debugging is
+  // 2. Backup: Edge for Mako, otherwise the user's default browser, when remote debugging is
   //    on. If it isn't, report what the clean lookup found, with how to turn it on.
-  const browser = browserSession.defaultBrowser();
+  const browser = browserSession.browserForPage(url);
   phase('browser', browser.name);
   const connect = () => browserSession.connectBrowser({ browser });
   let probe;
@@ -168,13 +168,13 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
   }
   return result;
 });
-// The sign-in guide names the user's own browser and can check that Grab reaches it.
-ipcMain.handle('browser:default', () => {
-  const b = browserSession.defaultBrowser();
+// The guide and its connection check use the same per-page browser as lookup.
+ipcMain.handle('browser:default', (_e, pageUrl) => {
+  const b = browserSession.browserForPage(pageUrl);
   return { name: b.name, scheme: b.scheme, supported: b.supported !== false };
 });
-ipcMain.handle('browser:check', async () => {
-  try { await browserSession.connectBrowser({ browser: browserSession.defaultBrowser() }); return { ok: true }; }
+ipcMain.handle('browser:check', async (_e, pageUrl) => {
+  try { await browserSession.connectBrowser({ browser: browserSession.browserForPage(pageUrl) }); return { ok: true }; }
   catch (err) { return { ok: false, kind: err.kind }; }
 });
 ipcMain.handle('engine:extractors', () => engine.extractors());

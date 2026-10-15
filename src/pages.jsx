@@ -144,13 +144,19 @@ function searchTerms(query) {
 }
 
 // For a link to a page (a course lesson, a members' area) rather than to the video itself: Grab
-// looks through the user's own default browser, where they are already signed in. Written for
+// looks through Edge for Mako or the user's default browser for other pages. Written for
 // people who know nothing about computers: one line of why, four short steps, a check button.
-export function SignInGuideModal({ onClose }) {
+export function SignInGuideModal({ pageUrl, onClose }) {
   const [browser, setBrowser] = useState(null);
   const [check, setCheck] = useState(null); // 'checking' | 'ok' | 'fail'
   const [copied, setCopied] = useState(false);
-  useEffect(() => { api.defaultBrowser?.().then(setBrowser).catch(() => {}); }, []);
+  useEffect(() => {
+    let active = true;
+    setBrowser(null);
+    setCheck(null);
+    api?.defaultBrowser?.(pageUrl).then((value) => { if (active) setBrowser(value); }).catch(() => {});
+    return () => { active = false; };
+  }, [pageUrl]);
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
@@ -162,7 +168,7 @@ export function SignInGuideModal({ onClose }) {
   const copy = () => navigator.clipboard.writeText(address).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }).catch(() => {});
   const test = async () => {
     setCheck('checking');
-    const r = await api.checkBrowser().catch(() => ({ ok: false }));
+    const r = await api.checkBrowser(pageUrl).catch(() => ({ ok: false }));
     setCheck(r.ok ? 'ok' : 'fail');
   };
 
@@ -175,9 +181,9 @@ export function SignInGuideModal({ onClose }) {
         </div>
         <p className="guide-why">
           כשהקישור הוא לשיעור או לעמוד באתר, ולא לסרטון עצמו, Grab צריך לראות את העמוד כמו שאתה רואה אותו.
-          לכן הוא נעזר ב־{name}, שבו אתה כבר מחובר.
+          לכן הוא נעזר ב־{name} כדי לזהות את הסרטון.
         </p>
-        {browser?.supported === false ? (
+        {!browser ? <p className="row-meta">מזהה את הדפדפן…</p> : browser.supported === false ? (
           <div className="verdict warn"><AlertTriangle size={18} /> זה עובד רק עם Chrome,‏ Edge,‏ Brave או Opera. כדי להשתמש בזה, הגדר אחד מהם כדפדפן ברירת המחדל.</div>
         ) : (<>
           <ol className="guide-steps">
