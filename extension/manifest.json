@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Grab",
+  "short_name": "Grab",
+  "version": "1.0.0",
+  "description": "מחבר את הדפדפן שלך ל-Grab: מזהה את הסרטון בעמוד שבו אתה מחובר ושולח אותו להורדה.",
+  "minimum_chrome_version": "116",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0kdP3X0VzBfh4nf+6Zk90fQOykImBAFNG3OhHSFhc1gQhcGVwpZVfRUWnhQx/kv36/SeBCQR81pqhaLLjhFGJUjPJdyjzLCN4LZXdcE9H2O+sm0UyRgLAEhX/dOwZyg73MHkhpUGhn+LNfF+hCceSqo3LNyks105AoZn3dnauWNfWxbpeqBdYv7r7REp7XWs3hUqew9x3cEv5eRF1WyHFDB+NGZG5tkhNLZAn/QKlNckXh81RfnVLUOcjY3NOGEM/m31j/Fyd7mJ2avtdmCEq1oNp8eIpZnTaOX2a/5KQvfK64wYm00y0nFhyp1/KX63pMwTocn3ROTSh742oLtCgwIDAQAB",
+  "permissions": ["nativeMessaging", "webRequest", "webNavigation", "tabs", "scripting", "storage", "cookies", "alarms"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_title": "Grab",
+    "default_popup": "popup/popup.html",
+    "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png" }
+  },
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+}

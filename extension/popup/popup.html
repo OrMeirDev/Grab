@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grab</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <strong>Grab</strong>
+    <span id="conn" class="pill" aria-live="polite">בודק חיבור…</span>
+  </header>
+  <p id="connHelp" class="help" hidden></p>
+  <section id="page" hidden>
+    <p id="pageTitle" class="title"></p>
+    <ul id="candidates" class="candidates"></ul>
+    <p id="pageNote" class="help" hidden></p>
+    <button id="sendPage" class="primary" type="button">שלח ל-Grab</button>
+    <p id="sendResult" class="result" aria-live="polite" hidden></p>
+  </section>
+  <section id="unsupported" hidden>
+    <p class="help">אי אפשר לשלוח את העמוד הזה. פתח עמוד סרטון רגיל (http או https).</p>
+  </section>
+  <footer>
+    <label>שם הפרופיל הזה ב-Grab
+      <input id="alias" type="text" maxlength="60" placeholder="למשל: עבודה">
+    </label>
+    <button id="reconnect" type="button" class="link">התחבר מחדש</button>
+  </footer>
+  <script src="popup.js"></script>
+</body>
+</html>
