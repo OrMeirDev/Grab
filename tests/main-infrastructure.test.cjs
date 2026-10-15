@@ -33,7 +33,8 @@ test('process runner: a stalled run ends at its deadline or after silence', asyn
   const t0 = Date.now();
   const r = await runProcess(NODE, ['-e', 'setInterval(() => {}, 1000)'], { timeoutMs: 300 }).done;
   assert.equal(r.timedOut, true);
-  assert.ok(Date.now() - t0 < 5000);
+  const elapsed = Date.now() - t0;
+  assert.ok(elapsed < 5000, `the stalled run ended ${elapsed} ms after it started (deadline 300 ms)`);
   const idle = await runProcess(NODE, ['-e', 'console.log("started"); setInterval(() => {}, 1000)'], { idleTimeoutMs: 300 }).done;
   assert.equal(idle.idle, true);
 });
