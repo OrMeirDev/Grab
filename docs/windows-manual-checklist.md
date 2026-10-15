@@ -11,12 +11,12 @@
 - [ ] **גיבוי.** סגור את Grab, ואז ב־PowerShell:
       `Copy-Item "$env:APPDATA\Grab" "$env:USERPROFILE\Desktop\Grab-backup" -Recurse`
       (הגדרות, היסטוריה ותור. גרסת הבדיקה משתמשת באותם קבצים.)
-- [ ] **הורדת ה־installer.** https://github.com/OrMeirDev/Grab/actions/runs/38693067423 ← Artifacts ←
-      `grab-test-installer-18` (זמין עד 29.10.2026). מתוך ה־zip צריך רק את
-      `release-a/Grab-Setup-1.6.8-test.18.exe`.
+- [ ] **הורדת ה־installer.** https://github.com/OrMeirDev/Grab/actions/runs/38748221063 ← Artifacts ←
+      `grab-test-installer-19` (זמין עד 29.10.2026). מתוך ה־zip צריך רק את
+      `release-a/Grab-Setup-1.6.8-test.19.exe`.
 - [ ] **בדיקת checksum.** ב־PowerShell, בתיקייה של הקובץ:
-      `(Get-FileHash .\Grab-Setup-1.6.8-test.18.exe -Algorithm SHA256).Hash`
-      צריך לצאת `19E59A515ADDADC370F8D8053CFF001BCA5CEB3F5F18A40893877035F4BD5011`.
+      `(Get-FileHash .\Grab-Setup-1.6.8-test.19.exe -Algorithm SHA256).Hash`
+      צריך לצאת `8E23B41D006FE0578BE6616263EEDC9AB3A53E364D4EF1FC5F04086B7AECFEE9`.
 - [ ] רשום את גרסאות הדפדפנים (`chrome://version`, `edge://version`, `brave://version`): ________
 
 חשוב לדעת על גרסת הבדיקה:
@@ -30,7 +30,7 @@
 - [ ] הרץ את ה־installer מעל ה־Grab המותקן. מופיע SmartScreen (הקובץ לא חתום): "מידע נוסף" ←
       "הפעל בכל זאת".
 - [ ] ההתקנה בעברית, מסתיימת בלי שגיאה; יש קיצור בשולחן העבודה ובתפריט התחל.
-- [ ] Grab נפתח; בפינה: "גרסה 1.6.8-test.18". ההיסטוריה וההגדרות שלך (תיקייה, פורמט, איכות) נשארו.
+- [ ] Grab נפתח; בפינה: "גרסה 1.6.8-test.19". ההיסטוריה וההגדרות שלך (תיקייה, פורמט, איכות) נשארו.
 - [ ] אחרי שנייה בערך: "המנוע מוכן" (שנייה ראשונה של "המנוע לא נמצא" באדום — ידוע, לא לסמן ככישלון).
 
 ## 2. סרטון ציבורי אמיתי (אתר שאתה בוחר)

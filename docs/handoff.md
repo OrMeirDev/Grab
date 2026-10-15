@@ -1,8 +1,8 @@
 # Grab refactor handoff (2026-10-15)
 
 Branch `claude/modest-pasteur-6315xe`, from `main` at `b1e1de8` (the audited `5813a6e` plus the e2e
-scripts). Not merged, no PR, no release. Windows verification (§4): run 18 of `windows-verify.yml` on
-`fca984e` is green: tests, fetch-bin/verify-bin, two NSIS test builds, the 1.6.7 upgrade and
+scripts). Not merged, no PR, no release. Windows verification (§4): run 19 of `windows-verify.yml` on
+`229467c` (after the 429 change, §4.4a) and run 18 on `fca984e` are green: tests, fetch-bin/verify-bin, two NSIS test builds, the 1.6.7 upgrade and
 29/29 installed-app checks, including pause during a real FFmpeg merge, a real in-app update while a
 download runs, and the queue under a site's rate limit. What only a person can check (personal
 browser profiles, a real account, real content, Brave, the unsigned installer on a desktop) is
@@ -218,6 +218,15 @@ that browser's session got an answer, the site was never held. Now:
   (a defect the new tests found: it was reported as `notfoundPage`, an error).
 - The coordinator holds the site for both kinds, at lookup and at download (`HOLDS_SITE`).
 
+On Windows, run 19 (https://github.com/OrMeirDev/Grab/actions/runs/38748221063, commit
+`229467c`; CI run 34 green) repeated all 29 upgrade and installed-app checks: Pass; `npm test` 112
+tests, 107 pass, 0 fail, 5 skipped. In the installed app the 429 lookup (W-02e) now ends
+`rateLimited` with no browser probe in the diagnostics log; run 18 had tried Edge first
+(`probe: browser, failed: browserSession`, then `blocked`). Test installers of run 19:
+`Grab-Setup-1.6.8-test.19.exe` SHA-256 `8e23b41d006fe0578be6616263eedc9ab3a53e364d4ef1fc5f04086b7aecfee9`,
+`Grab-Setup-1.6.9-test.19.exe` SHA-256 `0f6fac7c3487017b7d9048e60cccc0515c2fff22b388bf74ffa807bbf289ec2c`
+(artifact `grab-test-installer-19`, until 2026-10-29). The detailed numbers in §4.1–4.2 are run 18's.
+
 Tests (`tests/rate-limit-discovery.test.cjs`: real coordinator, real discovery, real `errorKind`,
 browser available; a local site scripted per request): 429 on the lookup, on the session retry,
 on a hidden-probe source; bot check with a player in the page (unchanged: found through the
@@ -284,6 +293,7 @@ Owner actions (not authorized for this session):
 | `electron-builder --win dir` | packages `win-unpacked` with the expected asar/resources (signing skipped) |
 | CI run 30 (`fca984e`) | test (ubuntu), test (windows), e2e: success |
 | Windows verify run 18 (`fca984e`) | success: §4.1, §4.2 |
+| CI run 34, Windows verify run 19 (`229467c`, 429 change) | success: §4.4a |
 | Windows verify runs 11–17 (this round) | failures, each a harness or test issue, fixed and listed in §4.4 |
 
 ## 7. Backlog
