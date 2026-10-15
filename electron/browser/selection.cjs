@@ -52,12 +52,12 @@ function pickInstance({ browserId, instances = [], settings, explicitInstance } 
   const mine = instances.filter((i) => i.browser === browserId);
   if (explicitInstance) {
     const hit = mine.find((i) => i.key === explicitInstance);
-    return hit ? { instance: hit } : { problem: 'instance_disconnected', options: mine };
+    return hit ? { instance: hit } : { problem: 'instance_disconnected', wanted: explicitInstance, options: mine };
   }
   const remembered = settings && settings.browser && settings.browser.instanceChoice && settings.browser.instanceChoice[browserId];
   if (remembered) {
     const hit = mine.find((i) => i.key === remembered);
-    return hit ? { instance: hit } : { problem: 'instance_disconnected', options: mine };
+    return hit ? { instance: hit } : { problem: 'instance_disconnected', wanted: remembered, options: mine };
   }
   if (mine.length === 0) return { problem: 'not_connected', options: [] };
   if (mine.length === 1) return { instance: mine[0] };
