@@ -1,4 +1,4 @@
-// Find embedded media in the user's default browser (its existing session). No new browser
+// Find embedded media in the selected browser's existing session. No new browser
 // profile or Grab sign-in window is created.
 const browserSession = require('./browser-session.cjs');
 const { collectorScript, isNotPlayer } = require('./media-collector.cjs');

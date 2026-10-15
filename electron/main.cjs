@@ -96,7 +96,9 @@ ipcMain.handle('engine:version', () => engine.version());
 const signedInSites = new Set(); // sites whose videos only the user's signed-in browser can see
 ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
   // forcePage: what yt-dlp found at the link didn't download, so go straight to the page's player.
-  const first = forcePage ? { ok: false, kind: 'notfound', error: 'Unsupported URL' } : await engine.analyze(url);
+  // Mako must reach Edge before a page extractor or anonymous probe can accept another source.
+  const edgeFirst = browserSession.isMakoPage(url);
+  const first = forcePage || edgeFirst ? { ok: false, kind: 'notfound', error: 'Unsupported URL' } : await engine.analyze(url);
   if (first.ok || !['notfound', 'private', 'blocked', 'forbidden', 'other'].includes(first.kind)) return first;
   const phase = (p, browserName) => { if (!e.sender.isDestroyed()) e.sender.send('engine:lookup-phase', { url, phase: p, browser: browserName }); };
 
@@ -105,7 +107,7 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
   //    Skipped for a site where it already failed and the user's browser found the video, so a
   //    batch of lessons from one course goes straight to the browser.
   const host = (() => { try { return new URL(url).host; } catch { return ''; } })();
-  if (first.kind === 'notfound' && !signedInSites.has(host)) {
+  if (!edgeFirst && first.kind === 'notfound' && !signedInSites.has(host)) {
     phase('page');
     let hidden = { candidates: [] };
     try { hidden = await hiddenProbe.findMedia(url); } catch { /* fall through to the backup */ }

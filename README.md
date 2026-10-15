@@ -20,7 +20,7 @@ The installer is not code-signed, so Windows SmartScreen warns on first run: cli
 
 ## Pages that use your browser session
 
-When yt-dlp cannot read a page or needs authentication, Grab uses your running Edge profile for Mako (`mako.co.il` and its subdomains). Other sites use your Windows default browser. It does not open a sign-in window or create a separate profile.
+For Mako (`mako.co.il` and its subdomains), Grab looks up the page's player directly in your running Edge profile. Other sites use your Windows default browser when yt-dlp cannot read a page or needs authentication. It does not open a sign-in window or create a separate profile.
 
 1. Open the browser named in the link's connection guide and enable **Allow remote debugging** at its displayed address: `edge://inspect/#remote-debugging` for Mako, or the default browser's equivalent for other sites.
 2. Leave that browser running in the profile where you can play the video. Accept its connection permission when Grab connects.

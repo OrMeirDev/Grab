@@ -42,13 +42,17 @@ function defaultBrowser(progId = defaultBrowserId()) {
   return info;
 }
 
-// Mako playback is looked up in Edge; every other page keeps the default-browser policy.
-function browserForPage(pageUrl) {
+function isMakoPage(pageUrl) {
   try {
     const url = new URL(pageUrl);
-    if (/^https?:$/.test(url.protocol) && /(^|\.)mako\.co\.il$/i.test(url.hostname.replace(/\.$/, ''))) return defaultBrowser('MSEdgeHTM');
+    return /^https?:$/.test(url.protocol) && /(^|\.)mako\.co\.il$/i.test(url.hostname.replace(/\.$/, ''));
   } catch { /* a general guide has no page URL */ }
-  return defaultBrowser();
+  return false;
+}
+
+// Mako playback is looked up in Edge; every other page keeps the default-browser policy.
+function browserForPage(pageUrl) {
+  return isMakoPage(pageUrl) ? defaultBrowser('MSEdgeHTM') : defaultBrowser();
 }
 
 const sessionError = (message, kind = 'browserSession', browser) => Object.assign(new Error(message), { kind, browser });
@@ -214,4 +218,4 @@ function disconnectBrowser() {
   for (const dir of activeCookieDirs) fs.rmSync(dir, { recursive: true, force: true });
   activeCookieDirs.clear();
 }
-module.exports = { connectBrowser, defaultBrowser, browserForPage, chooseTarget, rememberCookies, withSessionCookies, disconnectBrowser, CdpClient, readEndpoint };
+module.exports = { connectBrowser, defaultBrowser, browserForPage, isMakoPage, chooseTarget, rememberCookies, withSessionCookies, disconnectBrowser, CdpClient, readEndpoint };

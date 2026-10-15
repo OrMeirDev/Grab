@@ -11,8 +11,9 @@ This manual result is evidence for the regression, not a live verification of th
   candidate with its own User-Agent, Referer and Origin. It uses its runtime User-Agent
   instead of a fixed Chrome version. Relevant anonymous-session cookies retain their
   existing domain/path scope through temporary cookie jars.
-- Mako page URLs (`mako.co.il` and its subdomains) use the existing Edge profile for the
-  authorized browser lookup, guide and connection check. Other sites keep the Windows
+- Mako page URLs (`mako.co.il` and its subdomains) look up the player in the existing Edge
+  profile first, before a page extractor or anonymous probe can return another source.
+  The guide and connection check select the same Edge profile. Other sites keep the Windows
   default browser. Missing Edge access asks for Edge; it does not silently try Brave.
   Browser connections are cached per endpoint so overlapping Edge/default-browser work
   cannot borrow or disconnect each other's session.
