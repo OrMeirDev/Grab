@@ -4,6 +4,7 @@ import {
   X, CheckCircle2, XCircle, AlertTriangle, Copy, Loader2,
 } from 'lucide-react';
 import GlassSelect from './glass-select.jsx';
+import BrowserSettings from './browser-settings.jsx';
 
 const api = window.grab;
 
@@ -362,6 +363,7 @@ export function SettingsPage({ settings, onChange, version, engine, app, onSignI
           </button>
         </div>
       </section>
+      <BrowserSettings />
     </>
   );
 }

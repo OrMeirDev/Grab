@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Download, History, Folder, Settings, Home, ChevronLeft, ClipboardPaste, Sparkles, Link2,
   ArrowUpDown, GripVertical, FolderOpen, Check, Pause, Play, Clock, RotateCw, Trash2,
-  AlertTriangle, Unlink, Video, Music, Settings2, Loader2, RefreshCw,
+  AlertTriangle, Unlink, Video, Music, Settings2, Loader2, RefreshCw, X, Globe,
 } from 'lucide-react';
 import GlassSelect from './glass-select.jsx';
 // The Grab name with its symbol on the right (vector, from the brand package).
@@ -48,9 +48,50 @@ const ERROR_LABELS = {
   network: 'אין חיבור לאינטרנט',
   browserContext: 'העמוד פתוח בכמה סשנים של הדפדפן; השאר אותו פתוח בסשן שבו אתה מחובר',
 };
+Object.assign(ERROR_LABELS, {
+  browserUnavailable: 'הדפדפן שנבחר לא מותקן במחשב',
+  extensionNotConnected: 'ההרחבה של Grab לא מחוברת בדפדפן',
+  hostSetupError: 'יש בעיה בהתקנת החיבור לדפדפן',
+  wrongProfile: 'הפרופיל שנבחר בדפדפן לא מחובר',
+  browserChoice: 'כמה פרופילים מחוברים: בחר באיזה להשתמש',
+  videoChoice: 'נמצאו כמה סרטונים בעמוד: בחר את הנכון',
+  playbackRequired: 'צריך ללחוץ Play בדפדפן כדי שאזהה את הסרטון',
+  noVideoBrowser: 'לא נמצא סרטון בעמוד שנפתח בדפדפן',
+  browserDisconnected: 'הדפדפן התנתק באמצע הזיהוי',
+  discoveryTimeout: 'הזיהוי בדפדפן לקח יותר מדי זמן',
+  tabFailed: 'לא הצלחתי לפתוח את העמוד בדפדפן',
+  extensionError: 'שגיאה בהרחבה של Grab בדפדפן',
+  extensionPermission: 'ההרחבה לא קיבלה הרשאה לעמוד הזה',
+  sessionExpired: 'ההתחברות לאתר פגה: היכנס שוב בדפדפן ונסה שוב',
+  engineFailure: 'הסרטון נמצא, אבל מנוע ההורדות לא הצליח להשתמש בו',
+  probeTimeout: 'בדיקת המקור לקחה יותר מדי זמן',
+  stalled: 'ההורדה נתקעה ללא התקדמות',
+  cancelled: 'בוטל',
+});
+// Failures that happen inside a chosen browser name it, so it is clear which session was used.
+const BROWSER_KINDS = new Set(['extensionNotConnected', 'wrongProfile', 'playbackRequired', 'noVideoBrowser', 'browserDisconnected', 'discoveryTimeout', 'tabFailed', 'extensionError', 'extensionPermission', 'sessionExpired', 'hostSetupError']);
+const SETTINGS_KINDS = new Set(['browserUnavailable', 'extensionNotConnected', 'hostSetupError', 'wrongProfile']);
 const errorLabel = (kind, fallback, browser) => (kind === 'browserContext' && browser
   ? `העמוד פתוח בכמה סשנים של ${browser.name}; השאר אותו פתוח בסשן שבו אתה מחובר`
-  : ERROR_LABELS[kind] || fallback);
+  : BROWSER_KINDS.has(kind) && browser?.name ? `${ERROR_LABELS[kind]} (${browser.name})` : ERROR_LABELS[kind] || fallback);
+const SOURCE_LABELS = { explicit: 'בחירה להורדה זו', 'site-rule': 'כלל לאתר', global: 'ברירת המחדל שלך', suggested: 'מומלץ' };
+const CONNECTION_LABELS = { connected: 'ההרחבה מחוברת', unknown: 'החיבור טרם נבדק', setup_problem: 'יש בעיית התקנה', not_detected: 'לא מותקן' };
+const reportEnd = (item, terminal, reason) => {
+  if (item?.browserRef && api?.reportBrowserJob) api.reportBrowserJob(item.browserRef, { phase: terminal, terminal, reason });
+};
+// What the row says while a lookup runs: the stage and, for browser lookups, the browser.
+function analyzingText(item, waiting) {
+  if (waiting) return item.label || 'ממתין לזיהוי';
+  const b = item.bbrowser || 'הדפדפן';
+  switch (item.bphase) {
+    case 'connecting': return `מתחבר ל־${b}…`;
+    case 'discovering': return `מחפש את הסרטון ב־${b}${item.binstance ? ` (${item.binstance})` : ''}…`;
+    case 'playback_required': return `לחץ Play ב־${b} כדי להמשיך`;
+    case 'validating': return 'בודק שאפשר להוריד את המקור…';
+    default: break;
+  }
+  return item.phase === 'page' ? 'מחפש את הסרטון בתוך הנגן שבעמוד…' : item.phase === 'browser' ? `מנסה דרך ${item.phaseBrowser || 'הדפדפן'} שלך…` : 'מזהה סרטון…';
+}
 const LOOKUP_GAP_MS = 2000; // plus up to the same again at random
 const DOWNLOAD_REST_MS = 5000; // 5–10 seconds between YouTube downloads
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -197,7 +238,7 @@ function QueueItem({ item, index, actions, drag }) {
         )}
       </div>
       <div className="item-info">
-        {analyzing ? <div className="item-name muted">{waiting ? (item.label || 'ממתין לזיהוי') : item.phase === 'page' ? 'מחפש את הסרטון בתוך הנגן שבעמוד…' : item.phase === 'browser' ? `מנסה דרך ${item.phaseBrowser || 'הדפדפן'} שלך…` : 'מזהה סרטון…'}</div> : (
+        {analyzing ? <div className="item-name muted">{analyzingText(item, waiting)}</div> : (
           <input
             className="item-name name-input"
             value={item.name}
@@ -229,6 +270,13 @@ function QueueItem({ item, index, actions, drag }) {
         {item.status === 'queued' && <span className="pill">בתור</span>}
         {isError && <span className="pill pill-danger" title={item.error}><AlertTriangle size={15} /> {item.errorLabel || 'לא נמצא סרטון בקישור'}</span>}
         {isError && item.signInHint && <button className="link-btn" onClick={() => actions.signInGuide(item.url)}>האתר דורש התחברות? כך מורידים ממנו</button>}
+        {isError && item.fix === 'settings' && <button className="link-btn" onClick={actions.openBrowserSettings}>הגדרת הדפדפן</button>}
+        {isError && item.choices && (
+          <span className="choice-row">
+            {item.choices.map((c) => <button key={c.value} className="btn-ghost small" onClick={() => actions.choose(item, c)}>{c.label}</button>)}
+          </span>
+        )}
+        {item.status === 'analyzing' && item.bphase === 'playback_required' && <button className="link-btn" onClick={() => actions.reveal(item.id)}>הצג את הלשונית ב־{item.bbrowser || 'הדפדפן'}</button>}
       </div>
 
       <div className="item-actions">
@@ -247,6 +295,9 @@ function QueueItem({ item, index, actions, drag }) {
         {item.status === 'queued' && <span className="icon-btn passive" title="ממתין לתורו"><Clock size={18} /></span>}
         {isError && (
           <button className="icon-btn danger" title="נסה שוב" onClick={() => actions.retry(item)}><RotateCw size={18} /></button>
+        )}
+        {item.status === 'analyzing' && item.bbrowser && (
+          <button className="icon-btn" title="בטל את הזיהוי" onClick={() => actions.cancelAnalyze(item.id)}><X size={18} /></button>
         )}
         {item.status !== 'analyzing' && (
           <button className="icon-btn" title="הסר מהרשימה" onClick={() => actions.remove(item.id)}><Trash2 size={18} /></button>
@@ -273,6 +324,9 @@ export default function App() {
   const [sitesError, setSitesError] = useState(false);
   const [sitesOpen, setSitesOpen] = useState(false);
   const [guide, setGuide] = useState(null);
+  const [browserInfo, setBrowserInfo] = useState(null); // detected browsers, their connection state and the saved rules
+  const [pickBrowser, setPickBrowser] = useState(''); // '' = automatic (site rule / default); otherwise this download's own choice
+  const [pickInfo, setPickInfo] = useState(null);
 
   // Never leave the sites window spinning: any failure turns into an error with a retry button.
   const loadSites = useCallback(async () => {
@@ -309,8 +363,30 @@ export default function App() {
     const offProgress = api.onProgress(({ id, percent, speed, eta }) => {
       update(id, { progress: percent, speed, eta: eta && eta !== 'NA' && eta !== 'Unknown' ? eta : '' });
     });
-    return () => { offProgress(); offUpdate?.(); offPhase?.(); };
+    const loadBrowsers = () => api.browserState?.().then((s) => setBrowserInfo(s?.unavailable ? null : s)).catch(() => {});
+    loadBrowsers();
+    const offChanged = api.onBrowserChanged?.(loadBrowsers);
+    // Stages of a browser lookup, from the desktop's own job state (not guessed here).
+    const offBrowserPhase = api.onBrowserPhase?.(({ id, phase, browser, instance }) => {
+      update(id, { bphase: phase, bbrowser: browser?.name, binstance: instance });
+    });
+    // "Send to GRAB" from the extension: queue it once, in the browser it came from.
+    const offIncoming = api.onBrowserIncoming?.(({ ref, url, browserId, instanceKey }) => {
+      if (queueRef.current.some((x) => x.url === url)) { api.replyBrowserIncoming(ref, 'duplicate'); return; }
+      setQueue((q) => [...q, newItem(url, '', { browserRef: ref, browserPick: browserId, instancePick: instanceKey, autoQueue: true })]);
+      setPage('downloads');
+      api.replyBrowserIncoming(ref, 'accepted');
+    });
+    return () => { offProgress(); offUpdate?.(); offPhase?.(); offChanged?.(); offBrowserPhase?.(); offIncoming?.(); };
   }, [update]);
+
+  // Which browser the first pasted link (or, with no link, the default) would use, shown next to the paste box.
+  useEffect(() => {
+    if (!api?.browserResolve || !browserInfo) { setPickInfo(null); return; }
+    let active = true;
+    api.browserResolve(parsed[0]?.url || '', pickBrowser || undefined).then((r) => { if (active && !r?.unavailable) setPickInfo(r); }).catch(() => {});
+    return () => { active = false; };
+  }, [parsed, pickBrowser, browserInfo]);
 
   const saveSettings = (patch) => {
     setSettings((s) => ({ ...s, ...patch }));
@@ -337,10 +413,11 @@ export default function App() {
 
   // forcePage: go straight to looking inside the page's player (after a download from what
   // yt-dlp found at the link failed). autoQueue: download right away once found.
-  const analyzeOne = useCallback(async (id, url, label, { forcePage = false, autoQueue = false } = {}) => {
-    update(id, { status: 'analyzing', error: null, errorLabel: null, signInHint: false, phase: forcePage ? 'page' : null });
+  const analyzeOne = useCallback(async (id, url, label, { forcePage = false, autoQueue = false, choice } = {}) => {
+    const current = queueRef.current.find((x) => x.id === id) || {};
+    update(id, { status: 'analyzing', error: null, errorLabel: null, signInHint: false, fix: null, choices: null, bphase: null, bbrowser: null, binstance: null, phase: forcePage ? 'page' : null });
     let info;
-    try { info = await api.analyze(url, { forcePage }); }
+    try { info = await api.analyze(url, { id, forcePage, browser: current.browserPick, instance: current.instancePick, ref: current.browserRef, choice }); }
     catch (error) { info = { ok: false, error: error.message }; }
     if (!info.ok) {
       if (info.kind === 'blocked') {
@@ -348,7 +425,18 @@ export default function App() {
         triggerBlock(siteKey(url));
         return;
       }
-      update(id, { status: 'error', error: info.error, errorLabel: errorLabel(info.kind, 'לא נמצא סרטון בקישור', info.browser), signInHint: !!info.browser && info.kind !== 'browserContext', analyzeFailed: true });
+      // Choices the user can make right here: which profile, or which video of several.
+      let choices = null;
+      if (info.kind === 'browserChoice') choices = (info.options || []).map((o) => ({ value: o.key, label: o.label, kind: 'profile', browserId: info.browser?.id }));
+      else if (info.kind === 'videoChoice') choices = (info.choices || []).map((c) => ({ value: String(c.index), label: c.label, kind: 'video', token: info.token }));
+      const final = !choices && info.kind !== 'cancelled';
+      update(id, {
+        status: 'error', error: info.error, errorLabel: errorLabel(info.kind, 'לא נמצא סרטון בקישור', info.browser),
+        signInHint: !!info.browser && !ERROR_LABELS[info.kind] && info.kind !== 'browserContext',
+        fix: SETTINGS_KINDS.has(info.kind) ? 'settings' : null, choices, analyzeFailed: true,
+      });
+      if (final) reportEnd(current, 'failed', info.kind);
+      else if (info.kind === 'cancelled') reportEnd(current, 'cancelled');
       return;
     }
     update(id, (x) => ({
@@ -359,6 +447,7 @@ export default function App() {
       // Found inside the page's player: download from that address, as the page does.
       mediaUrl: info.mediaUrl || null, referer: info.referer || null,
       cookieRef: info.cookieRef || null, requestContext: info.requestContext || null,
+      bphase: null, fix: null, choices: null,
     }));
     if (autoQueue) setRunning(true);
   }, [update, triggerBlock]);
@@ -398,7 +487,7 @@ export default function App() {
     if (!api || !parsed.length) return;
     const existing = new Set(queueRef.current.map((x) => x.url));
     const fresh = parsed.filter((p) => !existing.has(p.url));
-    setQueue((q) => [...q, ...fresh.map((p) => newItem(p.url, p.label))]);
+    setQueue((q) => [...q, ...fresh.map((p) => newItem(p.url, p.label, pickBrowser ? { browserPick: pickBrowser } : {}))]);
     setLinks('');
     if (fresh.length < parsed.length) setNotice(`${parsed.length - fresh.length} קישורים כבר היו בתור ודילגתי עליהם`);
   };
@@ -424,7 +513,7 @@ export default function App() {
     api.start({
       id: next.id, url: next.url, name: next.name, folder: settings.folder, format: settings.format, quality: settings.quality,
       infoFile: next.infoFile, infoAt: next.infoAt, infoExpiresAt: next.infoExpiresAt, mediaUrl: next.mediaUrl, referer: next.referer,
-      cookieRef: next.cookieRef, requestContext: next.requestContext,
+      cookieRef: next.cookieRef, requestContext: next.requestContext, browserRef: next.browserRef,
     }).then((r) => {
       setRestUntil(Date.now() + DOWNLOAD_REST_MS + Math.random() * DOWNLOAD_REST_MS);
       if (r.ok) {
@@ -440,7 +529,7 @@ export default function App() {
       // the page's own player, so that retry looks there; otherwise it fetches fresh info in case
       // the saved stream links expired.
       update(next.id, (x) => (x.autoRetried
-        ? { status: 'error', error: r.error, errorLabel: errorLabel(r.kind, 'ההורדה נכשלה') }
+        ? (reportEnd(x, 'failed', r.kind), { status: 'error', error: r.error, errorLabel: errorLabel(r.kind, 'ההורדה נכשלה') })
         : x.mediaUrl || /^(generic|html5mediaembed)$/i.test(x.site || '')
           ? { status: 'waiting', autoRetried: true, forcePage: true, autoQueue: true, infoFile: null, mediaUrl: null, referer: null, cookieRef: null, requestContext: null }
           : { status: 'queued', autoRetried: true, infoFile: null }));
@@ -497,8 +586,21 @@ export default function App() {
       update(item.id, { status: 'queued', autoRetried: false, error: null, infoFile: null });
       setRunning(true);
     },
+    openBrowserSettings: () => setPage('settings'),
+    reveal: (id) => api.revealPlayback?.(id),
+    cancelAnalyze: (id) => { api.cancelAnalyze?.(id); },
+    // A profile or video picked from the row's own buttons: remember the profile, then look again.
+    choose: (item, c) => {
+      if (c.kind === 'profile') {
+        api.browserSet?.({ instanceChoice: { [c.browserId]: c.value } });
+        update(item.id, { instancePick: c.value, status: 'waiting', analyzeFailed: false, error: null, choices: null });
+      } else {
+        analyzeOne(item.id, item.url, item.label, { choice: { token: c.token, index: Number(c.value) } });
+      }
+    },
     remove: (id) => {
       const item = queueRef.current.find((x) => x.id === id);
+      if (item && item.status !== 'done') { if (item.status === 'analyzing') api.cancelAnalyze?.(id); reportEnd(item, 'cancelled'); }
       if (item?.status === 'downloading') api.stop(id);
       setQueue((q) => q.filter((x) => x.id !== id));
     },
@@ -603,6 +705,20 @@ export default function App() {
             }}
             placeholder="אפשר להדביק כמה קישורים או לגרור קובץ טקסט"
           />
+          <div className="browser-row">
+            <Globe size={16} />
+            <span>דפדפן להורדות שדורשות התחברות:</span>
+            <GlassSelect className="plain-select" value={pickBrowser} onChange={(e) => setPickBrowser(e.target.value)} title="הדפדפן שבו Grab יזהה סרטונים מאתרים שדורשים התחברות">
+              <option value="">אוטומטי</option>
+              {(browserInfo?.browsers || []).filter((b) => b.detected).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </GlassSelect>
+            <span className="row-meta">
+              {pickInfo?.browserId
+                ? `${pickInfo.name} · ${SOURCE_LABELS[pickInfo.source] || ''} · ${CONNECTION_LABELS[browserInfo?.browsers.find((b) => b.id === pickInfo.browserId)?.state] || ''}`
+                : browserInfo ? 'לא נמצא דפדפן נתמך' : ''}
+            </span>
+            <button className="link-btn" onClick={() => setPage('settings')}>הגדרות דפדפן</button>
+          </div>
           <div className="paste-footer">
             <div className="sites">
               {SITES.map((s) => (
