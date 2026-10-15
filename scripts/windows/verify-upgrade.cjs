@@ -62,7 +62,10 @@ const grabRunning = () => /grab\.exe/i.test(execFileSync('tasklist', ['/FI', 'IM
 
 // The per-user install electron-builder's NSIS installer registers (HKCU uninstall key).
 function installed() {
-  const json = ps("Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' | Where-Object { $_.DisplayName -like 'Grab*' } | Select-Object DisplayName, DisplayVersion, InstallLocation, UninstallString | ConvertTo-Json -Compress");
+  let json;
+  try {
+    json = ps("Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' | Where-Object { $_.DisplayName -like 'Grab*' } | Select-Object DisplayName, DisplayVersion, InstallLocation, UninstallString | ConvertTo-Json -Compress");
+  } catch { return null; } // no per-user uninstall entries at all: nothing installed
   const entry = json ? [].concat(JSON.parse(json))[0] : null;
   if (!entry) return null;
   // InstallLocation is not always written; the uninstaller sits in the install folder.
@@ -111,8 +114,13 @@ const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8
   const baseHash = sha256(baseFile);
   facts.baseInstaller = { url: BASE.url, bytes: fs.statSync(baseFile).size, sha256: baseHash };
   if (baseHash !== BASE.sha256) { record('W-01a', 'released 1.6.7 installer matches its published SHA-256', false, { baseHash, expected: BASE.sha256 }); return finish(); }
+  // The published 1.6.7 installer once crashed on start (0xC0000005 after 1 s, run 13) on a runner
+  // where it had worked nine times. It is not the build under test, so it gets one more try; both
+  // attempts are kept. The test builds' installers are never retried.
   facts.baseInstall = await install(baseFile);
+  if (facts.baseInstall.exitCode !== 0) facts.baseInstallRetry = await install(baseFile);
   const base = installed();
+  if (!base) { record('W-01a', 'released 1.6.7 installed silently from the hash-checked installer and started', false, { install: facts.baseInstall, retry: facts.baseInstallRetry || null }); return finish(); }
   facts.baseInstalled = base;
   await openAndClose(base.exe, 15);
   const firstRun = fs.existsSync(USER_DATA) ? fs.readdirSync(USER_DATA) : [];
@@ -128,7 +136,8 @@ const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8
   // 1.6.7 opens with them and keeps them (its own format, before the upgrade).
   await openAndClose(base.exe, 12);
   const keptBy167 = { settings: readJson(path.join(USER_DATA, 'settings.json')), history: readJson(path.join(USER_DATA, 'history.json')) };
-  record('W-01a', 'released 1.6.7 installed silently from the hash-checked installer and started', base?.version === BASE.version && facts.baseInstall.exitCode === 0 && firstRun.length > 0 && keptBy167.settings?.folder === FOLDER, { installed: base, install: facts.baseInstall, userDataAfterFirstRun: firstRun });
+  const baseExit = (facts.baseInstallRetry || facts.baseInstall).exitCode;
+  record('W-01a', 'released 1.6.7 installed silently from the hash-checked installer and started', base?.version === BASE.version && baseExit === 0 && firstRun.length > 0 && keptBy167.settings?.folder === FOLDER, { installed: base, install: facts.baseInstall, retry: facts.baseInstallRetry || null, userDataAfterFirstRun: firstRun });
 
   // 3. The upgrade, over the installed 1.6.7, without uninstalling it first.
   facts.upgradeInstall = await install(INSTALLER);
