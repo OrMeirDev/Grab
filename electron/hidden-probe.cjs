@@ -31,7 +31,7 @@ async function findMedia(pageUrl, { timeoutMs = 20000 } = {}) {
   let title = '';
   const add = (url, { type = '', size = 0, fromPlayer = false, referer = pageUrl, requestContext } = {}) => {
     // Stream pieces are skipped by name and by type (some services give them odd names, e.g. ".dts").
-    if (typeof url !== 'string' || !/^https?:/i.test(url) || ADS.test(url) || SEGMENT.test(url) || /mp2t|iso\.segment/i.test(type)) return;
+    if (typeof url !== 'string' || !/^https?:/i.test(url) || isNotPlayer(url) || ADS.test(url) || SEGMENT.test(url) || /mp2t|iso\.segment/i.test(type)) return;
     const kind = MANIFEST.test(url) || /mpegurl|dash/i.test(type) ? 'stream' : FILE.test(url) || /^(video|audio)\//i.test(type) ? 'file' : null;
     if (!kind) return;
     const prev = found.get(url) || {};
@@ -71,6 +71,7 @@ async function findMedia(pageUrl, { timeoutMs = 20000 } = {}) {
     for (const frame of win.webContents.mainFrame.framesInSubtree) {
       try {
         const r = await frame.executeJavaScript(collectorScript({ startPlayback: true }));
+        if (r.pageUrl && isNotPlayer(r.pageUrl)) continue;
         if (r.drm) drm = true;
         if (frame === win.webContents.mainFrame && r.title) title = r.title;
         r.media.forEach((u) => add(u, { fromPlayer: true, referer: r.pageUrl || pageUrl }));

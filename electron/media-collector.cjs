@@ -67,10 +67,11 @@ const collectorScript = (options = {}) => `(${collectInPage.toString()})(${JSON.
 // Frames that are never a video player: payments, captchas, fraud checks, sign-in buttons, chat
 // widgets, analytics and cookie banners. Trying them only wastes the lookup's time.
 const NOT_PLAYER_HOST = /(^|\.)(stripe\.com|stripe\.network|stripecdn\.com|hcaptcha\.com|recaptcha\.net|sardine\.ai|paypal\.com|braintreegateway\.com|adyen\.com|challenges\.cloudflare\.com|accounts\.google\.com|appleid\.apple\.com|googletagmanager\.com|google-analytics\.com|intercom\.io|intercomcdn\.com|crisp\.chat|zdassets\.com|zendesk\.com|hotjar\.com|onetrust\.com|cookielaw\.org|cookiebot\.com)$/i;
+const IDENTITY_SYNC_PATH = /\/(?:setuid|usersync|cookie_sync|syncframe)(?:\.html?)?\/?$/i;
 const isNotPlayer = (url) => {
   try {
     const u = new URL(url);
-    return NOT_PLAYER_HOST.test(u.hostname) || (/(^|\.)google\.com$/i.test(u.hostname) && u.pathname.startsWith('/recaptcha'));
+    return NOT_PLAYER_HOST.test(u.hostname) || IDENTITY_SYNC_PATH.test(u.pathname) || (/(^|\.)google\.com$/i.test(u.hostname) && u.pathname.startsWith('/recaptcha'));
   } catch { return true; }
 };
 

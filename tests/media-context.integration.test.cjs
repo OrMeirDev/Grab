@@ -54,4 +54,32 @@ test('real downloader rejects a missing UA, then IPC downloads separate header-b
   const plainResult = await plain.done;
   assert.equal(plainResult.ok, true, JSON.stringify(plainResult));
   assert.equal(path.extname(plainResult.file), '.mp4');
+  const extensionless = await engine.analyze(fixture.origin + '/extensionless-video');
+  t.after(() => { if (extensionless.infoFile) fs.rmSync(extensionless.infoFile, { force: true }); });
+  assert.equal(extensionless.ok, true, JSON.stringify(extensionless));
+  const audio = await engine.download({ url: fixture.origin + '/plain.mp4', name: 'audio', folder: fixture.dir, format: 'mp3' }, () => {}).done;
+  assert.equal(audio.ok, true, JSON.stringify(audio));
+  assert.equal(path.extname(audio.file), '.mp3');
+});
+
+test('GIF pixels and opaque non-media responses are not accepted as videos by the real extractor', { skip: !available, timeout: 30000 }, async (t) => {
+  const fixture = await createMediaFixture();
+  t.after(() => fixture.close());
+  const infos = await Promise.all(['/setuid', '/opaque'].map((endpoint) => engine.analyze(fixture.origin + endpoint)));
+  t.after(() => { for (const info of infos) if (info.infoFile) fs.rmSync(info.infoFile, { force: true }); });
+  for (const info of infos) {
+    assert.equal(info.ok, false, JSON.stringify(info));
+    assert.equal(info.kind, 'notmedia');
+  }
+});
+
+test('a cached MP4 label cannot make a downloaded GIF count as a successful video', { skip: !available, timeout: 30000 }, async (t) => {
+  const fixture = await createMediaFixture();
+  t.after(() => fixture.close());
+  const infoFile = path.join(fixture.dir, 'mislabelled.json');
+  fs.writeFileSync(infoFile, JSON.stringify({ id: 'setuid', title: 'setuid', extractor: 'generic', extractor_key: 'Generic',
+    url: fixture.origin + '/setuid', webpage_url: fixture.origin + '/setuid', ext: 'mp4', protocol: 'http', format_id: 'fixture' }));
+  const result = await engine.download({ url: fixture.origin + '/setuid', name: 'setuid', folder: fixture.dir, format: 'mp4', infoFile, infoAt: Date.now() }, () => {}).done;
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.kind, 'notmedia');
 });

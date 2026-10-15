@@ -30,6 +30,7 @@ app.whenReady().then(async () => {
     const actual = fixture.source('electron');
     assert.deepEqual(info.requestContext, actual.requestContext);
     assert.ok(captured.candidates.length >= 2, 'both network playlists must be discovered behind a blob player');
+    assert.ok(captured.candidates.every((c) => !c.url.includes('/setuid')), 'identity-sync iframe must never become a video candidate');
     const result = await handlers.get('engine:start')({ sender }, { ...info, id: 'electron-context', url: fixture.pageUrl('electron'), name: 'episode', folder: fixture.dir, format: 'mp4', quality: 'best' });
     assert.equal(result.ok, true, JSON.stringify(result));
     const probe = spawnSync('ffprobe', ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', result.file], { encoding: 'utf8', windowsHide: true });

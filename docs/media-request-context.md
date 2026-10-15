@@ -32,6 +32,14 @@ This manual result is evidence for the regression, not a live verification of th
   The renderer's existing single automatic download retry remains unchanged.
 - A persistent 403 is reported as a server refusal, not an internet outage, missing video,
   or proof of DRM. Error URLs redact query values and Akamai path tokens.
+- Identity-sync iframe endpoints are excluded as sources and frame contents. An existing
+  tab with only bare iframe candidates gets one background lookup to capture its actual
+  player requests. Failed media analysis can also use that bounded refresh.
+- Extractor success alone does not establish media: Generic can call a GIF pixel or an
+  arbitrary HTTP response `unknown_video`. Analysis requires recognized media formats,
+  streaming protocols or audio/video codecs. Opaque responses with no such evidence are
+  rejected. Completed MP4/MP3 downloads are checked with ffprobe for the expected container
+  and audio/video streams before success is returned. Stop also cancels that verification.
 
 ## Verification
 
@@ -45,7 +53,9 @@ against the original implementation and failed before the fix.
 H.264/AAC fixture and serves HLS on loopback with an exact encoded signature plus required
 playback headers. It verifies a missing-UA 403, two concurrent contextual downloads through
 the real analyze/start handlers and downloader (including cached info), all fragment
-requests, an ordinary MP4 download, and video/audio output with ffprobe.
+requests, an ordinary MP4 and MP3 download, extensionless video, and video/audio output
+with ffprobe. A GIF at `/setuid` reproduces the Generic false positive, and a cached MP4
+label cannot make that GIF pass the completed-output check.
 
 `npm run e2e:media-context` additionally runs the actual hidden Electron probe against a
 blob player that fetches signed HLS through XHR/fetch. The first extractor miss is forced

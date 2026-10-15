@@ -193,12 +193,26 @@ function sessionArgs({ referer, requestContext = {}, cookieFile } = {}) {
   return args;
 }
 
+// Generic extraction also reports images and arbitrary HTTP responses as unknown_video.
+// Require a recognized media format, streaming protocol or actual audio/video codec.
+const MEDIA_EXT = /^(?:3g2|3gp|aac|aiff?|alac|amr|ape|asf|avi|f4[av]|flac|flv|m2ts|m3u8|m4[av]|mka|mkv|mov|mp2|mp3|mp4|mpd|mpe?g|mts|ogg|oga|ogv|opus|ts|vob|wav|wave|webm|wma|wmv)$/i;
+const IMAGE_EXT = /^(?:gif|png|jpe?g|webp|avif|heic|svg|bmp|ico|mhtml)$/i;
+function hasMediaFormats(info) {
+  const formats = info.formats?.length ? info.formats : [info];
+  return formats.some((f) => {
+    if (!f.url || IMAGE_EXT.test(f.ext || '') || (f.vcodec === 'none' && f.acodec === 'none')) return false;
+    const codec = (value) => typeof value === 'string' && value.length > 0 && !/^(none|unknown|images)$/i.test(value);
+    return MEDIA_EXT.test(f.ext || '') || /^(m3u8|http_dash_segments|dash|ism|mss|rtmp|rtsp)(_|$)/i.test(f.protocol || '') || codec(f.vcodec) || codec(f.acodec);
+  });
+}
+
 async function analyze(url, { title: pageTitle, ...context } = {}) {
   const extra = sessionArgs(context);
   const { code, out, err } = await run(['-J', '--no-playlist', '--no-warnings', '--skip-download', '--sleep-requests', '1', ...extra, url]).done;
   if (code !== 0) return failure(err);
   try {
     const j = JSON.parse(out);
+    if (!hasMediaFormats(j)) return { ok: false, kind: 'notmedia', error: 'The response contains no recognized video or audio format' };
     let infoFile = null;
     try {
       fs.mkdirSync(INFO_DIR, { recursive: true });
@@ -251,8 +265,39 @@ function downloadArgs({ url, mediaUrl, referer, requestContext, cookieFile, name
   return [...common, '-f', 'bv*+ba/b', '-S', sort, '--merge-output-format', 'mp4', '--remux-video', 'mp4', ...source];
 }
 
+function verifyOutput(file, format, onChild) {
+  const invalid = () => ({ ok: false, kind: 'notmedia', error: 'Downloaded file is not valid audio/video in the requested format' });
+  try { if (!file || !fs.statSync(file).isFile() || !fs.statSync(file).size) return Promise.resolve(invalid()); }
+  catch { return Promise.resolve(invalid()); }
+  return new Promise((resolve) => {
+    const exe = findIn([ffmpegDir()].filter(Boolean), 'ffprobe') || findBinary('ffprobe');
+    const probe = spawn(exe, ['-v', 'error', '-show_entries', 'stream=codec_type:format=format_name', '-of', 'json', file], { env: spawnEnv(), windowsHide: true });
+    let out = '';
+    let finished = false;
+    const finish = (result) => { if (!finished) { finished = true; clearTimeout(timer); resolve(result); } };
+    const timer = setTimeout(() => { probe.kill(); finish({ ok: false, kind: 'verification', error: 'Media verification timed out' }); }, 15000);
+    probe.stdout.on('data', (data) => { out = (out + data).slice(0, 65536); });
+    probe.stderr.resume();
+    probe.on('error', () => finish({ ok: false, kind: 'verification', error: 'Could not run ffprobe to verify the downloaded file' }));
+    probe.on('close', (code) => {
+      if (code !== 0) return finish(invalid());
+      try {
+        const info = JSON.parse(out);
+        const types = new Set((info.streams || []).map((s) => s.codec_type));
+        const containers = String(info.format?.format_name || '').split(',');
+        const valid = format === 'mp3' ? types.has('audio') && containers.includes('mp3')
+          : (types.has('video') || types.has('audio')) && containers.includes('mp4');
+        finish(valid ? { ok: true, file } : invalid());
+      } catch { finish(invalid()); }
+    });
+    onChild(probe);
+  });
+}
+
 function download(opts, onProgress) {
   let file = null;
+  let stopped = false;
+  let verifying = null;
   const job = run(downloadArgs(opts), {
     onLine: (line) => {
       if (line.startsWith('GRAB|')) {
@@ -263,8 +308,14 @@ function download(opts, onProgress) {
       }
     },
   });
-  const done = job.done.then(({ code, err }) => (code === 0 ? { ok: true, file } : failure(err)));
-  return { child: job.child, done };
+  const child = { kill: () => { stopped = true; job.child.kill(); verifying?.kill(); } };
+  const done = job.done.then(async ({ code, err }) => {
+    if (stopped) return { ok: false, stopped: true };
+    if (code !== 0) return failure(err);
+    const result = await verifyOutput(file, opts.format, (probe) => { verifying = probe; if (stopped) probe.kill(); });
+    return stopped ? { ok: false, stopped: true } : result;
+  });
+  return { child, done };
 }
 
 // Adult sites stay downloadable but are hidden from the browsable list; the UI only confirms

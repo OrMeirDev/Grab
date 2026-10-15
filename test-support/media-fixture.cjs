@@ -38,17 +38,27 @@ async function createMediaFixture() {
   }
   const server = http.createServer((req, res) => {
     const pathname = new URL(req.url, origin).pathname;
+    if (pathname === '/setuid') {
+      res.writeHead(200, { 'Content-Type': 'image/gif' });
+      res.end(Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64'));
+      return;
+    }
+    if (pathname === '/opaque') {
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+      res.end('not a media file');
+      return;
+    }
     if (pathname.startsWith('/lesson/')) {
       const id = pathname.split('/').pop();
       const item = source(id, req.headers['user-agent']);
       res.writeHead(200, { 'Content-Type': 'text/html', 'Referrer-Policy': 'unsafe-url' });
-      res.end(`<html><title>Fixture lesson ${id}</title><video id="player"></video><script>
+      res.end(`<html><title>Fixture lesson ${id}</title><iframe src="/setuid"></iframe><video id="player"></video><script>
         document.querySelector('video').src = URL.createObjectURL(new Blob([], {type:'video/mp4'}));
         fetch(${JSON.stringify(item.url)}).then(r => r.text()).then(() => fetch(${JSON.stringify(mediaOrigin + item.prefix + 'index.m3u8' + query)}));
       </script></html>`);
       return;
     }
-    if (pathname === '/plain.mp4') {
+    if (pathname === '/plain.mp4' || pathname === '/extensionless-video') {
       res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': fs.statSync(path.join(dir, 'plain.mp4')).size });
       fs.createReadStream(path.join(dir, 'plain.mp4')).pipe(res);
       return;

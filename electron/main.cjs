@@ -99,7 +99,8 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
   // Mako must reach Edge before a page extractor or anonymous probe can accept another source.
   const edgeFirst = browserSession.isMakoPage(url);
   const first = forcePage || edgeFirst ? { ok: false, kind: 'notfound', error: 'Unsupported URL' } : await engine.analyze(url);
-  if (first.ok || !['notfound', 'private', 'blocked', 'forbidden', 'other'].includes(first.kind)) return first;
+  if (first.ok || !['notfound', 'notmedia', 'private', 'blocked', 'forbidden', 'other'].includes(first.kind)) return first;
+  const missingMedia = ['notfound', 'notmedia'].includes(first.kind);
   const phase = (p, browserName) => { if (!e.sender.isDestroyed()) e.sender.send('engine:lookup-phase', { url, phase: p, browser: browserName }); };
 
   // 1. A hidden, clean browser (no cookies or accounts): works on public pages with no setup.
@@ -107,7 +108,7 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
   //    Skipped for a site where it already failed and the user's browser found the video, so a
   //    batch of lessons from one course goes straight to the browser.
   const host = (() => { try { return new URL(url).host; } catch { return ''; } })();
-  if (!edgeFirst && first.kind === 'notfound' && !signedInSites.has(host)) {
+  if (!edgeFirst && missingMedia && !signedInSites.has(host)) {
     phase('page');
     let hidden = { candidates: [] };
     try { hidden = await hiddenProbe.findMedia(url); } catch { /* fall through to the backup */ }
@@ -128,17 +129,21 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
   phase('browser', browser.name);
   const connect = () => browserSession.connectBrowser({ browser });
   let probe;
+  let refreshed = forcePage;
   try {
     probe = await pageprobe.findMedia(url, { refresh: forcePage, connect });
-    // A blob player may have loaded its manifest before attachment and discarded resource entries.
-    if (probe.reusedTab && !probe.candidates.length) probe = await pageprobe.findMedia(url, { refresh: true, connect });
+    // A tracking iframe is not evidence that the existing blob player's source was found.
+    if (probe.reusedTab && !probe.candidates.some((c) => c.kind !== 'embed')) {
+      probe = await pageprobe.findMedia(url, { refresh: true, connect });
+      refreshed = true;
+    }
   }
   catch (err) {
     if (err.kind === 'browserContext') return { ...first, kind: 'browserContext', browser: { name: browser.name } };
     // The browser can't be reached (closed, debugging off, or not supported): say how to fix it.
     const hint = ['browserSession', 'browserUnsupported'].includes(err.kind)
       ? { browser: { name: browser.name, scheme: browser.scheme, supported: browser.supported !== false } } : {};
-    return first.kind === 'notfound' ? { ...first, kind: 'notfoundPage', ...hint } : { ...first, ...hint };
+    return missingMedia ? { ...first, kind: 'notfoundPage', ...hint } : { ...first, ...hint };
   }
   const analyzeProbe = (probe) => browserSession.withSessionCookies(probe.cookieRef, async (cookieFile) => {
     // An authenticated extractor may understand the page better than its embedded sources.
@@ -151,7 +156,7 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
       const requestContext = c.requestContext;
       const r = await engine.analyze(c.url, { cookieFile, requestContext, referer: url, title: c.kind === 'embed' ? undefined : probe.title });
       if (r.ok) {
-        if (first.kind === 'notfound') signedInSites.add(host);
+        if (missingMedia) signedInSites.add(host);
         return { ...r, mediaUrl: c.url, referer: requestContext?.referer ?? url, requestContext, cookieRef: probe.cookieRef };
       }
       if (!last || ['private', 'blocked', 'forbidden', 'network'].includes(r.kind)) last = r;
@@ -164,7 +169,7 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
   // An already-open blob player can expose an old manifest via performance entries but no
   // longer expose the headers that authenticated it. Refresh only in our own background tab,
   // in the same authorized browser context, once; leave the user's tab untouched.
-  if (!result.ok && result.kind === 'forbidden' && probe.reusedTab && !forcePage) {
+  if (!result.ok && ['forbidden', 'notfoundPage'].includes(result.kind) && probe.reusedTab && !refreshed) {
     try { return await analyzeProbe(await pageprobe.findMedia(url, { refresh: true, connect })); }
     catch { return result; }
   }

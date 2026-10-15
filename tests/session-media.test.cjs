@@ -258,6 +258,32 @@ test('a tab with only an old blob is rescanned in a background tab, without relo
   assert.deepEqual(options.map((o) => o.refresh), [false, true]);
 });
 
+for (const embed of ['https://sync.example/setuid?fixture=1', 'https://player.example/embed/lesson']) {
+  test(`an iframe alone cannot prevent fresh player discovery: ${new URL(embed).pathname}`, async () => {
+    const probes = [];
+    const analyzed = [];
+    const handlers = mainHandlers({ analyze: async (url) => {
+      analyzed.push(url);
+      return url === pageUrl ? { ok: false, kind: 'notfound' } : { ok: true, title: 'Lesson' };
+    } }, {
+      findMedia: async (_url, options) => {
+        probes.push(options.refresh);
+        return options.refresh ? { reusedTab: false, candidates: [{ url: manifest, kind: 'stream' }] }
+          : { reusedTab: true, candidates: [{ url: embed, kind: 'embed' }] };
+      },
+    });
+    const result = await handlers.get('engine:analyze')({ sender }, pageUrl);
+    assert.equal(result.mediaUrl, manifest);
+    assert.deepEqual(probes, [false, true]);
+    assert.equal(analyzed.includes(embed), false);
+  });
+}
+
+test('identity-sync iframe endpoints are rejected without rejecting video names', () => {
+  for (const url of ['https://sync.example/setuid?entity=fixture', 'https://sync.example/usersync', 'https://sync.example/cookie_sync.html']) assert.equal(isNotPlayer(url), true, url);
+  for (const url of ['https://video.example/setuid.mp4', 'https://video.example/episode?title=setuid', 'https://player.example/embed/lesson']) assert.equal(isNotPlayer(url), false, url);
+});
+
 test('the hidden clean browser is tried first; Chrome is not touched when it finds the video', async () => {
   let chrome = 0;
   const handlers = mainHandlers({ analyze: async (url, options) => (url === manifest ? { ok: true, title: 'Lesson', referer: options.referer } : { ok: false, kind: 'notfound' }) },
@@ -267,6 +293,16 @@ test('the hidden clean browser is tried first; Chrome is not touched when it fin
   assert.equal(result.ok, true);
   assert.equal(result.mediaUrl, manifest);
   assert.equal(chrome, 0);
+});
+
+test('a non-media extractor result still falls back to the page player on other sites', async () => {
+  const handlers = mainHandlers({ analyze: async (url) => url === pageUrl
+    ? { ok: false, kind: 'notmedia' } : { ok: true, title: 'Lesson' } }, {}, {
+    findMedia: async () => ({ candidates: [{ url: manifest, kind: 'stream' }] }),
+  });
+  const result = await handlers.get('engine:analyze')({ sender }, pageUrl);
+  assert.equal(result.ok, true);
+  assert.equal(result.mediaUrl, manifest);
 });
 
 test('hidden-player request context and cookies survive analysis and download IPC', async () => {

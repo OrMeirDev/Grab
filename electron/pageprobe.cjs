@@ -32,7 +32,7 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
   let lastNewSource = Date.now();
 
   const add = (url, { type = '', size = 0, fromPlayer = false, referer = pageUrl, requestContext } = {}) => {
-    if (typeof url !== 'string' || !/^https?:/i.test(url) || ADS.test(url) || SEGMENT.test(url) || /mp2t|iso\.segment/i.test(type)) return;
+    if (typeof url !== 'string' || !/^https?:/i.test(url) || isNotPlayer(url) || ADS.test(url) || SEGMENT.test(url) || /mp2t|iso\.segment/i.test(type)) return;
     const kind = MANIFEST.test(url) || /mpegurl|dash/i.test(type) ? 'stream' : FILE.test(url) || /^(video|audio)\//i.test(type) ? 'file' : null;
     if (!kind) return;
     const previous = found.get(url);
@@ -110,6 +110,7 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
           }, context.sessionId, 2500);
           const r = response.result?.value;
           if (!r) { diagnostics.scanErrors++; return; }
+          if (r.pageUrl && isNotPlayer(r.pageUrl)) return;
           diagnostics.framesScanned++;
           diagnostics.playersSeen = Math.max(diagnostics.playersSeen, r.players || 0);
           if (r.drm) drm = true;
