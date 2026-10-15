@@ -12,7 +12,8 @@ const DIR = process.env.GRAB_TEST_YTDLP_DIR;
 const skip = process.platform !== 'win32' ? 'Windows only' : !(DIR && fs.existsSync(path.join(DIR, 'yt-dlp.exe'))) && 'set GRAB_TEST_YTDLP_DIR (bin with yt-dlp.exe)';
 
 test('Windows: real yt-dlp writes device names, long Hebrew titles, deep folders and collisions safely', { skip, timeout: 180000 }, async (t) => {
-  const site = await require('./fixtures/media-site.cjs').start();
+  const mediaData = require('./fixtures/sample-media.cjs');
+  const site = await require('./fixtures/media-site.cjs').start({ mediaData });
   const engine = require('../electron/engine.cjs');
   const { OutputAllocator } = require('../electron/infrastructure/output-allocator.cjs');
   engine.setUserBinDir(DIR);
@@ -24,6 +25,7 @@ test('Windows: real yt-dlp writes device names, long Hebrew titles, deep folders
     const r = await engine.download({ url: site.base + '/public/clip.mp4', outputBase, format: 'mp4', quality: 'best', findOutput: (b) => allocator.findOutput(b) }, () => {}).done;
     assert.equal(r.ok, true, `${name}: ${r.error}`);
     assert.ok(fs.existsSync(r.file), r.file);
+    assert.equal(fs.statSync(r.file).size, mediaData.length, 'the complete valid media was saved');
     t.diagnostic(`${JSON.stringify(name).slice(0, 60)} -> ${path.basename(r.file)} (${r.file.length} chars)`);
     return r.file;
   };
