@@ -122,14 +122,28 @@ async function prepareHostRuntime(runtime, sourceRoot, integrationDir, appVersio
   if (!fs.existsSync(path.join(sourceRoot, 'app.asar'))) return runtime;
   const stat = fs.statSync(runtime);
   const revision = crypto.createHash('sha256').update([runtime, appVersion, stat.size, stat.mtimeMs].join(':')).digest('hex').slice(0, 16);
-  const dir = path.join(integrationDir, 'runtimes', revision);
+  const root = path.dirname(runtime);
+  const entries = await fs.promises.readdir(root, { withFileTypes: true });
+  const valid = (candidate) => {
+    if (!candidate || !path.resolve(candidate).startsWith(path.resolve(integrationDir, 'runtimes') + path.sep)) return false;
+    const folder = path.dirname(candidate);
+    try {
+      return fs.existsSync(path.join(folder, '.ready')) && entries.filter((e) => e.isFile()).every((e) =>
+        fs.statSync(path.join(folder, e.name === path.basename(runtime) ? 'GrabBrowserHost.exe' : e.name)).size === fs.statSync(path.join(root, e.name)).size);
+    } catch { return false; }
+  };
+  const previous = readInstall(integrationDir);
+  if (previous?.runtime === runtime && previous.appVersion === appVersion && valid(previous.hostRuntime)) return previous.hostRuntime;
+  let dir = path.join(integrationDir, 'runtimes', revision);
+  if (valid(path.join(dir, 'GrabBrowserHost.exe'))) return path.join(dir, 'GrabBrowserHost.exe');
+  // Never overwrite a loaded executable when repairing a damaged runtime; the repaired host
+  // gets a new complete directory, and the existing port can finish safely.
+  if (fs.existsSync(dir)) dir += '-' + crypto.randomUUID();
   const target = path.join(dir, 'GrabBrowserHost.exe');
-  if (fs.existsSync(target) && fs.existsSync(path.join(dir, '.ready'))) return target;
   const stage = dir + '-' + crypto.randomUUID();
   await fs.promises.mkdir(stage, { recursive: true });
   try {
-    const root = path.dirname(runtime);
-    for (const ent of await fs.promises.readdir(root, { withFileTypes: true })) {
+    for (const ent of entries) {
       if (ent.isFile()) await fs.promises.copyFile(path.join(root, ent.name), path.join(stage, ent.name === path.basename(runtime) ? 'GrabBrowserHost.exe' : ent.name));
       else if (ent.isDirectory() && ent.name === 'locales') await fs.promises.cp(path.join(root, ent.name), path.join(stage, ent.name), { recursive: true });
     }

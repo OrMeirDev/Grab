@@ -213,6 +213,10 @@ test('packaged integration isolates the shipped runtime so an active browser doe
   assert.equal(fs.readFileSync(path.join(path.dirname(installed.hostRuntime), 'node.dll'), 'utf8'), 'fixture runtime dependency');
   assert.ok(fs.readFileSync(path.join(integrationDir, 'native-host', 'grab-host-chrome.cmd'), 'utf8').includes(installed.hostRuntime));
   assert.equal((await setup.install(options)).hostRuntime, installed.hostRuntime, 'one prepared runtime per app revision');
+  fs.unlinkSync(path.join(path.dirname(installed.hostRuntime), 'node.dll'));
+  const repaired = await setup.install(options);
+  assert.notEqual(repaired.hostRuntime, installed.hostRuntime);
+  assert.equal(fs.readFileSync(path.join(path.dirname(repaired.hostRuntime), 'node.dll'), 'utf8'), 'fixture runtime dependency');
   let stoppedAfterUnregister = false;
   await setup.uninstall({ integrationDir, registry, beforeRemove: async () => { assert.equal(registry.keys.size, 0); stoppedAfterUnregister = true; } });
   assert.equal(stoppedAfterUnregister, true);
