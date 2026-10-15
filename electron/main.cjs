@@ -5,6 +5,7 @@ const engine = require('./engine.cjs');
 const pageprobe = require('./pageprobe.cjs');
 const hiddenProbe = require('./hidden-probe.cjs');
 const browserSession = require('./browser-session.cjs');
+const { createLookupBudget } = require('./lookup-budget.cjs');
 const { autoUpdater } = require('electron-updater');
 
 // App updates come from GitHub releases (see build.publish in package.json). Nothing downloads
@@ -95,85 +96,105 @@ ipcMain.handle('engine:version', () => engine.version());
 // look inside it the way DevTools would, and try the video addresses found there.
 const signedInSites = new Set(); // sites whose videos only the user's signed-in browser can see
 ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
-  // forcePage: what yt-dlp found at the link didn't download, so go straight to the page's player.
-  // Mako must reach Edge before a page extractor or anonymous probe can accept another source.
-  const edgeFirst = browserSession.isMakoPage(url);
-  const first = forcePage || edgeFirst ? { ok: false, kind: 'notfound', error: 'Unsupported URL' } : await engine.analyze(url);
-  if (first.ok || !['notfound', 'notmedia', 'private', 'blocked', 'forbidden', 'other'].includes(first.kind)) return first;
-  const missingMedia = ['notfound', 'notmedia'].includes(first.kind);
-  const phase = (p, browserName) => { if (!e.sender.isDestroyed()) e.sender.send('engine:lookup-phase', { url, phase: p, browser: browserName }); };
-
-  // 1. A hidden, clean browser (no cookies or accounts): works on public pages with no setup.
-  //    Only when yt-dlp found no video; a clean visit doesn't get past a login or a bot check.
-  //    Skipped for a site where it already failed and the user's browser found the video, so a
-  //    batch of lessons from one course goes straight to the browser.
-  const host = (() => { try { return new URL(url).host; } catch { return ''; } })();
-  if (!edgeFirst && missingMedia && !signedInSites.has(host)) {
-    phase('page');
-    let hidden = { candidates: [] };
-    try { hidden = await hiddenProbe.findMedia(url); } catch { /* fall through to the backup */ }
-    const resolved = await browserSession.withSessionCookies(hidden.cookieRef, async (cookieFile) => {
-      for (const c of hidden.candidates.slice(0, 4)) {
-        const requestContext = c.requestContext;
-        const r = await engine.analyze(c.url, { cookieFile, requestContext, referer: url, title: c.kind === 'embed' ? undefined : hidden.title });
-        if (r.ok) return { ...r, mediaUrl: c.url, referer: requestContext?.referer ?? url, requestContext, cookieRef: hidden.cookieRef };
-      }
-    });
-    if (resolved) return resolved;
-    if (hidden.protected) return { ok: false, kind: 'protected', error: 'DRM' };
-  }
-
-  // 2. Backup: Edge for Mako, otherwise the user's default browser, when remote debugging is
-  //    on. If it isn't, report what the clean lookup found, with how to turn it on.
-  const browser = browserSession.browserForPage(url);
-  phase('browser', browser.name);
-  const connect = () => browserSession.connectBrowser({ browser });
-  let probe;
-  let refreshed = forcePage;
-  try {
-    probe = await pageprobe.findMedia(url, { refresh: forcePage, connect });
-    // A tracking iframe is not evidence that the existing blob player's source was found.
-    if (probe.reusedTab && !probe.candidates.some((c) => c.kind !== 'embed')) {
-      probe = await pageprobe.findMedia(url, { refresh: true, connect });
-      refreshed = true;
-    }
-  }
-  catch (err) {
-    if (err.kind === 'browserContext') return { ...first, kind: 'browserContext', browser: { name: browser.name } };
-    // The browser can't be reached (closed, debugging off, or not supported): say how to fix it.
-    const hint = ['browserSession', 'browserUnsupported'].includes(err.kind)
-      ? { browser: { name: browser.name, scheme: browser.scheme, supported: browser.supported !== false } } : {};
-    return missingMedia ? { ...first, kind: 'notfoundPage', ...hint } : { ...first, ...hint };
-  }
-  const analyzeProbe = (probe) => browserSession.withSessionCookies(probe.cookieRef, async (cookieFile) => {
-    // An authenticated extractor may understand the page better than its embedded sources.
-    if (!forcePage && ['private', 'blocked', 'forbidden'].includes(first.kind)) {
-      const authenticated = await engine.analyze(url, { cookieFile, requestContext: probe.requestContext });
-      if (authenticated.ok) return { ...authenticated, cookieRef: probe.cookieRef, requestContext: probe.requestContext };
-    }
-    let last;
-    for (const c of probe.candidates) {
-      const requestContext = c.requestContext;
-      const r = await engine.analyze(c.url, { cookieFile, requestContext, referer: url, title: c.kind === 'embed' ? undefined : probe.title });
-      if (r.ok) {
-        if (missingMedia) signedInSites.add(host);
-        return { ...r, mediaUrl: c.url, referer: requestContext?.referer ?? url, requestContext, cookieRef: probe.cookieRef };
-      }
-      if (!last || ['private', 'blocked', 'forbidden', 'network'].includes(r.kind)) last = r;
-    }
-    if (probe.protected) return { ok: false, kind: 'protected', error: 'DRM' };
-    if (last && ['private', 'blocked', 'forbidden', 'network'].includes(last.kind)) return last;
-    return first.kind === 'forbidden' ? first : { ...first, kind: 'notfoundPage' };
+  const budget = createLookupBudget();
+  let activeBrowser;
+  const analyzeSource = (source, context = {}) => budget.run(() => {
+    budget.setPhase('source');
+    if (!e.sender.isDestroyed()) e.sender.send('engine:lookup-phase', { url, phase: 'source', browser: activeBrowser?.name });
+    return engine.analyze(source, { ...context, signal: budget.signal, timeoutMs: Math.min(20000, budget.remaining()) });
   });
-  const result = await analyzeProbe(probe);
-  // An already-open blob player can expose an old manifest via performance entries but no
-  // longer expose the headers that authenticated it. Refresh only in our own background tab,
-  // in the same authorized browser context, once; leave the user's tab untouched.
-  if (!result.ok && ['forbidden', 'notfoundPage'].includes(result.kind) && probe.reusedTab && !refreshed) {
-    try { return await analyzeProbe(await pageprobe.findMedia(url, { refresh: true, connect })); }
-    catch { return result; }
-  }
-  return result;
+  try {
+    return await budget.run(async () => {
+      // forcePage: what yt-dlp found at the link didn't download, so go straight to the page's player.
+      // Mako must reach Edge before a page extractor or anonymous probe can accept another source.
+      const edgeFirst = browserSession.isMakoPage(url);
+      const first = forcePage || edgeFirst ? { ok: false, kind: 'notfound', error: 'Unsupported URL' } : await analyzeSource(url);
+      if (first.ok || !['notfound', 'notmedia', 'private', 'blocked', 'forbidden', 'other'].includes(first.kind)) return first;
+      const missingMedia = ['notfound', 'notmedia'].includes(first.kind);
+      const phase = (p, browserName) => { budget.setPhase(p); if (!e.sender.isDestroyed()) e.sender.send('engine:lookup-phase', { url, phase: p, browser: browserName }); };
+
+      // 1. A hidden, clean browser (no cookies or accounts): works on public pages with no setup.
+      //    Only when yt-dlp found no video; a clean visit doesn't get past a login or a bot check.
+      //    Skipped for a site where it already failed and the user's browser found the video, so a
+      //    batch of lessons from one course goes straight to the browser.
+      const host = (() => { try { return new URL(url).host; } catch { return ''; } })();
+      if (!edgeFirst && missingMedia && !signedInSites.has(host)) {
+        phase('page');
+        let hidden = { candidates: [] };
+        try { hidden = await budget.run(() => hiddenProbe.findMedia(url, { signal: budget.signal })); } catch { budget.check(); }
+        const resolved = await browserSession.withSessionCookies(hidden.cookieRef, async (cookieFile) => {
+          for (const c of hidden.candidates.slice(0, 4)) {
+            const requestContext = c.requestContext;
+            const r = await analyzeSource(c.url, { cookieFile, requestContext, referer: url, title: c.kind === 'embed' ? undefined : hidden.title });
+            if (r.ok) return { ...r, mediaUrl: c.url, referer: requestContext?.referer ?? url, requestContext, cookieRef: hidden.cookieRef };
+          }
+        });
+        if (resolved) return resolved;
+        if (hidden.protected) return { ok: false, kind: 'protected', error: 'DRM' };
+      }
+
+      // 2. Backup: Edge for Mako, otherwise the user's default browser, when remote debugging is
+      //    on. If it isn't, report what the clean lookup found, with how to turn it on.
+      const browser = browserSession.browserForPage(url);
+      activeBrowser = browser;
+      phase('browser', browser.name);
+      const connect = () => budget.run(() => browserSession.connectBrowser({ browser }));
+      let probe;
+      let refreshed = forcePage;
+      try {
+        probe = await budget.run(() => pageprobe.findMedia(url, { refresh: forcePage, connect, signal: budget.signal }));
+        // A tracking iframe is not evidence that the existing blob player's source was found.
+        if (probe.reusedTab && !probe.candidates.some((c) => c.kind !== 'embed')) {
+          probe = await budget.run(() => pageprobe.findMedia(url, { refresh: true, connect, signal: budget.signal }));
+          refreshed = true;
+        }
+      }
+      catch (err) {
+        budget.check();
+        if (err.kind === 'browserContext') return { ...first, kind: 'browserContext', browser: { name: browser.name } };
+        // The browser can't be reached (closed, debugging off, or not supported): say how to fix it.
+        const hint = ['browserSession', 'browserUnsupported'].includes(err.kind)
+          ? { browser: { name: browser.name, scheme: browser.scheme, supported: browser.supported !== false } } : {};
+        return missingMedia ? { ...first, kind: 'notfoundPage', ...hint } : { ...first, ...hint };
+      }
+      const analyzeProbe = (probe) => browserSession.withSessionCookies(probe.cookieRef, async (cookieFile) => {
+        // An authenticated extractor may understand the page better than its embedded sources.
+        if (!forcePage && ['private', 'blocked', 'forbidden'].includes(first.kind)) {
+          const authenticated = await analyzeSource(url, { cookieFile, requestContext: probe.requestContext });
+          if (authenticated.ok) return { ...authenticated, cookieRef: probe.cookieRef, requestContext: probe.requestContext };
+        }
+        let last;
+        for (const c of probe.candidates.slice(0, 8)) {
+          const requestContext = c.requestContext;
+          const r = await analyzeSource(c.url, { cookieFile, requestContext, referer: url, title: c.kind === 'embed' ? undefined : probe.title });
+          if (r.ok) {
+            if (missingMedia) signedInSites.add(host);
+            return { ...r, mediaUrl: c.url, referer: requestContext?.referer ?? url, requestContext, cookieRef: probe.cookieRef };
+          }
+          if (!last || ['private', 'blocked', 'forbidden', 'network', 'timeout'].includes(r.kind)) last = r;
+        }
+        if (probe.protected) return { ok: false, kind: 'protected', error: 'DRM' };
+        if (last && ['private', 'blocked', 'forbidden', 'network', 'timeout'].includes(last.kind)) return last;
+        return first.kind === 'forbidden' ? first : { ...first, kind: 'notfoundPage' };
+      });
+      const result = await analyzeProbe(probe);
+      // An already-open blob player can expose an old manifest via performance entries but no
+      // longer expose the headers that authenticated it. Refresh only in our own background tab,
+      // in the same authorized browser context, once; leave the user's tab untouched.
+      if (!result.ok && ['forbidden', 'notfoundPage'].includes(result.kind) && probe.reusedTab && !refreshed) {
+        try { return await analyzeProbe(await budget.run(() => pageprobe.findMedia(url, { refresh: true, connect, signal: budget.signal }))); }
+        catch { return result; }
+      }
+      return result;
+    });
+  } catch (error) {
+    if (error.kind !== 'timeout') throw error;
+    return { ok: false, kind: 'timeout', error: error.message,
+      ...(error.phase === 'browser' && activeBrowser ? { browser: {
+        name: activeBrowser.name, scheme: activeBrowser.scheme, supported: activeBrowser.supported !== false,
+      } } : {}),
+    };
+  } finally { budget.dispose(); }
 });
 // The guide and its connection check use the same per-page browser as lookup.
 ipcMain.handle('browser:default', (_e, pageUrl) => {
@@ -181,8 +202,13 @@ ipcMain.handle('browser:default', (_e, pageUrl) => {
   return { name: b.name, scheme: b.scheme, supported: b.supported !== false };
 });
 ipcMain.handle('browser:check', async (_e, pageUrl) => {
-  try { await browserSession.connectBrowser({ browser: browserSession.browserForPage(pageUrl) }); return { ok: true }; }
-  catch (err) { return { ok: false, kind: err.kind }; }
+  const budget = createLookupBudget(30000);
+  budget.setPhase('browser');
+  try {
+    await budget.run(() => browserSession.connectBrowser({ browser: browserSession.browserForPage(pageUrl) }));
+    return { ok: true };
+  } catch (err) { return { ok: false, kind: err.kind }; }
+  finally { budget.dispose(); }
 });
 ipcMain.handle('engine:extractors', () => engine.extractors());
 ipcMain.handle('engine:update', () => {

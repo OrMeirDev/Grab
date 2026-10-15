@@ -18,7 +18,8 @@ const LICENSE = /widevine|playready|fairplay|\/license/i;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function findMedia(pageUrl, { timeoutMs = 20000 } = {}) {
+async function findMedia(pageUrl, { timeoutMs = 20000, signal } = {}) {
+  signal?.throwIfAborted();
   const ses = session.fromPartition(`grab-probe-${Date.now()}-${Math.random()}`, { cache: false });
   ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
   ses.on('will-download', (e) => e.preventDefault());
@@ -61,6 +62,8 @@ async function findMedia(pageUrl, { timeoutMs = 20000 } = {}) {
     height: 720,
     webPreferences: { session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false, autoplayPolicy: 'no-user-gesture-required', backgroundThrottling: false },
   });
+  const abort = () => { if (!win.isDestroyed()) win.destroy(); };
+  signal?.addEventListener('abort', abort, { once: true });
   userAgent = win.webContents.getUserAgent();
   win.webContents.setAudioMuted(true);
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -81,16 +84,19 @@ async function findMedia(pageUrl, { timeoutMs = 20000 } = {}) {
   };
 
   try {
+    signal?.throwIfAborted();
     const start = Date.now();
     await Promise.race([win.loadURL(pageUrl).catch(() => {}), sleep(15000)]);
     // Players often start a moment after the page loads: look a few times, and stop early once
     // the player's own source, a stream manifest or an embedded player has shown up.
     while (Date.now() - start < timeoutMs) {
+      signal?.throwIfAborted();
       await collect();
       if (Date.now() - start > 6000 && (embeds.size || [...found.values()].some((f) => f.fromPlayer || f.kind === 'stream'))) break;
       await sleep(1500);
     }
   } finally {
+    signal?.removeEventListener('abort', abort);
     if (!win.isDestroyed()) win.destroy();
   }
 
@@ -101,12 +107,14 @@ async function findMedia(pageUrl, { timeoutMs = 20000 } = {}) {
     ...media.map((m) => ({ url: m.url, kind: m.kind, size: m.size, requestContext: m.requestContext })),
     ...[...embeds].filter((u) => { try { return new URL(u).host !== host; } catch { return false; } }).map((u) => ({ url: u, kind: 'embed', size: 0, requestContext: { userAgent, referer: pageUrl } })),
   ];
+  signal?.throwIfAborted();
   const cookies = new Map();
   for (const url of new Set([pageUrl, ...candidates.map((c) => c.url)])) {
     for (const cookie of await ses.cookies.get({ url })) {
       cookies.set(JSON.stringify([cookie.domain, cookie.path, cookie.name]), { ...cookie, expires: cookie.expirationDate });
     }
   }
+  signal?.throwIfAborted();
   return { candidates, title: title.trim(), cookieRef: browserSession.rememberCookies([...cookies.values()]), protected: drm && !media.some((m) => m.kind === 'file') };
 }
 

@@ -46,6 +46,7 @@ const ERROR_LABELS = {
   protected: 'הסרטון מוגן בהגנת העתקה (DRM), ואי אפשר להוריד אותו',
   unavailable: 'הסרטון הוסר או לא זמין',
   network: 'אין חיבור לאינטרנט',
+  timeout: 'השרת לא ענה בזמן. אפשר לנסות לזהות מחדש',
   browserContext: 'העמוד פתוח בכמה סשנים של הדפדפן; השאר אותו פתוח בסשן שבו אתה מחובר',
 };
 const errorLabel = (kind, fallback, browser) => (kind === 'browserContext' && browser
@@ -197,7 +198,7 @@ function QueueItem({ item, index, actions, drag }) {
         )}
       </div>
       <div className="item-info">
-        {analyzing ? <div className="item-name muted">{waiting ? (item.label || 'ממתין לזיהוי') : item.phase === 'page' ? 'מחפש את הסרטון בתוך הנגן שבעמוד…' : item.phase === 'browser' ? `מנסה דרך ${item.phaseBrowser || 'הדפדפן'} שלך…` : 'מזהה סרטון…'}</div> : (
+        {analyzing ? <div className="item-name muted">{waiting ? (item.label || 'ממתין לזיהוי') : item.phase === 'page' ? 'מחפש את הסרטון בתוך הנגן שבעמוד…' : item.phase === 'source' ? 'בודק את מקור הסרטון…' : item.phase === 'browser' ? `מנסה דרך ${item.phaseBrowser || 'הדפדפן'} שלך…` : 'מזהה סרטון…'}</div> : (
           <input
             className="item-name name-input"
             value={item.name}

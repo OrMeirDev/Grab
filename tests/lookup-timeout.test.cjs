@@ -9,6 +9,8 @@ const { createRequire } = require('node:module');
 const browser = require('../electron/browser-session.cjs');
 const { createLookupBudget } = require('../electron/lookup-budget.cjs');
 const { mainHandlers, sender } = require('../test-support/main-handlers.cjs');
+const keepAlive = setInterval(() => {}, 1000);
+test.after(() => clearInterval(keepAlive));
 const shortBudget = { createLookupBudget: () => createLookupBudget(30) };
 const page = 'https://www.mako.co.il/mako-vod-keshet/fixture';
 

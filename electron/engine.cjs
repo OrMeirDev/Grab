@@ -70,7 +70,8 @@ function spawnEnv() {
   };
 }
 
-function run(args, { onLine, exe } = {}) {
+function run(args, { onLine, exe, timeoutMs = 0, signal } = {}) {
+  if (signal?.aborted) return { child: { kill() {} }, done: Promise.resolve({ code: -2, out: '', err: 'ERROR: Video lookup timed out' }) };
   const child = spawn(exe || findBinary('yt-dlp'), ['--encoding', 'utf-8', ...args], { env: spawnEnv(), windowsHide: true });
   let out = '';
   let err = '';
@@ -87,8 +88,25 @@ function run(args, { onLine, exe } = {}) {
   child.stdout.on('data', (d) => { out += d; feed('out', d); });
   child.stderr.on('data', (d) => { err += d; feed('err', d); });
   const done = new Promise((resolve) => {
-    child.on('error', (e) => resolve({ code: -1, out, err: String(e.message || e) }));
-    child.on('close', (code) => resolve({ code, out, err }));
+    let settled = false;
+    let timer;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', stop);
+      resolve(result);
+    };
+    const stop = () => {
+      // Metadata extraction owns this process; do not leave it running after a timeout.
+      child.kill('SIGKILL');
+      finish({ code: -2, out, err: 'ERROR: Video lookup timed out' });
+    };
+    child.on('error', (e) => finish({ code: -1, out, err: String(e.message || e) }));
+    child.on('close', (code) => finish({ code, out, err }));
+    if (timeoutMs > 0) timer = setTimeout(stop, timeoutMs);
+    signal?.addEventListener('abort', stop, { once: true });
+    if (signal?.aborted) stop();
   });
   return { child, done };
 }
@@ -146,6 +164,7 @@ async function updateEngine() {
 
 // Classify failures so the UI can say what actually happened.
 function errorKind(err) {
+  if (/Video lookup timed out/i.test(err)) return 'timeout';
   if (/not a bot|Sign in to confirm|HTTP Error 429|Too Many Requests/i.test(err)) return 'blocked';
   if (/Private video|members-only|Join this channel|login required|requires authentication|logged[- ]in/i.test(err)) return 'private';
   if (/HTTP(?:\s+Error)?\s*:?\s*403|403 Forbidden|returned 403/i.test(err)) return 'forbidden';
@@ -206,9 +225,9 @@ function hasMediaFormats(info) {
   });
 }
 
-async function analyze(url, { title: pageTitle, ...context } = {}) {
+async function analyze(url, { title: pageTitle, timeoutMs = 20000, signal, ...context } = {}) {
   const extra = sessionArgs(context);
-  const { code, out, err } = await run(['-J', '--no-playlist', '--no-warnings', '--skip-download', '--sleep-requests', '1', ...extra, url]).done;
+  const { code, out, err } = await run(['-J', '--no-playlist', '--no-warnings', '--skip-download', '--sleep-requests', '1', ...extra, url], { timeoutMs, signal }).done;
   if (code !== 0) return failure(err);
   try {
     const j = JSON.parse(out);

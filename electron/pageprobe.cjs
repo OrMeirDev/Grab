@@ -12,7 +12,8 @@ const ADS = /doubleclick|googlesyndication|googleads|imasdk|adnxs|adsystem|adver
 const LICENSE = /widevine|playready|fairplay|\/license/i;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect = browserSession.connectBrowser } = {}) {
+async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect = browserSession.connectBrowser, signal } = {}) {
+  signal?.throwIfAborted();
   const page = new URL(pageUrl);
   if (!/^https?:$/.test(page.protocol)) throw new Error('Unsupported page URL');
   const cdp = await connect();
@@ -32,6 +33,7 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
   let lastNewSource = Date.now();
 
   const add = (url, { type = '', size = 0, fromPlayer = false, referer = pageUrl, requestContext } = {}) => {
+    if (signal?.aborted) return;
     if (typeof url !== 'string' || !/^https?:/i.test(url) || isNotPlayer(url) || ADS.test(url) || SEGMENT.test(url) || /mp2t|iso\.segment/i.test(type)) return;
     const kind = MANIFEST.test(url) || /mpegurl|dash/i.test(type) ? 'stream' : FILE.test(url) || /^(video|audio)\//i.test(type) ? 'file' : null;
     if (!kind) return;
@@ -49,6 +51,7 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
   const requests = new RequestContexts(() => userAgent, (url, requestContext) => add(url, { requestContext }));
 
   const initialize = async (sessionId) => {
+    signal?.throwIfAborted();
     sessions.add(sessionId);
     await Promise.all([
       cdp.send('Runtime.enable', {}, sessionId),
@@ -59,6 +62,7 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
   };
 
   const onEvent = (event) => {
+    if (signal?.aborted) return;
     if (!sessions.has(event.sessionId)) return;
     const d = event.params || {};
     if (event.method === 'Target.attachedToTarget' && d.targetInfo?.type === 'iframe') {
@@ -90,18 +94,23 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
   cdp.on('event', onEvent);
 
   try {
+    signal?.throwIfAborted();
     const attached = await cdp.send('Target.attachToTarget', { targetId: target.targetId, flatten: true });
     rootSessionId = attached.sessionId;
+    signal?.throwIfAborted();
     const version = await cdp.send('Browser.getVersion');
     userAgent = version.userAgent || '';
     await initialize(rootSessionId);
     const frameTree = await cdp.send('Page.getFrameTree', {}, rootSessionId);
     mainFrameId = frameTree.frameTree.frame.id;
+    signal?.throwIfAborted();
     if (target.created) await cdp.send('Page.navigate', { url: pageUrl }, rootSessionId);
 
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
+      signal?.throwIfAborted();
       await Promise.all([...initializations]);
+      signal?.throwIfAborted();
       await Promise.all([...contexts.values()].map(async (context) => {
         try {
           const response = await cdp.send('Runtime.evaluate', {
@@ -130,16 +139,18 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
       ...media.map((m) => ({ ...m, requestContext: { userAgent, referer: m.referer, ...m.requestContext } })),
       ...[...embeds].filter((url) => { try { return new URL(url).host !== page.host; } catch { return false; } }).map((url) => ({ url, kind: 'embed', size: 0, requestContext: { userAgent, referer: pageUrl } })),
     ];
+    signal?.throwIfAborted();
     const urls = [...new Set([pageUrl, ...candidates.map((c) => c.url)])];
     const { cookies = [] } = await cdp.send('Network.getCookies', { urls }, rootSessionId);
+    signal?.throwIfAborted();
     return { candidates, title: title.trim(), reusedTab: !target.created, requestContext: { userAgent, referer: pageUrl }, protected: drm && !media.some((m) => m.kind === 'file'), cookieRef: browserSession.rememberCookies(cookies), diagnostics };
   } finally {
     cdp.removeListener('event', onEvent);
     // Detach from existing tabs; only close the background tab created for this lookup.
     if (rootSessionId && cdp.connected) {
-      for (const sessionId of sessions) await cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {});
+      await Promise.allSettled([...sessions].map((sessionId) => cdp.send('Target.detachFromTarget', { sessionId }, undefined, 1000)));
     }
-    if (target.created && cdp.connected) await cdp.send('Target.closeTarget', { targetId: target.targetId }).catch(() => {});
+    if (target.created && cdp.connected) await cdp.send('Target.closeTarget', { targetId: target.targetId }, undefined, 1000).catch(() => {});
   }
 }
 

@@ -41,6 +41,19 @@ This manual result is evidence for the regression, not a live verification of th
   rejected. Completed MP4/MP3 downloads are checked with ffprobe for the expected container
   and audio/video streams before success is returned. Stop also cancels that verification.
 
+## Lookup deadlines
+
+Every analyze request has one 90-second budget covering page lookup, browser connection,
+candidate analysis and refresh. Each extractor metadata check gets at most 20 seconds,
+and at most eight candidates are tried per probe. Expiry aborts pending work, kills the
+owned metadata process, stops further source checks, and returns a timeout with the
+current phase. Hidden probe windows are closed; CDP cleanup detaches and closes only the
+probe's own background tab. Connection-guide checks have a 30-second budget.
+
+These budgets cover discovery and metadata. Video downloading retains its existing
+duration policy. A timeout is displayed as a failure so the queue can continue and a
+fresh lookup can be attempted.
+
 ## Verification
 
 `npm test` covers CDP event ordering, request isolation, IPC context/cookie lifetime,

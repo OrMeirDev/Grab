@@ -469,3 +469,25 @@ test('yt-dlp analyze/download options retain domain-scoped cookies and browser r
   assert.equal(args.some((value) => value.includes('must-not-be-forwarded')), false);
   assert.doesNotThrow(() => downloadArgs({ url: pageUrl, name: 'Lesson', folder: '/tmp', requestContext: null }));
 });
+
+for (const existing of [true, false]) {
+  test('aborted probe detaches and closes only its own tab: existing=' + existing, async () => {
+    const controller = new AbortController();
+    const reason = Object.assign(new Error('Lookup expired'), { kind: 'timeout' });
+    class AbortChrome extends FakeChrome {
+      async send(method, params, sessionId) {
+        const result = await super.send(method, params, sessionId);
+        if (method === 'Runtime.evaluate') controller.abort(reason);
+        return result;
+      }
+    }
+    const cdp = new AbortChrome({ existing });
+    await assert.rejects(findMedia(pageUrl, { timeoutMs: 1, connect: async () => cdp, signal: controller.signal }), (error) => error === reason);
+    assert.equal(cdp.listenerCount('event'), 0);
+    assert.ok(cdp.calls.some((c) => c.method === 'Target.detachFromTarget'));
+    const closed = cdp.calls.filter((c) => c.method === 'Target.closeTarget');
+    assert.equal(closed.length, existing ? 0 : 1);
+    if (closed.length) assert.equal(closed[0].params.targetId, 'background');
+    assert.equal(cdp.calls.some((c) => c.method === 'Browser.close'), false);
+  });
+}
