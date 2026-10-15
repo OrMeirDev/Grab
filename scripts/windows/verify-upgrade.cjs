@@ -7,12 +7,19 @@
 //
 // node scripts/windows/verify-upgrade.cjs --installer <Grab-Setup-<test>.exe> --version <test version>
 //   --out <results dir> [--bin <bin dir with ffmpeg.exe, default ./bin>]
+//   [--next-version <v> --feed-dir <dir> --feed-url <url>]   a newer test build on a local feed
+//   [--disposable]   run outside a GitHub-hosted runner (only on a machine you can throw away)
 const { execFileSync, spawn } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
 const arg = (name, fallback) => { const i = process.argv.indexOf('--' + name); return i > 0 ? process.argv[i + 1] : fallback; };
+// It replaces the installed Grab and its data: only on a throwaway machine.
+if (!(process.env.GITHUB_ACTIONS === 'true' && process.env.RUNNER_ENVIRONMENT === 'github-hosted') && !process.argv.includes('--disposable')) {
+  console.error('verify-upgrade replaces the installed Grab and its settings, history and queue. Run it on a GitHub-hosted runner, or pass --disposable on a machine you can throw away.');
+  process.exit(2);
+}
 const ROOT = path.join(__dirname, '..', '..');
 const INSTALLER = path.resolve(arg('installer'));
 const VERSION = arg('version');
@@ -30,6 +37,14 @@ const FOLDER = path.join(WORK, 'הורדות Grab');
 // Real media for the fixture site: 30 s of 720p test pattern and tone (about 2.5 MB), so a slowly
 // served download is still running while a check pauses, quits or kills.
 const MEDIA = path.join(WORK, 'media.mp4');
+// A video-only and an audio-only stream for the merge check: about 600 MB of constant-bitrate
+// test pattern (so FFmpeg's merge copies real data for a few seconds) and a matching tone.
+const SPLIT_VIDEO = path.join(WORK, 'split-video.mp4');
+const SPLIT_AUDIO = path.join(WORK, 'split-audio.m4a');
+const SPLIT_SECONDS = 120;
+const NEXT_VERSION = arg('next-version');
+const FEED_DIR = arg('feed-dir') && path.resolve(arg('feed-dir'));
+const FEED_URL = arg('feed-url');
 fs.mkdirSync(OUT, { recursive: true });
 fs.mkdirSync(FOLDER, { recursive: true });
 fs.mkdirSync(WORK, { recursive: true });
@@ -83,6 +98,12 @@ const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8
   execFileSync(path.join(BIN, 'ffmpeg.exe'), ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=25', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100',
     '-t', '30', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-b:v', '2M', '-c:a', 'aac', '-movflags', '+faststart', MEDIA]);
   facts.media = { bytes: fs.statSync(MEDIA).size };
+  const clip = path.join(WORK, 'split-clip.mp4');
+  const ff = (args) => execFileSync(path.join(BIN, 'ffmpeg.exe'), ['-y', '-v', 'error', ...args]);
+  ff(['-f', 'lavfi', '-i', 'testsrc=size=1280x720:rate=25', '-t', '10', '-c:v', 'libx264', '-preset', 'ultrafast', '-x264-params', 'nal-hrd=cbr', '-b:v', '40M', '-minrate', '40M', '-maxrate', '40M', '-bufsize', '8M', '-an', clip]);
+  ff(['-stream_loop', String(SPLIT_SECONDS / 10 - 1), '-i', clip, '-c', 'copy', '-movflags', '+faststart', SPLIT_VIDEO]);
+  ff(['-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100', '-t', String(SPLIT_SECONDS), '-c:a', 'aac', '-b:a', '128k', SPLIT_AUDIO]);
+  facts.splitMedia = { videoBytes: fs.statSync(SPLIT_VIDEO).size, audioBytes: fs.statSync(SPLIT_AUDIO).size, seconds: SPLIT_SECONDS };
 
   // 1. The released 1.6.7, exactly the published file.
   const baseFile = path.join(WORK, path.basename(BASE.url));
@@ -131,14 +152,16 @@ const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8
 
   // 5. The upgraded app, through its own window, against the fixture site.
   const log = path.join(OUT, 'fixture-requests.jsonl');
-  const fixture = spawn(process.execPath, [path.join(ROOT, 'tests', 'fixtures', 'media-site.cjs'), '0', MEDIA, '40', log], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const fixture = spawn(process.execPath, [path.join(ROOT, 'tests', 'fixtures', 'media-site.cjs'), '0', MEDIA, '40', log, SPLIT_VIDEO, SPLIT_AUDIO, String(SPLIT_SECONDS)], { stdio: ['ignore', 'pipe', 'inherit'] });
   const site = await new Promise((resolve) => fixture.stdout.once('data', (d) => resolve(String(d).trim())));
   facts.fixture = site;
+  const feedArgs = NEXT_VERSION ? ['--feed-dir', FEED_DIR, '--feed-url', FEED_URL, '--next-version', NEXT_VERSION] : [];
   const code = await new Promise((resolve) => spawn(process.execPath, [path.join(__dirname, 'installed-app.cjs'),
     '--exe', upgraded.exe, '--user-data', USER_DATA, '--fixture', site, '--fixture-log', log, '--folder', FOLDER,
-    '--out', OUT, '--version', VERSION, '--media', MEDIA], { stdio: 'inherit' }).on('exit', resolve));
+    '--out', OUT, '--version', VERSION, '--media', MEDIA, '--split-video', SPLIT_VIDEO, '--split-audio', SPLIT_AUDIO, ...feedArgs], { stdio: 'inherit' }).on('exit', resolve));
   fixture.kill();
   facts.installedAppExit = code;
+  facts.finallyInstalled = installed();
   finish();
 })().catch((e) => { record('W-01', 'upgrade run crashed', false, String(e.stack || e)); finish(); });
 

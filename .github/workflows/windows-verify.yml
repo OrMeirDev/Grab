@@ -1,10 +1,12 @@
 # Windows verification and a reviewable test build (not a release).
 # On a real Windows runner: tests (with the pinned yt-dlp.exe, Chrome and Edge on throwaway
-# profiles), the renderer build, the pinned native tools (fetch-bin + verify-bin), an NSIS installer
-# stamped with a test version, then an in-place upgrade of the released 1.6.7 with settings and
-# history, driven through the installed app's own window (scripts/windows/).
-# The installer is a workflow artifact only: never published, and production users are never
-# pointed at it (--publish never, no token given to electron-builder).
+# profiles), the renderer build, the pinned native tools (fetch-bin + verify-bin), two NSIS test
+# builds (same app, versions A < B), then an in-place upgrade of the released 1.6.7 to A with
+# settings and history, driven through the installed app's own window (scripts/windows/), ending
+# with A updating itself to B from a feed served on the runner while a download runs.
+# The installers are workflow artifacts only: never published (--publish never, no token given to
+# electron-builder). Only these test builds read updates from the runner's own feed
+# (scripts/windows/stamp-test-build.cjs, not committed); package.json keeps the GitHub feed.
 name: Windows verify
 
 on:
@@ -31,9 +33,11 @@ concurrency:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 75
+    timeout-minutes: 100
     env:
       TEST_VERSION: 1.6.8-test.${{ github.run_number }}
+      NEXT_VERSION: 1.6.9-test.${{ github.run_number }}
+      TEST_FEED: http://127.0.0.1:47290/
     defaults:
       run:
         shell: pwsh
@@ -66,19 +70,36 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: renderer build
         run: npm run build
-      - name: stamp the test version (this run only, not committed)
-        run: npm version $env:TEST_VERSION --no-git-tag-version
-      - name: NSIS installer (never published)
+      # The real app (not installed) with real timers and an instant fake yt-dlp: the 5-10 s rest
+      # after a YouTube download, then the next one starts by itself (GRB-01).
+      - name: YouTube rest, real Electron on Windows (e2e, fake engine)
+        run: |
+          npx electron e2e/queue-cooldown.cjs 2>&1 | Tee-Object evidence/e2e-queue-cooldown.txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: test build A (stamped, not committed; updates from the runner's feed)
         run: |
           Remove-Item Env:GH_TOKEN, Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
+          node scripts/windows/stamp-test-build.cjs --version $env:TEST_VERSION --feed $env:TEST_FEED
           npm run dist -- --publish never
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $exe = "release/Grab-Setup-$env:TEST_VERSION.exe"
-          $hash = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLowerInvariant()
-          "$hash  Grab-Setup-$env:TEST_VERSION.exe" | Tee-Object evidence/SHA256SUMS.txt
-      - name: upgrade 1.6.7 -> test build, then the installed app
+          New-Item -ItemType Directory -Force release-a | Out-Null
+          Move-Item "release/Grab-Setup-$env:TEST_VERSION.exe" release-a/
+      - name: test build B (newer; served on the runner's feed)
         run: |
-          node scripts/windows/verify-upgrade.cjs --installer "release/Grab-Setup-$env:TEST_VERSION.exe" --version $env:TEST_VERSION --out evidence/installed
+          Remove-Item Env:GH_TOKEN, Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
+          node scripts/windows/stamp-test-build.cjs --version $env:NEXT_VERSION --feed $env:TEST_FEED
+          npm run dist -- --publish never
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force feed | Out-Null
+          Copy-Item "release/Grab-Setup-$env:NEXT_VERSION.exe", release/latest.yml feed/
+          Get-Content feed/latest.yml | Tee-Object evidence/feed-latest.yml
+          $sums = foreach ($f in "release-a/Grab-Setup-$env:TEST_VERSION.exe", "feed/Grab-Setup-$env:NEXT_VERSION.exe") {
+            "$((Get-FileHash -Algorithm SHA256 $f).Hash.ToLowerInvariant())  $(Split-Path $f -Leaf)"
+          }
+          $sums | Tee-Object evidence/SHA256SUMS.txt
+      - name: upgrade 1.6.7 -> A, the installed app, then A updates itself to B
+        run: |
+          node scripts/windows/verify-upgrade.cjs --installer "release-a/Grab-Setup-$env:TEST_VERSION.exe" --version $env:TEST_VERSION --next-version $env:NEXT_VERSION --feed-dir feed --feed-url $env:TEST_FEED --out evidence/installed
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: summary
         if: always()
@@ -89,7 +110,7 @@ jobs:
           }
           $lines = @('| ID | Check | Status |', '|---|---|---|') + ($rows | ForEach-Object { "| $($_.id) | $($_.title) | $($_.status) |" })
           $tests = if (Test-Path evidence/npm-test.txt) { (Get-Content evidence/npm-test.txt | Select-String '^# (tests|pass|fail|skipped|todo|cancelled)') -join ', ' } else { 'not run' }
-          @("Test version: $env:TEST_VERSION", "", "npm test: $tests", "") + $lines | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          @("Test versions: $env:TEST_VERSION -> $env:NEXT_VERSION", "", "npm test: $tests", "") + $lines | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -101,7 +122,8 @@ jobs:
         with:
           name: grab-test-installer-${{ github.run_number }}
           path: |
-            release/Grab-Setup-*.exe
+            release-a/Grab-Setup-*.exe
+            feed/Grab-Setup-*.exe
             evidence/SHA256SUMS.txt
           if-no-files-found: warn
           retention-days: 14
