@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 const path = require('path');
+const { normalizeContext, mediaExpiry, redactMediaSecrets } = require('./request-context.cjs');
 
 const IS_WIN = process.platform === 'win32';
 const EXE = IS_WIN ? '.exe' : '';
@@ -147,6 +148,7 @@ async function updateEngine() {
 function errorKind(err) {
   if (/not a bot|Sign in to confirm|HTTP Error 429|Too Many Requests/i.test(err)) return 'blocked';
   if (/Private video|members-only|Join this channel|login required|requires authentication|logged[- ]in/i.test(err)) return 'private';
+  if (/HTTP(?:\s+Error)?\s*:?\s*403|403 Forbidden|returned 403/i.test(err)) return 'forbidden';
   if (/Unsupported URL|No video formats|is not a valid URL|Unable to extract/i.test(err)) return 'notfound';
   if (/Video unavailable|removed|does not exist|HTTP Error 404/i.test(err)) return 'unavailable';
   if (/getaddrinfo|Network is unreachable|timed out|Connection reset/i.test(err)) return 'network';
@@ -154,8 +156,14 @@ function errorKind(err) {
 }
 
 function cleanError(err) {
+  err = redactMediaSecrets(err);
   const line = err.split(/\r?\n/).reverse().find((l) => l.includes('ERROR')) || err.trim().split(/\r?\n/).pop() || '';
   return line.replace(/^ERROR:\s*/, '').replace(/^\[[^\]]+\]\s*[\w-]+:\s*/, '').slice(0, 200);
+}
+
+function failure(err) {
+  const status = String(err || '').match(/(?:HTTP(?:\s+Error)?\s*:?\s*|returned\s+)([45]\d\d)\b/i);
+  return { ok: false, error: cleanError(err), kind: errorKind(err), ...(status ? { httpStatus: Number(status[1]) } : {}) };
 }
 
 // The lookup result is saved so the download can reuse it instead of asking the site again.
@@ -175,11 +183,12 @@ function cleanInfoCache() {
 // referer/title: set when the video was found inside another page's player (see pageprobe.cjs):
 // the video is fetched the way that page's player fetches it, and named after the page.
 function sessionArgs({ referer, requestContext = {}, cookieFile } = {}) {
-  requestContext = requestContext || {};
+  requestContext = normalizeContext(requestContext);
+  const ref = requestContext.referer ?? normalizeContext({ referer }).referer;
   const args = [];
   if (cookieFile) args.push('--cookies', cookieFile);
   if (requestContext.userAgent) args.push('--user-agent', requestContext.userAgent);
-  if (requestContext.referer || referer) args.push('--referer', requestContext.referer || referer);
+  if (ref) args.push('--referer', ref);
   if (requestContext.origin) args.push('--add-headers', 'Origin:' + requestContext.origin);
   return args;
 }
@@ -187,19 +196,20 @@ function sessionArgs({ referer, requestContext = {}, cookieFile } = {}) {
 async function analyze(url, { title: pageTitle, ...context } = {}) {
   const extra = sessionArgs(context);
   const { code, out, err } = await run(['-J', '--no-playlist', '--no-warnings', '--skip-download', '--sleep-requests', '1', ...extra, url]).done;
-  if (code !== 0) return { ok: false, error: cleanError(err), kind: errorKind(err) };
+  if (code !== 0) return failure(err);
   try {
     const j = JSON.parse(out);
     let infoFile = null;
     try {
       fs.mkdirSync(INFO_DIR, { recursive: true });
-      infoFile = path.join(INFO_DIR, `${crypto.createHash('sha1').update(url).digest('hex')}-${Date.now()}.json`);
-      fs.writeFileSync(infoFile, out);
+      infoFile = path.join(INFO_DIR, `${crypto.createHash('sha1').update(url).digest('hex')}-${crypto.randomUUID()}.json`);
+      fs.writeFileSync(infoFile, out, { mode: 0o600 });
     } catch { infoFile = null; }
     return {
       ok: true,
       infoFile,
       infoAt: Date.now(),
+      infoExpiresAt: mediaExpiry(url, j.url, j.manifest_url, ...(j.formats || []).flatMap((f) => [f.url, f.manifest_url])),
       title: pageTitle || j.title || j.id,
       duration: j.duration || null,
       height: j.height || null,
@@ -216,15 +226,16 @@ function safeName(name) {
   return (name || 'video').replace(INVALID, ' ').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '').slice(0, 180) || 'video';
 }
 
-function freshInfo(infoFile, infoAt) {
-  return !!infoFile && Date.now() - (infoAt || 0) < INFO_MAX_AGE_MS && fs.existsSync(infoFile);
+function freshInfo(infoFile, infoAt, expiresAt) {
+  return !!infoFile && (!expiresAt || Date.now() < expiresAt - 5000) && Date.now() - (infoAt || 0) < INFO_MAX_AGE_MS && fs.existsSync(infoFile);
 }
 
-function downloadArgs({ url, mediaUrl, referer, requestContext, cookieFile, name, folder, format, quality, infoFile, infoAt }) {
+function downloadArgs({ url, mediaUrl, referer, requestContext, cookieFile, name, folder, format, quality, infoFile, infoAt, infoExpiresAt }) {
   const out = path.join(folder, safeName(name) + '.%(ext)s');
   // Reuse the lookup result when it's still fresh; otherwise fetch the page again, slowly.
   // A video found inside a page's player is fetched from its own address, as that page does.
-  const source = freshInfo(infoFile, infoAt) ? ['--load-info-json', infoFile] : ['--sleep-requests', '1', mediaUrl || url];
+  const expiry = [infoExpiresAt, mediaExpiry(mediaUrl || url)].filter((t) => Number.isFinite(t) && t > 0);
+  const source = freshInfo(infoFile, infoAt, expiry.length ? Math.min(...expiry) : null) ? ['--load-info-json', infoFile] : ['--sleep-requests', '1', mediaUrl || url];
   source.unshift(...sessionArgs({ referer, requestContext, cookieFile }));
   // --print implies quiet mode, so --progress is needed to keep the progress lines coming.
   const common = ['--newline', '--progress', '--no-playlist', '--no-warnings', '-R', '10', '--fragment-retries', '10',
@@ -252,7 +263,7 @@ function download(opts, onProgress) {
       }
     },
   });
-  const done = job.done.then(({ code, err }) => (code === 0 ? { ok: true, file } : { ok: false, error: cleanError(err), kind: errorKind(err) }));
+  const done = job.done.then(({ code, err }) => (code === 0 ? { ok: true, file } : failure(err)));
   return { child: job.child, done };
 }
 

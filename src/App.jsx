@@ -38,6 +38,7 @@ const QUALITIES = [
 const ERROR_LABELS = {
   blocked: 'האתר חסם זמנית, נסה שוב מאוחר יותר',
   private: 'הסרטון פרטי או דורש התחברות',
+  forbidden: 'השרת סירב לבקשת הסרטון (403); נסה לזהות אותו מחדש מהעמוד',
   notfound: 'לא נמצא סרטון בקישור',
   notfoundPage: 'לא נמצא סרטון בקישור, וגם לא בנגן שבתוך העמוד',
   protected: 'הסרטון מוגן בהגנת העתקה (DRM), ואי אפשר להוריד אותו',
@@ -352,7 +353,7 @@ export default function App() {
       status: autoQueue ? 'queued' : 'ready', forcePage: false, autoQueue: false,
       analyzeFailed: false, site: info.site, duration: info.duration, height: info.height,
       thumbnail: info.thumbnail, title: info.title, name: x.nameEdited ? x.name : (label || info.title),
-      infoFile: info.infoFile, infoAt: info.infoAt,
+      infoFile: info.infoFile, infoAt: info.infoAt, infoExpiresAt: info.infoExpiresAt || null,
       // Found inside the page's player: download from that address, as the page does.
       mediaUrl: info.mediaUrl || null, referer: info.referer || null,
       cookieRef: info.cookieRef || null, requestContext: info.requestContext || null,
@@ -420,7 +421,7 @@ export default function App() {
     update(next.id, { status: 'downloading', speed: '', eta: '' });
     api.start({
       id: next.id, url: next.url, name: next.name, folder: settings.folder, format: settings.format, quality: settings.quality,
-      infoFile: next.infoFile, infoAt: next.infoAt, mediaUrl: next.mediaUrl, referer: next.referer,
+      infoFile: next.infoFile, infoAt: next.infoAt, infoExpiresAt: next.infoExpiresAt, mediaUrl: next.mediaUrl, referer: next.referer,
       cookieRef: next.cookieRef, requestContext: next.requestContext,
     }).then((r) => {
       setRestUntil(Date.now() + DOWNLOAD_REST_MS + Math.random() * DOWNLOAD_REST_MS);

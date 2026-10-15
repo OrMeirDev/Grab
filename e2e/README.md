@@ -5,6 +5,7 @@ there is one), and writes screenshots to `e2e/output/<check>/` (not in git).
 
 | Command | What it checks |
 | --- | --- |
+| `npm run e2e:media-context` | generated HLS behind a blob player: actual Electron request headers → analyze/start IPC → yt-dlp download → ffprobe video/audio verification |
 | `npm run e2e:glass-menu` | the glass quality menu: opens, keyboard, picks, closes |
 | `npm run e2e:layout` | overlapping or clipped text at the smallest and a typical window size (he/en) |
 | `npm run e2e:liquid-glass` | the liquid glass drop: edge positions every frame while it moves |
@@ -12,3 +13,15 @@ there is one), and writes screenshots to `e2e/output/<check>/` (not in git).
 
 Safety: nothing here changes the PC.
 - Settings and history are copied from the real profile into the throwaway one; the real profile is never written.
+
+The media-context check uses generated media and a loopback server only; it does not read the
+real profile, contact Mako, or use signed-in accounts. Put `yt-dlp`, `ffmpeg`, and `ffprobe` on
+PATH (or install the development tools first). It has no screenshots and needs no Vite build.
+`npm run test:media` exercises the same header-bound HLS fixture through the real application
+IPC handlers and downloader without Electron. This command fails if media tools are missing;
+the normal `npm test` suite explicitly skips that integration check when they are unavailable.
+
+On a Linux test container without a display, run the Electron check with Xvfb. Electron's
+`--no-sandbox` launch switch may be needed when the container only permits running as root;
+this is a test-launch setting, not an application code change. Live Windows/default-browser
+and Mako verification remain separate from these local fixture checks.

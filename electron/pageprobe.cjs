@@ -2,12 +2,13 @@
 // profile or Grab sign-in window is created.
 const browserSession = require('./browser-session.cjs');
 const { collectorScript, isNotPlayer } = require('./media-collector.cjs');
+const { RequestContexts } = require('./request-context.cjs');
 
 const FILE = /\.(mp4|webm|mov|m4v|mkv|mp3|m4a|ogg|opus|wav|flac|aac)(\?|#|$)/i;
 const MANIFEST = /\.(m3u8|mpd)(\?|#|$)/i;
 const MEDIA_TYPE = /^(video\/|audio\/|application\/(vnd\.apple\.mpegurl|x-mpegurl|dash\+xml))/i;
 const SEGMENT = /\.(ts|m4s)(\?|#|$)|[/_-](seg|segment|chunk|frag)[-_]?\d|init[-_]?\d*\.mp4/i;
-const ADS = /doubleclick|googlesyndication|googleads|imasdk|adnxs|adsystem|advert|\/ads?\//i;
+const ADS = /doubleclick|googlesyndication|googleads|imasdk|adnxs|adsystem|advert|\/ads?\/|:\/\/ads?\./i;
 const LICENSE = /widevine|playready|fairplay|\/license/i;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -21,7 +22,6 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
   const found = new Map();
   const embeds = new Set();
   const failed = new Set();
-  const requests = new Map();
   const initializations = new Set();
   const diagnostics = { framesScanned: 0, playersSeen: 0, scanErrors: 0 };
   let rootSessionId;
@@ -45,6 +45,8 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
       requestContext,
     });
   };
+
+  const requests = new RequestContexts(() => userAgent, (url, requestContext) => add(url, { requestContext }));
 
   const initialize = async (sessionId) => {
     sessions.add(sessionId);
@@ -74,12 +76,12 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
     } else if (event.method === 'Runtime.executionContextsCleared') {
       for (const [key, context] of contexts) if (context.sessionId === event.sessionId) contexts.delete(key);
     } else if (event.method === 'Network.requestWillBeSent') {
-      const h = Object.fromEntries(Object.entries(d.request?.headers || {}).map(([key, value]) => [key.toLowerCase(), value]));
-      const requestContext = { userAgent: h['user-agent'] || userAgent, referer: h.referer || d.documentURL || pageUrl, origin: h.origin || undefined };
-      if (d.request?.url) requests.set(d.request.url, requestContext);
+      requests.request(event.sessionId, d);
       if (LICENSE.test(d.request?.url || '') && ['XHR', 'Fetch'].includes(d.type)) drm = true;
-      add(d.request?.url, { requestContext });
+    } else if (event.method === 'Network.requestWillBeSentExtraInfo') {
+      requests.extra(event.sessionId, d);
     } else if (event.method === 'Network.responseReceived') {
+      requests.response(event.sessionId, d);
       if (d.response?.status >= 400) { failed.add(d.response.url); return; }
       failed.delete(d.response?.url);
       if (MEDIA_TYPE.test(d.response?.mimeType || '')) add(d.response.url, { type: d.response.mimeType, size: Number(d.response.headers?.['Content-Length']) || 0 });

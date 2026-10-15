@@ -5,9 +5,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
+const { createRequire } = require('node:module');
 const browser = require('../electron/browser-session.cjs');
 const { collectorScript, isNotPlayer } = require('../electron/media-collector.cjs');
 const { findMedia } = require('../electron/pageprobe.cjs');
+const { mainHandlers, sender } = require('../test-support/main-handlers.cjs');
 
 const pageUrl = 'https://courses.example/lesson';
 const manifest = 'https://stream.mux.com/playback.m3u8?token=header.payload.signature';
@@ -160,6 +162,7 @@ class FakeChrome extends EventEmitter {
         ['https://cdn.example/extensionless', 'video/mp4', 200],
         ['https://cdn.example/expired.m3u8?token=old', 'application/vnd.apple.mpegurl', 403],
         ['https://cdn.example/segment-001.ts', 'video/mp2t', 200],
+        ['https://ads.kway.co.il/cdn/preroll.mp4', 'video/mp4', 200],
       ]) {
         this.event('Network.requestWillBeSent', { request: { url, headers }, type: 'Fetch' }, 'child');
         this.event('Network.responseReceived', { response: { url, mimeType, status } }, 'child');
@@ -202,24 +205,6 @@ test('existing tab is not navigated, played or closed and network fallback survi
   assert.match(evaluate.params.expression, /"startPlayback":false/);
   assert.equal(cdp.listenerCount('event'), 0);
 });
-
-function mainHandlers(engine, pageprobe, hiddenProbe = { findMedia: async () => ({ candidates: [] }) }) {
-  const handlers = new Map();
-  const app = { getPath: () => os.tmpdir(), whenReady: () => ({ then() {} }), on() {}, requestSingleInstanceLock: () => true };
-  const updater = { on() {} };
-  const sandbox = { require: (name) => {
-    if (name === 'electron') return { app, ipcMain: { handle: (key, value) => handlers.set(key, value) } };
-    if (name === 'electron-updater') return { autoUpdater: updater };
-    if (name === './engine.cjs') return engine;
-    if (name === './pageprobe.cjs') return pageprobe;
-    if (name === './hidden-probe.cjs') return hiddenProbe;
-    if (name === './browser-session.cjs') return browser;
-    return require(name);
-  }, process, console, setTimeout, setInterval, __dirname: path.join(__dirname, '../electron') };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../electron/main.cjs'), 'utf8'), sandbox);
-  return handlers;
-}
-const sender = { isDestroyed: () => false, send() {} };
 
 test('analyze tries beyond four candidates and forwards the cookie jar and player context', async () => {
   let calls = 0;
@@ -283,6 +268,56 @@ test('the hidden clean browser is tried first; Chrome is not touched when it fin
   assert.equal(result.mediaUrl, manifest);
   assert.equal(chrome, 0);
 });
+
+test('hidden-player request context and cookies survive analysis and download IPC', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-hidden-context-'));
+  const context = { userAgent: 'Actual hidden browser UA', referer: 'https://embed.example/player', origin: 'https://embed.example' };
+  const cookieRef = browser.rememberCookies([{ domain: '.courses.example', path: '/', name: 'playback', value: 'temporary', session: true }]);
+  const handlers = mainHandlers({
+    analyze: async (url, options) => {
+      if (url === pageUrl) return { ok: false, kind: 'notfound' };
+      assert.deepEqual(options.requestContext, context);
+      assert.match(fs.readFileSync(options.cookieFile, 'utf8'), /playback\ttemporary/);
+      return { ok: true, title: 'Context-bound lesson' };
+    },
+    download: (job) => {
+      assert.deepEqual(job.requestContext, context);
+      assert.equal(job.mediaUrl, manifest);
+      assert.match(fs.readFileSync(job.cookieFile, 'utf8'), /playback\ttemporary/);
+      return { child: { kill() {} }, done: Promise.resolve({ ok: true }) };
+    },
+  }, { findMedia: async () => { throw new Error('The clean lookup should suffice'); } }, {
+    findMedia: async () => ({ cookieRef, title: 'Lesson', candidates: [{ url: manifest, kind: 'stream', requestContext: context }] }),
+  });
+  try {
+    const result = await handlers.get('engine:analyze')({ sender }, pageUrl);
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.requestContext, context);
+    assert.equal(result.cookieRef, cookieRef);
+    assert.equal((await handlers.get('engine:start')({ sender }, { ...result, id: 'hidden-context', url: pageUrl, folder })).ok, true);
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
+for (const extraFirst of [false, true]) {
+  test(`probe uses actual sent headers when CDP ExtraInfo arrives ${extraFirst ? 'before' : 'after'} the request`, async () => {
+    class ExtraChrome extends FakeChrome {
+      event(method, params, sessionId = 'main') {
+        if (method !== 'Network.requestWillBeSent') return super.event(method, params, sessionId);
+        const requestId = params.request.url;
+        const headers = { ...params.request.headers, 'User-Agent': 'Wire UA bound to the token' };
+        const provisional = { ...params.request.headers };
+        delete provisional['User-Agent'];
+        const request = () => super.event(method, { ...params, requestId, request: { ...params.request, headers: provisional } }, sessionId);
+        const extra = () => super.event('Network.requestWillBeSentExtraInfo', { requestId, headers }, sessionId);
+        if (extraFirst) { extra(); request(); } else { request(); extra(); }
+      }
+    }
+    const result = await findMedia(pageUrl, { timeoutMs: 1, connect: async () => new ExtraChrome() });
+    assert.deepEqual(result.candidates[0].requestContext, {
+      userAgent: 'Wire UA bound to the token', referer: 'https://embed.example/player', origin: 'https://embed.example',
+    });
+  });
+}
 
 test('the signed-in lookup uses the default browser: Chromium browsers by their own profile, Firefox is reported', { skip: process.platform !== 'win32' }, () => {
   const brave = browser.defaultBrowser('BraveHTML');
@@ -388,7 +423,7 @@ test('connects through the live endpoint WebSocket, shares the connection and ne
 });
 
 test('yt-dlp analyze/download options retain domain-scoped cookies and browser request context', () => {
-  const sandbox = { module: { exports: {} }, require, process, __dirname: path.join(__dirname, '../electron') };
+  const sandbox = { module: { exports: {} }, require: createRequire(path.join(__dirname, '../electron/engine.cjs')), process, __dirname: path.join(__dirname, '../electron') };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../electron/engine.cjs'), 'utf8') + '\nmodule.exports.testArgs = { sessionArgs, downloadArgs };', sandbox);
   const { sessionArgs, downloadArgs } = sandbox.module.exports.testArgs;
   const context = { cookieFile: '/tmp/domain-cookies', requestContext: { userAgent: 'Chrome', referer: pageUrl, origin: 'https://courses.example', Cookie: 'must-not-be-forwarded' } };

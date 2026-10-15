@@ -97,7 +97,7 @@ const signedInSites = new Set(); // sites whose videos only the user's signed-in
 ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
   // forcePage: what yt-dlp found at the link didn't download, so go straight to the page's player.
   const first = forcePage ? { ok: false, kind: 'notfound', error: 'Unsupported URL' } : await engine.analyze(url);
-  if (first.ok || !['notfound', 'private', 'blocked', 'other'].includes(first.kind)) return first;
+  if (first.ok || !['notfound', 'private', 'blocked', 'forbidden', 'other'].includes(first.kind)) return first;
   const phase = (p, browserName) => { if (!e.sender.isDestroyed()) e.sender.send('engine:lookup-phase', { url, phase: p, browser: browserName }); };
 
   // 1. A hidden, clean browser (no cookies or accounts): works on public pages with no setup.
@@ -109,10 +109,14 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
     phase('page');
     let hidden = { candidates: [] };
     try { hidden = await hiddenProbe.findMedia(url); } catch { /* fall through to the backup */ }
-    for (const c of hidden.candidates.slice(0, 4)) {
-      const r = await engine.analyze(c.url, { referer: url, title: c.kind === 'embed' ? undefined : hidden.title });
-      if (r.ok) return { ...r, mediaUrl: c.url, referer: url };
-    }
+    const resolved = await browserSession.withSessionCookies(hidden.cookieRef, async (cookieFile) => {
+      for (const c of hidden.candidates.slice(0, 4)) {
+        const requestContext = c.requestContext;
+        const r = await engine.analyze(c.url, { cookieFile, requestContext, referer: url, title: c.kind === 'embed' ? undefined : hidden.title });
+        if (r.ok) return { ...r, mediaUrl: c.url, referer: requestContext?.referer ?? url, requestContext, cookieRef: hidden.cookieRef };
+      }
+    });
+    if (resolved) return resolved;
     if (hidden.protected) return { ok: false, kind: 'protected', error: 'DRM' };
   }
 
@@ -134,9 +138,9 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
       ? { browser: { name: browser.name, scheme: browser.scheme, supported: browser.supported !== false } } : {};
     return first.kind === 'notfound' ? { ...first, kind: 'notfoundPage', ...hint } : { ...first, ...hint };
   }
-  return browserSession.withSessionCookies(probe.cookieRef, async (cookieFile) => {
+  const analyzeProbe = (probe) => browserSession.withSessionCookies(probe.cookieRef, async (cookieFile) => {
     // An authenticated extractor may understand the page better than its embedded sources.
-    if (!forcePage && ['private', 'blocked'].includes(first.kind)) {
+    if (!forcePage && ['private', 'blocked', 'forbidden'].includes(first.kind)) {
       const authenticated = await engine.analyze(url, { cookieFile, requestContext: probe.requestContext });
       if (authenticated.ok) return { ...authenticated, cookieRef: probe.cookieRef, requestContext: probe.requestContext };
     }
@@ -146,14 +150,23 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
       const r = await engine.analyze(c.url, { cookieFile, requestContext, referer: url, title: c.kind === 'embed' ? undefined : probe.title });
       if (r.ok) {
         if (first.kind === 'notfound') signedInSites.add(host);
-        return { ...r, mediaUrl: c.url, referer: requestContext?.referer || url, requestContext, cookieRef: probe.cookieRef };
+        return { ...r, mediaUrl: c.url, referer: requestContext?.referer ?? url, requestContext, cookieRef: probe.cookieRef };
       }
-      last = r;
+      if (!last || ['private', 'blocked', 'forbidden', 'network'].includes(r.kind)) last = r;
     }
     if (probe.protected) return { ok: false, kind: 'protected', error: 'DRM' };
-    if (last && ['private', 'blocked', 'network'].includes(last.kind)) return last;
-    return { ...first, kind: 'notfoundPage' };
+    if (last && ['private', 'blocked', 'forbidden', 'network'].includes(last.kind)) return last;
+    return first.kind === 'forbidden' ? first : { ...first, kind: 'notfoundPage' };
   });
+  const result = await analyzeProbe(probe);
+  // An already-open blob player can expose an old manifest via performance entries but no
+  // longer expose the headers that authenticated it. Refresh only in our own background tab,
+  // in the same authorized browser context, once; leave the user's tab untouched.
+  if (!result.ok && result.kind === 'forbidden' && probe.reusedTab && !forcePage) {
+    try { return await analyzeProbe(await pageprobe.findMedia(url, { refresh: true, connect })); }
+    catch { return result; }
+  }
+  return result;
 });
 // The sign-in guide names the user's own browser and can check that Grab reaches it.
 ipcMain.handle('browser:default', () => {
