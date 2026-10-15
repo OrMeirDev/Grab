@@ -47,6 +47,29 @@ test('real yt-dlp: session cookies and context, template escaping, progress, ver
   }
 });
 
+// The real yt-dlp's answer to HTTP 429 is classified as a rate limit (held at once), not as a bot
+// check (which goes on to the user's browser): during the lookup and during the download.
+test('real yt-dlp: HTTP 429 is a rate limit, at lookup and at download', { skip, timeout: 120000 }, async () => {
+  const site = await require('./fixtures/media-site.cjs').start();
+  const engine = require('../electron/engine.cjs');
+  engine.setUserBinDir(DIR);
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-real-429-'));
+  try {
+    const lookup = await engine.analyze(site.base + '/rl/1/a.mp4');
+    assert.equal(lookup.ok, false);
+    assert.equal(lookup.kind, 'rateLimited', lookup.error);
+    const info = await engine.analyze(site.base + '/rl/2/b.mp4');
+    assert.equal(info.ok, true, info.error);
+    const r = await engine.download({ url: site.base + '/rl/2/b.mp4', outputBase: path.join(out, 'b'), format: 'mp4', quality: 'best', infoFile: info.infoFile, infoAt: info.infoAt }, () => {}).done;
+    assert.equal(r.ok, false);
+    assert.equal(r.kind, 'rateLimited', r.error);
+    fs.rmSync(info.infoFile, { force: true });
+  } finally {
+    await site.close();
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+});
+
 // The session-restart path end to end: the real discovery service, the real page probe and browser
 // session talking to a real Chromium signed in to the fixture's members area, and the real yt-dlp.
 // The hidden probe needs Electron, so a cookieless visitor stands in for it (it would show up in the

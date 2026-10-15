@@ -16,6 +16,12 @@
 // Results carry sessionSource: 'browser' (the cookies are the user's account session) or 'probe'
 // (the hidden probe's throwaway public-page cookies).
 //
+// A rate limit (HTTP 429, kind 'rateLimited') ends the lookup at once, wherever it comes from (the
+// link, the retry with the browser session, a source found in a page): no browser, no further
+// request; the coordinator holds the site. A bot check ('blocked') goes on through the user's
+// browser, which may get past it; if the site still asks with the session and the page shows no
+// video, the result stays 'blocked' (held), not "no video".
+//
 // Dependencies are injected (engine, probes, browser session) so this is testable without Electron.
 const { budget } = require('../domain/candidate-policy.cjs');
 
@@ -56,6 +62,7 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
       return browserLookup(url, first, context);
     }
     // forcePage: what yt-dlp found at the link didn't download, so go straight to the page's player.
+    // Anything but these four (a rate limit among them) is the answer as it is.
     const first = forcePage ? { ok: false, kind: 'notfound', error: 'Unsupported URL' } : await engine.analyze(url, { signal });
     if (first.ok || !['notfound', 'private', 'blocked', 'other'].includes(first.kind)) return first;
     if (signal?.aborted) return { ok: false, kind: 'cancelled', error: 'cancelled' };
@@ -69,8 +76,9 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
       try { hidden = await hiddenProbe.findMedia(url); } catch { /* fall through to the backup */ }
       record('probe', { url, probe: 'hidden', candidates: hidden.candidates.length, protected: !!hidden.protected, diagnostics: hidden.diagnostics || null });
       const found = await tryCandidates(hidden, url, { signal, outOfTime });
-      if (found) return found;
+      if (found?.ok) return found;
       browserSession.forgetCookies?.(hidden.cookieRef);
+      if (found) return found; // rate limited: the site is held; the user's browser is not tried
       if (hidden.protected) return { ok: false, kind: 'protected', error: 'DRM' };
     }
     if (signal?.aborted) return { ok: false, kind: 'cancelled', error: 'cancelled' };
@@ -105,9 +113,12 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
     }
     return browserSession.withSessionCookies(probe.cookieRef, async (cookieFile) => {
       // An authenticated extractor may understand the page better than its embedded sources.
+      let botCheck = null; // the site still asks "are you a bot" with the session
       if (!forcePage && ['private', 'blocked'].includes(first.kind)) {
         const authenticated = await engine.analyze(url, { cookieFile, requestContext: probe.requestContext, signal });
         if (authenticated.ok) return { ...authenticated, cookieRef: probe.cookieRef, sessionSource: 'browser', requestContext: probe.requestContext };
+        if (authenticated.kind === 'rateLimited') return authenticated;
+        if (authenticated.kind === 'blocked') botCheck = authenticated;
       }
       let last;
       for (const c of budget(probe.candidates)) {
@@ -119,10 +130,12 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
           if (first.kind === 'notfound') signedInSites.add(host);
           return { ...r, mediaUrl: c.url, referer: requestContext?.referer || url, requestContext, cookieRef: probe.cookieRef, sessionSource: 'browser' };
         }
+        if (r.kind === 'rateLimited') return r;
         last = r;
       }
       if (probe.protected) return { ok: false, kind: 'protected', error: 'DRM' };
       if (last && ['private', 'blocked', 'network'].includes(last.kind)) return last;
+      if (botCheck) return botCheck;
       return { ...first, kind: 'notfoundPage' };
     });
   }
@@ -138,6 +151,7 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
         const requestContext = c.requestContext;
         const r = await engine.analyze(c.url, { cookieFile, requestContext, referer: url, title: c.kind === 'embed' ? undefined : hidden.title, signal });
         if (r.ok) return { ...r, mediaUrl: c.url, referer: requestContext?.referer || url, requestContext: requestContext || null, cookieRef: hidden.cookieRef || null, sessionSource: hidden.cookieRef ? 'probe' : null };
+        if (r.kind === 'rateLimited') return r; // no further source is tried
       }
       return null;
     });

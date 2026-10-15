@@ -72,7 +72,11 @@ and `paused` after a restart. Only the coordinator changes states.
 
 - Lookups: one at a time, 2–4 s apart. Downloads: one at a time; YouTube rests 5–10 s after each
   download and the rest's end starts the next (GRB-01).
-- A site block (429 / "not a bot") holds only that site's jobs until "resume <site>".
+- A site hold holds only that site's jobs until "resume <site>". Two answers cause it: a rate limit
+  (HTTP 429, kind `rateLimited`) ends the lookup or download at once, wherever it comes from (the
+  link, the retry with the browser session, a source found in a page), with no browser and no
+  further request; a bot check ("confirm you're not a bot", kind `blocked`) first goes on through
+  the user's browser, and holds the site if the site still asks with the session.
 - One automatic retry per job: a page video is looked up inside the page again (fresh signed links);
   anything else is fetched again with fresh info. An expired session handle is not that retry:
   it always triggers a new page lookup, never a download without the session.

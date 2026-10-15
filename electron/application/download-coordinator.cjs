@@ -7,8 +7,8 @@
 //   don't flag Grab as a bot.
 // - Downloads: one at a time, in queue order; after each one, YouTube downloads wait 5–10 s.
 //   When that rest ends the next download starts by itself (GRB-01).
-// - Blocks: when a site says "slow down" (HTTP 429, "confirm you're not a bot"), only that site's
-//   jobs wait, until the user resumes it; other sites carry on.
+// - Blocks: when a site says "slow down" (HTTP 429: 'rateLimited') or "confirm you're not a bot"
+//   ('blocked'), only that site's jobs wait, until the user resumes it; other sites carry on.
 // - A failed download is retried once: a generic page is looked up again inside its player,
 //   anything else is fetched again with fresh information.
 //
@@ -20,6 +20,8 @@ const LOOKUP_GAP_MS = 2000; // plus up to the same again at random
 const DOWNLOAD_REST_MS = 5000; // 5–10 seconds between YouTube downloads
 const RETRY_LATER_MS = 3000; // the engine was being updated: try again shortly
 const SAVE_DELAY_MS = 500;
+// Answers that hold the site until "resume <site>".
+const HOLDS_SITE = new Set(['blocked', 'rateLimited']);
 
 const realClock = { now: () => Date.now(), setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (t) => clearTimeout(t) };
 
@@ -316,7 +318,7 @@ class DownloadCoordinator {
         this.retryLater(() => this.pumpLookups());
         return;
       }
-      if (info.kind === 'blocked') {
+      if (HOLDS_SITE.has(info.kind)) {
         this.update(id, { status: 'waiting' }); // looked up again once the user resumes this site
         this.block(job.siteKey);
         return;
@@ -443,7 +445,7 @@ class DownloadCoordinator {
       // The session snapshot expired or was dropped (the browser disconnected) before anything was
       // sent: look it up again for a fresh one. This is not the job's one automatic retry.
       this.relookup(job);
-    } else if (r.kind === 'blocked') {
+    } else if (HOLDS_SITE.has(r.kind)) {
       this.update(job.id, { status: 'queued', infoFile: null }); // resumes from where it stopped
       this.block(job.siteKey);
     } else if (r.crashed || job.autoRetried) {

@@ -1,7 +1,10 @@
 // yt-dlp output -> a failure kind the UI can explain. Pure.
 
 function errorKind(err) {
-  if (/not a bot|Sign in to confirm|HTTP Error 429|Too Many Requests/i.test(err)) return 'blocked';
+  // HTTP 429: the site asked us to slow down. The site is held at once; nothing else is tried.
+  if (/HTTP Error 429|Too Many Requests/i.test(err)) return 'rateLimited';
+  // A bot check: the user's signed-in browser may get past it.
+  if (/not a bot|Sign in to confirm/i.test(err)) return 'blocked';
   if (/Private video|members-only|Join this channel|login required|requires authentication|logged[- ]in/i.test(err)) return 'private';
   if (/Unsupported URL|No video formats|is not a valid URL|Unable to extract/i.test(err)) return 'notfound';
   if (/Video unavailable|removed|does not exist|HTTP Error 404/i.test(err)) return 'unavailable';

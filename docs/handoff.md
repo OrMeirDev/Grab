@@ -201,11 +201,31 @@ first miss in 17 Windows runs; the bound is unchanged and a failure now reports 
 session may not re-run jobs, so the next push repeated it: run 18 green).
 
 Seen, not changed: right after start the sidebar says "המנוע לא נמצא" (red) for about a second
-until `yt-dlp --version` answers (pre-existing text; backlog). A 429 during a lookup still tries
-the user's browser in the same lookup before the site is held (`discovery-service.cjs`, the
-`blocked` kind goes to the browser path, which helps "confirm you're not a bot" pages); with a
-reachable browser that is one more page load on a rate-limited site. Not exercised here (no
-personal browser on the runner); owner decision (§5).
+until `yt-dlp --version` answers (pre-existing text; backlog).
+
+### 4.4a HTTP 429 separated from bot checks (owner decision, after run 18)
+
+Before: yt-dlp's "HTTP Error 429" and "confirm you're not a bot" were one kind (`blocked`), so a
+429 during a lookup went on to the user's browser (a page load on a rate-limited site) and, if
+that browser's session got an answer, the site was never held. Now:
+
+- `errorKind`: HTTP 429 → `rateLimited`; bot check → `blocked` (`domain/engine-errors.cjs`).
+- Discovery stops at the first 429 wherever it comes from — the link, the retry with the browser
+  session's cookies, a source found by the hidden or the user's browser — and returns it: no
+  browser, no hidden browser, no further request (`discovery-service.cjs`).
+- A bot check still goes through the user's browser. If the site still asks with the session and
+  the page has no video source, the result is `blocked` (site held), not "no video at this link"
+  (a defect the new tests found: it was reported as `notfoundPage`, an error).
+- The coordinator holds the site for both kinds, at lookup and at download (`HOLDS_SITE`).
+
+Tests (`tests/rate-limit-discovery.test.cjs`: real coordinator, real discovery, real `errorKind`,
+browser available; a local site scripted per request): 429 on the lookup, on the session retry,
+on a hidden-probe source; bot check with a player in the page (unchanged: found through the
+browser) and with no video source (held). Plus both kinds at download (`download-coordinator`) and
+the real yt-dlp's 429 at lookup and download (`real-engine.integration`). Before the change 7 of
+these failed (the old code went to the browser and its retry succeeded, so the site was never
+held; tried sources after a 429; reported "no video"; the real yt-dlp's 429 classified `blocked`);
+after it all pass.
 
 ### 4.5 Still pending: needs a real desktop, a personal profile, a real account or real content
 
@@ -248,7 +268,7 @@ Owner actions (not authorized for this session):
 | Endpoint/profile chooser for custom user-data folders (GRB-13) | **Decided: deferred** (new UI) | — |
 | Mark unverified browsers in the guide's text | README only | Open: add a line in the guide? |
 | Pasted links with a token in history.json | Kept (needed for "download again") | Open: drop such entries' links? |
-| A 429 during a lookup: also try the user's browser? (§4.4) | Yes (same path as "not a bot" pages) | Open: hold the site at once on HTTP 429, keep the browser path for bot checks |
+| A 429 during a lookup: also try the user's browser? (§4.4a) | **Decided: no** — HTTP 429 holds the site at once; bot checks keep the browser path | — |
 
 ## 6. Commands and results (Linux; Windows in §4)
 
@@ -278,7 +298,6 @@ Owner actions (not authorized for this session):
 | Code signing + release workflow with checksums/provenance | Planned | Certificate, secrets | Production release | Release / M |
 | Production release configuration | Ready | Owner decision | Production release | Release / S |
 | GPL source-offer decision for FFmpeg | Ready | Owner/legal | Release | Release / S |
-| 429 during a lookup also tries the user's browser (§4.4) | Proposed | Owner decision | — | Discovery / S |
 | Startup shows "המנוע לא נמצא" until yt-dlp answers (pre-existing) | Proposed | Owner (visible text) | — | Frontend / S |
 | Windows process-tree supervision via Job Objects (beyond taskkill /T) | Optional | — (pause, merge-pause, quit and update checks pass with taskkill /T) | — | Platform / M |
 | Endpoint/profile chooser (GRB-13) | Deferred by owner | — | Custom-profile users | Browser + frontend / M |

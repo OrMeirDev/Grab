@@ -138,12 +138,14 @@ test('pause stops the attempt; the next download waits for it to end; resume con
   assert.equal(t.max(), 1);
 });
 
-test('a blocked site waits for "resume site"; other sites carry on; download-all does not lift it', async () => {
+// A rate limit (HTTP 429) and a bot check during a download both hold the site.
+for (const [kind, error] of [['rateLimited', 'HTTP Error 429: Too Many Requests'], ['blocked', 'Sign in to confirm you\'re not a bot']]) {
+test(`a held site (${kind}) waits for "resume site"; other sites carry on; download-all does not lift it`, async () => {
   const t = setup({ lookups: { 'https://vimeo.com/2': { ok: true, title: 'V', site: 'Vimeo' } } });
   await readyJobs(t, [YT(1), 'https://vimeo.com/2', YT(3)]);
   t.c.downloadAll();
   await settle();
-  t.starts[0].finish({ ok: false, kind: 'blocked', error: 'HTTP Error 429' });
+  t.starts[0].finish({ ok: false, kind, error });
   await settle();
   assert.deepEqual(t.c.snapshot().blockedSites, [{ key: 'youtube', othersActive: true }]);
   assert.equal(t.starts.length, 2);
@@ -160,6 +162,7 @@ test('a blocked site waits for "resume site"; other sites carry on; download-all
   assert.equal(t.starts.length, 3);
   assert.equal(t.starts[2].plan.url, YT(1), 'resumes the blocked job first, in queue order');
 });
+}
 
 test('a block found during lookup pauses that site\'s lookups only', async () => {
   let blocked = true;
