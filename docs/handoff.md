@@ -1,9 +1,9 @@
 # Grab refactor handoff (2026-10-15)
 
 Branch `claude/modest-pasteur-6315xe`, from `main` at `b1e1de8` (the audited `5813a6e` plus the e2e
-scripts). Not merged, no PR, no release. Windows verification (§4): run {{RUN}} of `windows-verify.yml` on
-`{{SHORT}}` is green: tests, fetch-bin/verify-bin, two NSIS test builds, the 1.6.7 upgrade and
-{{NCHECKS}} installed-app checks, including pause during a real FFmpeg merge, a real in-app update while a
+scripts). Not merged, no PR, no release. Windows verification (§4): run 18 of `windows-verify.yml` on
+`fca984e` is green: tests, fetch-bin/verify-bin, two NSIS test builds, the 1.6.7 upgrade and
+29/29 installed-app checks, including pause during a real FFmpeg merge, a real in-app update while a
 download runs, and the queue under a site's rate limit. What only a person can check (personal
 browser profiles, a real account, real content, Brave, the unsigned installer on a desktop) is
 still **Pending** (§4.5), so Windows verification is not complete.
@@ -45,7 +45,7 @@ Full map and rules: [architecture.md](architecture.md). In short:
   output-name, record, engine-error rules), `infrastructure/` (process runner/registry, output allocator,
   JSON store, repositories, library indexer, cookie vault, diagnostics), `ipc/`, `security/`.
   `engine.cjs`, `hidden-probe.cjs`, `pageprobe.cjs`, `browser-session.cjs` stay as adapters.
-- Tests: 14 files, 102 tests on Linux / 103 on Windows (one browser test per installed Chromium-family browser): unit, fake-clock, architecture, real Chromium/Chrome/Edge, real yt-dlp, Windows-only output/ACL/fetch-bin. Windows driver: `scripts/windows/`. e2e: `queue-cooldown`, `hidden-probe` (new), `layout` (now seeds through the coordinator).
+- Tests: 15 files, 103 tests on Linux / 104 on Windows (one browser test per installed Chromium-family browser): unit, fake-clock, architecture, real Chromium/Chrome/Edge, real yt-dlp, real FFmpeg merge (POSIX), Windows-only output/ACL/fetch-bin. Windows driver: `scripts/windows/` (installed-app checks, process helper, test-build stamp). e2e: `queue-cooldown`, `hidden-probe` (new), `layout` (now seeds through the coordinator).
 
 ## 3. Visible behavior changes (everything else is unchanged)
 
@@ -67,8 +67,9 @@ Full map and rules: [architecture.md](architecture.md). In short:
 ## 4. Windows verification
 
 Where: GitHub-hosted `windows-latest` (Microsoft Windows Server 2025 Datacenter 10.0.26100), Node
-v22.23.3, Chrome {{CHROME}}, Edge {{EDGE}}, no Brave. Workflow `.github/workflows/windows-verify.yml`,
-run {{RUN}} ({{RUNURL}}), commit `{{SHA}}`; CI run {{CIRUN}} on the same commit: green. A clean throwaway
+v22.23.3, Chrome 154.0.8037.58, Edge 153.0.4234.48, no Brave. Workflow `.github/workflows/windows-verify.yml`,
+run 18 (https://github.com/OrMeirDev/Grab/actions/runs/38693067423), commit `fca984e50236a4c4d5c7d6fc6757c9591007a148`; CI run 30 on the same commit: green. The
+commit after it changes only this document. A clean throwaway
 machine with throwaway browser profiles, not a person's PC: it proves the build, the installers,
 the upgrade, the update and the app's own behavior, not real signed-in profiles (§4.5).
 
@@ -81,11 +82,11 @@ Native tools (pinned, verified in `bin/` and again in the installed `resources/b
 | --- | --- |
 | `npm ci` (with install scripts) | pass |
 | `npm run fetch-bin` / `npm run verify-bin` | pass: `Native tools verified: yt-dlp 2026.08.19, ffmpeg N-127511-g01cf1a5396, deno 2.9.7` |
-| `npm test` with `GRAB_TEST_YTDLP_DIR=bin` | {{WINTESTS}}. Includes on Windows: real yt-dlp.exe tests, the real-yt-dlp + real-discovery + real-Chrome restart test, exact-tab reuse on Chrome and Edge (throwaway profiles), process-tree kill, output names, cookie-jar ACL, fetch-bin |
+| `npm test` with `GRAB_TEST_YTDLP_DIR=bin` | 104 tests: 99 pass, 0 fail, 5 skipped (four `engine.test.cjs` cases that need a fake yt-dlp.exe, run in the Linux job; the POSIX-only merge test, done on Windows as W-06b). Includes on Windows: real yt-dlp.exe tests, the real-yt-dlp + real-discovery + real-Chrome restart test, exact-tab reuse on Chrome and Edge (throwaway profiles), process-tree kill, output names, cookie-jar ACL, fetch-bin |
 | `npm run build` | pass |
-| `npx electron e2e/queue-cooldown.cjs` (real Electron, real timers, **fake** yt-dlp) | {{E2E}} |
-| Test build A: `stamp-test-build.cjs` + `npm run dist -- --publish never` | `Grab-Setup-{{AVER}}.exe`, {{ABYTES}} bytes, SHA-256 `{{ASHA}}`; unsigned |
-| Test build B (same app id and install folder, newer) | `Grab-Setup-{{BVER}}.exe`, {{BBYTES}} bytes, SHA-256 `{{BSHA}}`; unsigned; served with its `test.yml` from a feed on the runner |
+| `npx electron e2e/queue-cooldown.cjs` (real Electron, real timers, **fake** yt-dlp) | PASS both downloads finished; second started 8070 ms after the first; starts: 2; reloaded: true |
+| Test build A: `stamp-test-build.cjs` + `npm run dist -- --publish never` | `Grab-Setup-1.6.8-test.18.exe`, 253,379,193 bytes, SHA-256 `19e59a515addadc370f8d8053cff001bca5ceb3f5f18a40893877035f4bd5011`; unsigned |
+| Test build B (same app id and install folder, newer) | `Grab-Setup-1.6.9-test.18.exe`, 253,379,267 bytes, SHA-256 `d4fd1209a82cde27030b6021c018a804e968a58ce98a19d6e71afd359ab3d06f`; unsigned; served with its `test.yml` from a feed on the runner |
 
 Both test builds read app updates from `http://127.0.0.1:47290/` (the runner itself), set only by
 `scripts/windows/stamp-test-build.cjs` in the CI workspace (refuses a non-test version or a feed off
@@ -105,31 +106,31 @@ from a PowerShell 7 window (`tests/fetch-bin.windows.test.cjs`, failed on `561d6
 folder, MP4/720p and one history entry, installs test build A over it silently, then
 `scripts/windows/installed-app.cjs` drives the installed app's own window (DevTools port on the app)
 against the local fixture site, and ends by letting A update itself to B. Evidence artifact
-`grab-windows-evidence-{{RUN}}` (results JSON, screenshots, diagnostics log, fixture request log,
-process trace); installers in `grab-test-installer-{{RUN}}` (kept 14 days, never published).
+`grab-windows-evidence-18` (results JSON, screenshots, diagnostics log, fixture request log,
+process trace); installers in `grab-test-installer-18` (kept 14 days, never published).
 
 | ID | Check | Result | Evidence |
 | --- | --- | --- | --- |
-| W-01a | 1.6.7 installs silently from the hash-checked installer and starts | Pass | per-user install in `%LOCALAPPDATA%\Programs\Grab`{{BASERETRY}} |
-| W-01d / W-01e | A installs over 1.6.7 in the same place; `settings.json` and `history.json` kept | Pass | registry 1.6.7 → {{AVER}} |
+| W-01a | 1.6.7 installs silently from the hash-checked installer and starts | Pass | per-user install in `%LOCALAPPDATA%\Programs\Grab`, exit 0, first try |
+| W-01d / W-01e | A installs over 1.6.7 in the same place; `settings.json` and `history.json` kept | Pass | registry 1.6.7 → 1.6.8-test.18 |
 | W-01f | installed `resources/bin` = lock; every tool runs | Pass | versions above |
 | W-01b / W-01c / W-10a | 1.6.7's history and settings shown; Hebrew RTL, CSP, four pages | Pass | `01`–`04` screenshots |
 | W-03a / W-03b / W-03c | public MP4 (exact size), MP3 (ffprobe), player set by page script (hidden probe; download carries cookie + Referer) | Pass | |
 | W-02a | duplicates in one paste and against the queue → one row + notice | Pass | |
 | W-06a | pause during a download ends yt-dlp; resume; never two attempts at once | Pass | |
-| **W-06b** | **pause during the real FFmpeg merge** | Pass | {{W06B}} |
+| **W-06b** | **pause during the real FFmpeg merge** | Pass | bundled FFmpeg `-i merge.fv720.mp4 -i merge.fa128.m4a -c copy -map 0:v:0 -map 1:a:0 … merge.temp.mp4`, child of yt-dlp.exe → yt-dlp.exe → Grab.exe; frozen after 20,447,280 B of the merged file (unchanged 0.7 s later); streams complete (598,829,409 + 1,940,521 B). After Pause: yt-dlp 0, FFmpeg 0, row paused, kept merge.fa128.m4a, merge.fv720.mp4, merge.temp.mp4, no `merge.mp4`, nothing in history. After resume: merge.mp4 = audio:aac, video:h264, 120 s, 0 new stream requests, 2 attempts, max 1 at once |
 | W-07a / W-07b / W-07c | quit during a download; reopened paused, nothing started; resume completes | Pass | |
 | W-08a / W-08c / W-08b | no cookie jar after completion, after removal, after forced kill + restart | Pass | |
 | W-04a | job needing the browser session, browser unreachable: explicit error, 0 requests to the protected area | Pass | |
-| **W-02b** | four links, two sites: looked up one at a time, ≥ 2 s apart in real time | Pass | {{W02B}} |
-| **W-02c** | 429 on a download: only that site is held; no request to it while held; the other site's job downloads | Pass | {{W02C}} |
-| **W-02d** | after "resume": the held jobs download; one attempt at a time; no job lost or repeated | Pass | {{W02D}} |
-| **W-02e** | 429 during a lookup: that site's lookups wait, the other site's continue; after "resume" each finishes once | Pass | {{W02E}} |
-| **W-07d** | A finds B on the local feed and downloads it through its own banner | Pass | {{W07D}} |
-| **W-07e** | "restart" to install while a download runs: the download's processes end **before** the installer starts; job saved paused | Pass | {{W07E}} |
-| **W-07f** | version changed in place; settings and history unchanged | Pass | {{W07F}} |
-| **W-07g** | after the update the job is restored paused; nothing requested until resume | Pass | {{W07G}} |
-| **W-07h** | resume after the update: one file, full size, no yt-dlp/FFmpeg left | Pass | {{W07H}} |
+| **W-02b** | four links, two sites: looked up one at a time, ≥ 2 s apart in real time | Pass | lookup gaps 6,609 ms, 4,839 ms, 5,495 ms |
+| **W-02c** | 429 on a download: only that site is held; no request to it while held; the other site's job downloads | Pass | held 14,355 ms, 0 requests to 127.0.0.1 meanwhile; q4 (localhost) done; q2, q3 queued; `11-site-held.png` |
+| **W-02d** | after "resume": the held jobs download; one attempt at a time; no job lost or repeated | Pass | download order q1.mp4 → q2.mp4(429) → q4.mp4 → q2.mp4 → q2.mp4 → q3.mp4; requests per link q1 2, q2 4, q3 2, q4 2; one file each; 5 attempts, max 1 at once (after a 429 the next attempt fetches the link's information again: two requests, one attempt) |
+| **W-02e** | 429 during a lookup: that site's lookups wait, the other site's continue; after "resume" each finishes once | Pass | while held: q5 1, q6 0, q7 1; after resume: q5 2, q6 1, q7 1 |
+| **W-07d** | A finds B on the local feed and downloads it through its own banner | Pass | `app-update.yml`: generic, `http://127.0.0.1:47290/`, channel `test`; banner "גרסה חדשה של Grab זמינה: 1.6.9-test.18 עדכן עכשיו"; feed: 200 /test.yml; 404 /Grab-Setup-1.6.9-test.18.exe.blockmap; 200 /Grab-Setup-1.6.9-test.18.exe |
+| **W-07e** | "restart" to install while a download runs: the download's processes end **before** the installer starts; job saved paused | Pass | download active (G Generic 1% 204.01KiB/s · נותרו 00:11); yt-dlp exited 2026-10-15T06:52:43.0846126Z, 2026-10-15T06:52:43.0823871Z; installer `Grab-Setup-1.6.9-test.18.exe` created 2026-10-15T06:52:44.0330630Z (949 ms later); 84 samples, 0 with both alive; `queue.json`: paused at 1.3%, `update.mp4.part` kept |
+| **W-07f** | version changed in place; settings and history unchanged | Pass | registry 1.6.8-test.18 → 1.6.9-test.18, file 1.6.8.0 → 1.6.9.0, same folder; settings and history (11 entries) byte-identical to just before the install |
+| **W-07g** | after the update the job is restored paused; nothing requested until resume | Pass | started by the installer with `--updated`; row paused; requests for the file: whileInstallerStartedAppRan 0, untilResume 0 |
+| **W-07h** | resume after the update: one file, full size, no yt-dlp/FFmpeg left | Pass | update.mp4 full size; yt-dlp 0, FFmpeg 0 left; max 1 attempt at once |
 
 How the new checks are made deterministic (test harness only; Grab, yt-dlp and FFmpeg unchanged):
 
@@ -167,7 +168,8 @@ FFmpeg against the same DASH fixture (~150 MB). The harness stops the merging FF
 it has written > 2 MB, pauses, checks that Grab's stop reached FFmpeg (SIGTERM pending), lets it go,
 then: no final file, nothing in history, the two finished streams kept; resume reuses them (no new
 request), merges once, one `merge.mp4` with audio and video, two attempts in all. Passes locally
-(4/4 runs) and in the Linux CI job (FFmpeg installed by the job). POSIX only; Windows: W-06b.
+(4/4 runs) and in Linux CI run 30 (test 53, not skipped; FFmpeg installed by the job). POSIX
+only; Windows: W-06b.
 
 ### 4.4 Scenarios 1–10
 
@@ -191,8 +193,12 @@ saved lookup, run 12), W-02d's expectation (after a 429 the next attempt fetches
 information again: two requests, one attempt), the installer's creation time and the attempt's own exit
 times instead of WMI trace times (runs 12 and 15: the trace drops events and batches its times),
 attempts named by process id and creation time (Windows reused an id, run 15), a crashed start of the published 1.6.7 installer (`0xC0000005`, run 13: one
-recorded retry; our test installers are never retried), and a 20 s browser-start bound too short
-while the new merge test runs in parallel (runs 14 and CI 26: now 60 s with the browser's stderr).
+recorded retry; our test installers are never retried), a 20 s browser-start bound too short
+while the new merge test runs in parallel (runs 14 and CI 26: now 60 s with the browser's stderr),
+and one miss of a pre-existing timing bound (run 17: the process runner's 300 ms deadline fired,
+but the stop, which starts `taskkill.exe`, ended 5215 ms after the start against a 5000 ms bound;
+first miss in 17 Windows runs; the bound is unchanged and a failure now reports the time; this
+session may not re-run jobs, so the next push repeated it: run 18 green).
 
 Seen, not changed: right after start the sidebar says "המנוע לא נמצא" (red) for about a second
 until `yt-dlp --version` answers (pre-existing text; backlog). A 429 during a lookup still tries
@@ -246,16 +252,17 @@ Owner actions (not authorized for this session):
 
 | Command | Result |
 | --- | --- |
-| `npm ci --ignore-scripts` / `npm test` (pinned yt-dlp + Chromium) | 102 tests: 98 pass, 0 fail, 4 skipped (fetch-bin, Windows output names, jar ACL: Windows only; the Windows default-browser lookup case) |
+| `npm ci --ignore-scripts` / `npm test` (pinned yt-dlp + Chromium + FFmpeg) | 103 tests: 99 pass, 0 fail, 4 skipped (fetch-bin, Windows output names, jar ACL: Windows only; the Windows default-browser lookup case) |
+| `node --test tests/merge-pause.integration.test.cjs` (×4) | pass 4/4 |
 | `npm run build` | pass (Vite 8.3.4) |
 | `xvfb-run electron e2e/queue-cooldown.cjs` | PASS (2 starts, reload during rest) |
 | `xvfb-run electron e2e/hidden-probe.cjs` | PASS |
 | `xvfb-run electron e2e/layout.cjs` | all sizes ok |
 | `npm audit` | 8 moderate (one build-time chain, not shipped); was 20 (1 critical, 14 high, 5 moderate) |
 | `electron-builder --win dir` | packages `win-unpacked` with the expected asar/resources (signing skipped) |
-| CI run 21 (`ee8f20b`) | test (ubuntu), test (windows), e2e: success |
-| Windows verify run 10 (`ee8f20b`), run 8 (`1c9d699`) | success: §4.1, §4.2 |
-| Windows verify run 9 (`d865648`) | failure: test race, fixed in `ee8f20b` (§4.1) |
+| CI run 30 (`fca984e`) | test (ubuntu), test (windows), e2e: success |
+| Windows verify run 18 (`fca984e`) | success: §4.1, §4.2 |
+| Windows verify runs 11–17 (this round) | failures, each a harness or test issue, fixed and listed in §4.4 |
 
 ## 7. Backlog
 
