@@ -1,7 +1,8 @@
-# Test harness only: records when the processes that matter start and end (WMI process traces,
-# the kernel's own timestamps), one JSON line each, so an order such as "the download's yt-dlp and
-# FFmpeg ended before the update installer started" can be read afterwards. Needs administrator
-# rights (GitHub's Windows runners have them). Writes {"ev":"ready"} once listening.
+# Test harness only: a timeline of the processes that matter starting and ending (WMI process
+# traces), one JSON line each. Needs administrator rights (GitHub's Windows runners have them).
+# Writes {"ev":"ready"} once listening. The times are when WMI delivered the events, in batches
+# about a second apart, and an event can be missed: exact order is measured with process handles
+# and creation times instead (procs.ps1 hold/exit/installers).
 #   powershell -File process-trace.ps1 -Out <file.jsonl>
 param([Parameter(Mandatory = $true)] [string]$Out)
 $ErrorActionPreference = 'Stop'

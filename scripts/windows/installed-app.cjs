@@ -93,10 +93,11 @@ const list = async (image) => { const r = await procs(`list ${image}`); return A
 
 // Download attempts running now. The official yt-dlp.exe is a one-file bundle: each run is a
 // launcher plus its child, both named yt-dlp.exe, so an attempt is a yt-dlp.exe whose parent is not.
+// Windows reuses process ids, so an attempt is named by its id and its creation time.
 async function engineAttempts() {
   const all = await list('yt-dlp.exe');
   const pids = new Set(all.map((p) => p.pid));
-  return { processes: all.length, attempts: all.filter((p) => !pids.has(p.ppid)).map((p) => p.pid), all };
+  return { processes: all.length, attempts: all.filter((p) => !pids.has(p.ppid)).map((p) => `${p.pid}@${p.created}`), all };
 }
 
 // What each running yt-dlp.exe was asked to do (a version check, a lookup, a download).
@@ -480,8 +481,9 @@ async function scenarioQueueRateLimit() {
 // ---- installing an app update while a download runs (W-07d..W-07h) -----------------------------
 // The test builds read updates from a feed on this machine (stamp-test-build.cjs); this serves the
 // newer test build there. The app finds it, downloads it and installs it through its own banner
-// ("update now", then "restart") while a fixture download is running. process-trace.ps1 records
-// when each process started and ended (kernel timestamps).
+// ("update now", then "restart") while a fixture download is running. Order is measured with the
+// attempt's own exit times (handles held before the click) and the installer's creation time;
+// process-trace.ps1 adds a coarse timeline.
 function startFeed() {
   const log = [];
   const server = http.createServer((req, res) => {
@@ -550,6 +552,9 @@ async function scenarioUpdateWhileDownloading() {
     const servedBefore = fixtureLog().filter((l) => l.url.endsWith('/update.mp4')).length;
     await shot('13-update-ready-while-downloading');
     const attemptPids = (attempt || []).map((p) => p.pid);
+    // Handles to the attempt's processes, so their exact exit times can be read afterwards.
+    const holds = [];
+    for (const pid of attemptPids) holds.push(await procs(`hold ${pid}`));
     const beforeInstall = { settings: fs.readFileSync(settingsFile, 'utf8'), history: fs.readFileSync(historyFile, 'utf8') };
     // From the click until the new version is installed: which of the attempt's processes are
     // alive, and which installer runs (with its creation time), every 200 ms or so.
@@ -579,21 +584,24 @@ async function scenarioUpdateWhileDownloading() {
     await sampler;
     const events = trace.read().filter((e) => e.ev === 'start' || e.ev === 'stop');
     const t = (x) => Date.parse(x);
-    // When the attempt's processes ended (kernel stop events), and when the installer was created
-    // (its own creation time, read while it ran).
-    const attemptStops = events.filter((e) => e.ev === 'stop' && attemptPids.includes(e.pid));
+    // When the attempt's processes exited (their own exit times, from the handles held before the
+    // click) and when the installer was created (its own creation time, read while it ran): both
+    // kernel timestamps. The WMI trace is kept as a timeline only: its times come in ~1 s batches.
+    const exits = [];
+    for (const pid of attemptPids) exits.push(await procs(`exit ${pid}`));
     const installers = [...new Map(samples.flatMap((s) => s.installers).map((i) => [i.pid, i])).values()].sort((a, b) => t(a.created) - t(b.created));
     const firstInstaller = installers.find((i) => t(i.created) >= clickedAt.getTime() - 1000) || null;
-    const lastAttemptStop = attemptStops.length ? Math.max(...attemptStops.map((e) => t(e.t))) : null;
+    const allExited = exits.length > 0 && exits.every((e) => e.state === 'exited');
+    const lastAttemptStop = allExited ? Math.max(...exits.map((e) => t(e.exitTime))) : null;
     const lastSeenAlive = samples.filter((s) => s.attemptAlive.length).at(-1)?.at || null;
     const overlap = samples.filter((s) => s.attemptAlive.length && s.installers.length);
     const oldStop = events.find((e) => e.ev === 'stop' && e.pid === oldApp.pid);
     const saved = queueAtExit.find((j) => /update\.mp4/.test(j.url));
     record('W-07e', 'installing while a download runs: the download\'s processes end before the installer starts; the job is saved paused',
-      !!flowing && attemptPids.length > 0 && attemptStops.length === attemptPids.length && !!firstInstaller && lastAttemptStop < t(firstInstaller.created) && overlap.length === 0
+      !!flowing && attemptPids.length > 0 && holds.every((h) => h.held) && allExited && !!firstInstaller && lastAttemptStop < t(firstInstaller.created) && overlap.length === 0
       && saved?.status === 'paused' && saved.progress > 0 && partials.some((f) => /\.part$/.test(f)),
       { trace: trace.ready, row: flowing, attempt: (attempt || []).map((p) => ({ pid: p.pid, cmd: p.cmd.slice(0, 200) })), clickedAt: clickedAt.toISOString(),
-        attemptStopped: attemptStops.map((e) => e.t), installerCreated: firstInstaller, installersSeen: installers, oldAppStopped: oldStop?.t || null,
+        attemptExited: exits, installerCreated: firstInstaller, installersSeen: installers, oldAppStopped: oldStop?.t || null,
         msFromLastAttemptStopToInstaller: firstInstaller && lastAttemptStop ? t(firstInstaller.created) - lastAttemptStop : null,
         attemptLastSeenAlive: lastSeenAlive, samplesWithBoth: overlap.length, samples: samples.length, saved, partials,
         timeline: events.filter((e) => t(e.t) >= clickedAt.getTime() - 2000).map((e) => `${e.t} ${e.ev} ${e.name} ${e.pid}`) });
