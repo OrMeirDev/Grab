@@ -32,7 +32,7 @@
   function classify(obs) {
     const u = parse(obs && obs.url);
     if (!u || isNotPlayer(obs.url)) return null;
-    if (obs.status && obs.status >= 400) return null;
+    if (obs.status && (obs.status >= 400 || (obs.status >= 300 && obs.status < 400))) return null;
     const path = u.pathname;
     const type = String(obs.contentType || '').split(';')[0].trim().toLowerCase();
     if (/^image\//.test(type) || IMAGE_EXT.test(path)) return null;
@@ -76,7 +76,7 @@
         size: Math.max(prev.size || 0, o.size || 0),
         fromPlayer: !!(prev.fromPlayer || o.fromPlayer),
         at: Math.max(prev.at || 0, o.at || 0),
-        context: o.context || prev.context,
+        context: (o.context && (o.context.origin || !prev.context)) ? o.context : prev.context,
         redirects: o.redirects || prev.redirects,
         hosts: o.hosts || prev.hosts,
       } : { ...o });
@@ -89,14 +89,37 @@
       if (!newest.has(key) || (c.at || 0) >= (newest.get(key).at || 0)) newest.set(key, c);
     }
     list = [...newest.values()];
+    // Playlists of one stream (master + the variants the player then requested) live together: keep the
+    // master. A master-looking name wins, a variant-looking name loses, then the one requested first
+    // (a master is always requested before its variants).
+    const MASTERISH = /(?:master|main|playlist|manifest|multi|abr|all)/i;
+    const byDir = new Map();
+    for (const c of list) {
+      if (c.kind !== 'hls') continue;
+      const dir = dirOf(c.url);
+      (byDir.get(dir) || byDir.set(dir, []).get(dir)).push(c);
+    }
+    for (const group of byDir.values()) {
+      if (group.length < 2) continue;
+      const nameOf = (c) => { const u = parse(c.url); return (u && u.pathname.split('/').pop()) || ''; };
+      const score = (c) => (MASTERISH.test(nameOf(c)) ? 3 : 0) - (isVariantPlaylist(c.url) ? 3 : 0) - (/^(?:index|chunklist|media|level|prog)/i.test(nameOf(c)) ? 1 : 0);
+      group.sort((a, b) => score(b) - score(a) || (a.firstAt || a.at || 0) - (b.firstAt || b.at || 0));
+      // Only when the winner is clearly the master: two unrelated streams in one folder both stay.
+      for (const loser of group.slice(1)) if (score(group[0]) > score(loser)) list = list.filter((c) => c !== loser);
+    }
     // A variant playlist is subsumed by the master playlist of the same stream.
     const masters = list.filter((c) => c.kind === 'hls' && !isVariantPlaylist(c.url));
     list = list.filter((c) => {
-      if (c.kind !== 'hls' || !isVariantPlaylist(c.url)) return true;
+      if (c.kind !== 'hls') return true;
       const dir = dirOf(c.url);
+      const named = isVariantPlaylist(c.url);
       return !masters.some((m) => {
+        if (m === c) return false;
         const md = dirOf(m.url);
-        return dir.startsWith(md) || md.startsWith(dir.replace(/[^/]*\/$/, ''));
+        // A variant-looking playlist near a master is that master's; so is any playlist in a deeper
+        // folder that was requested after the master (the player fetches variants only after the master).
+        if (named) return dir.startsWith(md) || md.startsWith(dir.replace(/[^/]*\/$/, ''));
+        return dir !== md && dir.startsWith(md) && (m.firstAt || m.at || 0) < (c.firstAt || c.at || 0);
       });
     });
     const scored = list.map((c) => {

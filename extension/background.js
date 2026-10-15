@@ -20,6 +20,7 @@ const MAX_REQUESTS = 400;
 const SCOPE_TTL_MS = 15 * 60 * 1000;
 const SCAN_INTERVAL_MS = 750;
 const DEADLINE_MARGIN_MS = 1500;
+const NO_VIDEO_AFTER_MS = 15000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -173,8 +174,8 @@ function observe(tabId, obs) {
     const now = Date.now();
     rec.items = rec.items.filter((o) => now - o.at < OBS_TTL_MS);
     const existing = rec.items.findIndex((o) => o.url === obs.url);
-    if (existing >= 0) rec.items[existing] = { ...rec.items[existing], ...obs, size: Math.max(rec.items[existing].size || 0, obs.size || 0) };
-    else rec.items.push(obs);
+    if (existing >= 0) rec.items[existing] = { ...rec.items[existing], ...obs, size: Math.max(rec.items[existing].size || 0, obs.size || 0), firstAt: rec.items[existing].firstAt || rec.items[existing].at };
+    else rec.items.push({ ...obs, firstAt: obs.at });
     if (rec.items.length > MAX_ITEMS) rec.items = rec.items.slice(-MAX_ITEMS);
     await saveTab(tabId, rec);
   });
@@ -207,6 +208,8 @@ const requests = new Map();
 const FILTER = { urls: ['http://*/*', 'https://*/*'], types: ['xmlhttprequest', 'media', 'other', 'object'] };
 const SEGMENT_PATH = /\.(ts|m4s|cmfv|cmfa)$/i;
 
+// One entry per request id. A redirect keeps the id but changes the URL (onBeforeRedirect, then the
+// later events carry the new URL), so every event re-syncs the URL and records the hop it left behind.
 function track(d) {
   if (d.tabId < 0) return null;
   let r = requests.get(d.requestId);
@@ -221,6 +224,12 @@ function track(d) {
   return r;
 }
 
+chrome.webRequest.onBeforeRedirect.addListener((d) => {
+  const r = requests.get(d.requestId);
+  if (!r || !d.redirectUrl) return;
+  if (r.url !== d.redirectUrl) { r.redirects.push(r.url); r.url = d.redirectUrl; }
+}, { urls: ['http://*/*', 'https://*/*'], types: ['xmlhttprequest', 'media', 'other', 'object'] });
+
 chrome.webRequest.onBeforeRequest.addListener((d) => {
   const r = track(d);
   if (!r) return;
@@ -231,7 +240,7 @@ chrome.webRequest.onBeforeRequest.addListener((d) => {
 }, FILTER);
 
 chrome.webRequest.onSendHeaders.addListener((d) => {
-  const r = requests.get(d.requestId);
+  const r = track(d);
   if (!r) return;
   // Only the non-secret playback headers are kept. Cookie and Authorization are never read here.
   const ctx = { userAgent: '', referer: '', origin: '' };
@@ -246,7 +255,7 @@ chrome.webRequest.onSendHeaders.addListener((d) => {
 }, FILTER, ['requestHeaders', 'extraHeaders']);
 
 chrome.webRequest.onHeadersReceived.addListener((d) => {
-  const r = requests.get(d.requestId);
+  const r = track(d);
   if (!r) return;
   const header = (name) => ((d.responseHeaders || []).find((h) => h.name.toLowerCase() === name) || {}).value || '';
   const contentRange = header('content-range').match(/\/(\d+)$/);
@@ -299,6 +308,9 @@ async function gather(tabId, { play = false } = {}) {
   for (const m of dom.media) {
     const cls = M.classify({ url: m.url });
     if (!cls) continue;
+    // The same address seen on the network keeps its observed request context; the page only confirms it is a player source.
+    const seen = obs.find((o) => o.url === m.url || (o.redirects || []).includes(m.url));
+    if (seen) { seen.fromPlayer = true; continue; }
     obs.push({ url: m.url, kind: cls.kind, size: 0, at: Date.now(), frameId: m.frameId, fromPlayer: true, context: { userAgent: navigator.userAgent, referer: m.referer || '', origin: '' }, redirects: [], hosts });
   }
   const ranked = M.rank(obs);
@@ -306,7 +318,7 @@ async function gather(tabId, { play = false } = {}) {
 }
 
 const toWire = (c) => ({
-  url: c.url, kind: c.kind, size: c.size || 0, at: c.at || 0, fromPlayer: !!c.fromPlayer, frameId: c.frameId || 0,
+  url: c.url, kind: c.kind, size: c.size || 0, at: c.at || 0, firstAt: c.firstAt || c.at || 0, fromPlayer: !!c.fromPlayer, frameId: c.frameId || 0,
   ...(c.context ? { context: { userAgent: c.context.userAgent || '', referer: c.context.referer || '', origin: c.context.origin || '' } } : {}),
   redirects: (c.redirects || []).slice(0, 10), hosts: (c.hosts || []).slice(0, 20),
 });
@@ -471,6 +483,12 @@ async function runJob(job) {
       progress(job, 'playback_required');
     }
     if (prompted && count) { prompted = false; job.state = 'discovering'; }
+    // A page with no player and no media request is not going to produce one: say so instead of waiting out the deadline.
+    if (!count && !prompted && g.dom.players === 0 && !g.dom.blob && Date.now() - started > NO_VIDEO_AFTER_MS) {
+      finishJob(job);
+      post(P.make('job-failed', { jobId: job.id, reason: 'no_video' }));
+      return;
+    }
     await sleep(SCAN_INTERVAL_MS);
   }
 }
