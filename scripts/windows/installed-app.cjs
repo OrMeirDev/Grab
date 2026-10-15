@@ -103,16 +103,22 @@ async function engineAttempts() {
 // What each running yt-dlp.exe was asked to do (a version check, a lookup, a download).
 const engineCommands = async () => (await list('yt-dlp.exe')).map((p) => p.cmd.replace(/\s+/g, ' ').slice(0, 300));
 
-// Samples the engine in the background: the most attempts ever alive at once, and every attempt seen.
-function watchProcesses() {
+// Samples the engine in the background: the most attempts ever alive at once, and every attempt
+// seen. Resolves once the first sample is in, so nothing a scenario starts afterwards is missed
+// (the helper's first answer can take seconds: PowerShell start, compiling, a cold WMI query).
+async function watchProcesses() {
   const w = { max: 0, maxProcesses: 0, samples: 0, attempts: new Set(), stop: false };
+  let first;
+  const ready = new Promise((r) => { first = r; });
   (async () => {
     while (!w.stop) {
       const a = await engineAttempts().catch(() => null);
       if (a) { w.max = Math.max(w.max, a.attempts.length); w.maxProcesses = Math.max(w.maxProcesses, a.processes); a.attempts.forEach((pid) => w.attempts.add(pid)); w.samples++; }
+      first();
       await wait(50);
     }
   })();
+  await ready;
   return w;
 }
 
@@ -273,7 +279,7 @@ async function scenarioDuplicates() {
 async function scenarioPauseResume() {
   await paste(`${FIXTURE}/public/pause.mp4\n`);
   let r = await rowIn(['ready', 'error']);
-  const watch = watchProcesses();
+  const watch = await watchProcesses();
   await clickTitle('הורד רק את זה');
   await rowIn(['downloading']);
   await until(() => processes().ytdlp > 0, 30000);
@@ -336,7 +342,7 @@ async function scenarioMergePause() {
   await paste(`${FIXTURE}/split/merge.mpd\n`);
   const found = await rowIn(['ready', 'error'], 120000);
   if (found?.state !== 'ready') { record('W-06b', 'pause during the FFmpeg merge', false, { lookup: found }); return; }
-  const watch = watchProcesses();
+  const watch = await watchProcesses();
   const evidence = {};
   let frozen = null;
   try {
@@ -427,7 +433,7 @@ async function scenarioQueueRateLimit() {
   const gaps = lookupStarts.slice(1).map((t, i) => (t && lookupStarts[i] ? t - lookupStarts[i] : null));
   record('W-02b', 'four links: looked up one at a time, at least 2 s apart (real time), all found', !!ready && gaps.every((g) => g >= 2000), { rows: ready, lookupGapsMs: gaps });
 
-  const watch = watchProcesses();
+  const watch = await watchProcesses();
   const fromDl = fixtureLog().length;
   await click('הורד הכול');
   const held = await until(async () => { const b = await blockedBanner(); return b.length ? b : null; }, 120000);
@@ -551,7 +557,10 @@ async function scenarioUpdateWhileDownloading() {
     const flowing = await until(async () => { const r = (await rows()).find((x) => x.name === 'update'); return r?.state === 'downloading' && /[1-9]\d*(\.\d+)?%/.test(r.text) ? r : null; }, 60000);
     const servedBefore = fixtureLog().filter((l) => l.url.endsWith('/update.mp4')).length;
     await shot('13-update-ready-while-downloading');
-    const attemptPids = (attempt || []).map((p) => p.pid);
+    // Now that bytes are flowing, the attempt's launcher and its child both exist: hold them all.
+    const engineNow = await list('yt-dlp.exe');
+    const roots = engineNow.filter((p) => p.cmd.includes('update.%(ext)s')).map((p) => p.pid);
+    const attemptPids = engineNow.filter((p) => roots.includes(p.pid) || roots.includes(p.ppid)).map((p) => p.pid);
     // Handles to the attempt's processes, so their exact exit times can be read afterwards.
     const holds = [];
     for (const pid of attemptPids) holds.push(await procs(`hold ${pid}`));
@@ -600,7 +609,7 @@ async function scenarioUpdateWhileDownloading() {
     record('W-07e', 'installing while a download runs: the download\'s processes end before the installer starts; the job is saved paused',
       !!flowing && attemptPids.length > 0 && holds.every((h) => h.held) && allExited && !!firstInstaller && lastAttemptStop < t(firstInstaller.created) && overlap.length === 0
       && saved?.status === 'paused' && saved.progress > 0 && partials.some((f) => /\.part$/.test(f)),
-      { trace: trace.ready, row: flowing, attempt: (attempt || []).map((p) => ({ pid: p.pid, cmd: p.cmd.slice(0, 200) })), clickedAt: clickedAt.toISOString(),
+      { trace: trace.ready, row: flowing, attempt: engineNow.filter((p) => attemptPids.includes(p.pid)).map((p) => ({ pid: p.pid, ppid: p.ppid, created: p.created, cmd: p.cmd.slice(0, 160) })), clickedAt: clickedAt.toISOString(),
         attemptExited: exits, installerCreated: firstInstaller, installersSeen: installers, oldAppStopped: oldStop?.t || null,
         msFromLastAttemptStopToInstaller: firstInstaller && lastAttemptStop ? t(firstInstaller.created) - lastAttemptStop : null,
         attemptLastSeenAlive: lastSeenAlive, samplesWithBoth: overlap.length, samples: samples.length, saved, partials,
@@ -627,7 +636,7 @@ async function scenarioUpdateWhileDownloading() {
       !!relaunched && restored?.state === 'paused' && requestedAfterInstall === 0 && requestedBeforeResume === 0 && !running.some((c) => c.includes('update.%(ext)s')),
       { startedByInstaller: (relaunched || []).map((p) => p.cmd.slice(0, 200)), restored, requestsForTheFile: { whileInstallerStartedAppRan: requestedAfterInstall, untilResume: requestedBeforeResume }, ytdlpRunning: running });
 
-    const watch = watchProcesses();
+    const watch = await watchProcesses();
     await clickTitle('המשך');
     const done = await until(async () => { const r = (await rows()).find((x) => x.name === 'update'); return r && ['done', 'error'].includes(r.state) ? r : null; }, 300000);
     watch.stop = true;

@@ -142,10 +142,11 @@ How the new checks are made deterministic (test harness only; Grab, yt-dlp and F
   (`NtSuspendProcess`), so Pause always lands mid-merge. Then Pause is clicked in the app.
 - **Update (W-07d–h).** Two real test builds; the feed is a plain file server in the driver; the
   app's own check, "update now" and "restart" buttons are used (no installer started by hand).
-  Order evidence: the download's yt-dlp processes' stop times (WMI process trace, kernel time)
-  against the installer's own creation time (read from the running process; WMI dropped the
-  installer's start event once, so it is not relied on), plus ~200 ms samples that never show
-  both alive. The installer starts the new version itself (`--updated`); the driver closes it
+  Order evidence: the exit times of the download's yt-dlp processes (handles opened before the
+  click, `GetProcessTimes`) against the installer's own creation time (read from the running
+  process), both kernel timestamps, plus ~200 ms samples that never show both alive. The WMI
+  process trace is kept only as a coarse timeline: it stamps events in ~1 s batches and once
+  missed the installer's start (runs 12 and 15), so it is not used for ordering. The installer starts the new version itself (`--updated`); the driver closes it
   normally and reopens it with its DevTools port to read the queue.
 - **Queue and rate limit (W-02b–e).** Two sites on one fixture (`127.0.0.1` and `localhost`; Grab
   keys sites by host); `/rl/<n>/…` answers 429 to the n-th request for that path; `/paced/<ms>/…`
@@ -187,8 +188,9 @@ Product defects found in this round: **none**. Every failure on the way was in t
 test, fixed and recorded in the commits: the feed file name (`test.yml`, run 11), finding the
 running download by its output name (the link is not on yt-dlp's command line when it loads the
 saved lookup, run 12), W-02d's expectation (after a 429 the next attempt fetches the link's
-information again: two requests, one attempt), the installer's creation time instead of a dropped
-WMI event (run 12), a crashed start of the published 1.6.7 installer (`0xC0000005`, run 13: one
+information again: two requests, one attempt), the installer's creation time and the attempt's own exit
+times instead of WMI trace times (runs 12 and 15: the trace drops events and batches its times),
+attempts named by process id and creation time (Windows reused an id, run 15), a crashed start of the published 1.6.7 installer (`0xC0000005`, run 13: one
 recorded retry; our test installers are never retried), and a 20 s browser-start bound too short
 while the new merge test runs in parallel (runs 14 and CI 26: now 60 s with the browser's stderr).
 
