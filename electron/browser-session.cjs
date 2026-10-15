@@ -50,8 +50,11 @@ function isMakoPage(pageUrl) {
   return false;
 }
 
-// Mako playback is looked up in Edge; every other page keeps the default-browser policy.
-function browserForPage(pageUrl) {
+// A browser picked by the selection rules (or the user) wins. Without one, Mako playback is looked up
+// in Edge and every other page keeps the default-browser policy.
+const PROG_IDS = { edge: 'MSEdgeHTM', chrome: 'ChromeHTML', brave: 'BraveHTML' };
+function browserForPage(pageUrl, browserId) {
+  if (browserId && PROG_IDS[browserId]) return defaultBrowser(PROG_IDS[browserId]);
   return isMakoPage(pageUrl) ? defaultBrowser('MSEdgeHTM') : defaultBrowser();
 }
 

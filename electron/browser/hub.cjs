@@ -82,7 +82,7 @@ class BrowserHub extends EventEmitter {
             return;
           }
           clearTimeout(authTimer);
-          conn.host = { browserKind: BROWSER_KINDS.includes(m.browserKind) ? m.browserKind : 'unknown', origin, hostVersion: m.hostVersion };
+          conn.host = { browserKind: BROWSER_KINDS.includes(m.browserKind) ? m.browserKind : 'unknown', origin, hostVersion: m.hostVersion, pid: Number.isInteger(m.pid) ? m.pid : 0 };
           conn.state = 'hello';
           raw({ type: 'ready' });
           helloTimer = setTimeout(() => { if (!conn.instance) { this.fail('no_hello', 'The extension did not introduce itself', conn.host.browserKind); sock.destroy(); } }, this.helloTimeoutMs);
@@ -164,6 +164,9 @@ class BrowserHub extends EventEmitter {
     const i = conn.instance;
     return { key: i.key, browser: i.browser, instanceId: i.instanceId, alias: i.alias, extVersion: i.extVersion, connectedAt: i.connectedAt };
   }
+
+  // Process id of the native host serving an instance (used by tests to simulate a host crash).
+  hostPid(key) { const c = this.byKey.get(key); return c ? c.host.pid : 0; }
 
   instances() { return [...this.byKey.values()].map((c) => this.publicInstance(c)); }
 

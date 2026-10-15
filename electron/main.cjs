@@ -5,6 +5,7 @@ const engine = require('./engine.cjs');
 const pageprobe = require('./pageprobe.cjs');
 const hiddenProbe = require('./hidden-probe.cjs');
 const browserSession = require('./browser-session.cjs');
+const { BrowserService } = require('./browser/service.cjs');
 const { autoUpdater } = require('electron-updater');
 
 // App updates come from GitHub releases (see build.publish in package.json). Nothing downloads
@@ -94,11 +95,35 @@ ipcMain.handle('engine:version', () => engine.version());
 // When yt-dlp finds no video at the link, the link is often a page with its own small player:
 // look inside it the way DevTools would, and try the video addresses found there.
 const signedInSites = new Set(); // sites whose videos only the user's signed-in browser can see
-ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
+const analyzeControllers = new Map(); // queue item id -> AbortController for the whole lookup
+ipcMain.handle('engine:analyze', async (e, url, opts = {}) => {
+  const ctl = new AbortController();
+  if (opts.id != null) analyzeControllers.set(opts.id, ctl);
+  try {
+    const result = await analyzeImpl(e, url, opts, ctl.signal);
+    return ctl.signal.aborted && !result.ok ? { ok: false, kind: 'cancelled', error: 'Cancelled' } : result;
+  } finally { if (analyzeControllers.get(opts.id) === ctl) analyzeControllers.delete(opts.id); }
+});
+ipcMain.handle('engine:cancel-analyze', (_e, id) => {
+  const ctl = analyzeControllers.get(id);
+  if (ctl) ctl.abort();
+  if (browserService) browserService.cancel(id);
+  return !!ctl;
+});
+
+async function analyzeImpl(e, url, { forcePage = false, id, browser: pickedBrowser, instance: pickedInstance, ref, choice } = {}, signal) {
   // forcePage: what yt-dlp found at the link didn't download, so go straight to the page's player.
-  // Mako must reach Edge before a page extractor or anonymous probe can accept another source.
-  const edgeFirst = browserSession.isMakoPage(url);
-  const first = forcePage || edgeFirst ? { ok: false, kind: 'notfound', error: 'Unsupported URL' } : await engine.analyze(url);
+  const svc = browserService;
+  const resolved = svc ? svc.resolve(url, { browser: pickedBrowser }) : null;
+  const extSetUp = !!(svc && resolved && resolved.browserId && svc.isSetUp(resolved.browserId));
+  const extensionAnalyze = () => svc.analyze(url, { itemId: id, browser: pickedBrowser, instance: pickedInstance, ref, choice });
+  // A browser that has the Grab extension set up is used first for sites with a browser rule (Mako -> Edge)
+  // and for explicit choices / Send to GRAB. Without the extension the remote-debugging lookup below is unchanged.
+  if (extSetUp && (resolved.source === 'site-rule' || ref || pickedBrowser || pickedInstance || choice)) return extensionAnalyze();
+  // A site with a browser rule must reach that browser before a page extractor or anonymous probe can accept another source.
+  const edgeFirst = resolved ? resolved.source === 'site-rule' : browserSession.isMakoPage(url);
+  const first = forcePage || edgeFirst ? { ok: false, kind: 'notfound', error: 'Unsupported URL' } : await engine.analyze(url, { signal });
+  if (signal.aborted) return { ok: false, kind: 'cancelled', error: 'Cancelled' };
   if (first.ok || !['notfound', 'notmedia', 'private', 'blocked', 'forbidden', 'other'].includes(first.kind)) return first;
   const missingMedia = ['notfound', 'notmedia'].includes(first.kind);
   const phase = (p, browserName) => { if (!e.sender.isDestroyed()) e.sender.send('engine:lookup-phase', { url, phase: p, browser: browserName }); };
@@ -125,7 +150,8 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
 
   // 2. Backup: Edge for Mako, otherwise the user's default browser, when remote debugging is
   //    on. If it isn't, report what the clean lookup found, with how to turn it on.
-  const browser = browserSession.browserForPage(url);
+  if (extSetUp && svc.hasConnected(resolved.browserId)) return extensionAnalyze();
+  const browser = browserSession.browserForPage(url, resolved && resolved.browserId);
   phase('browser', browser.name);
   const connect = () => browserSession.connectBrowser({ browser });
   let probe;
@@ -174,14 +200,19 @@ ipcMain.handle('engine:analyze', async (e, url, { forcePage = false } = {}) => {
     catch { return result; }
   }
   return result;
-});
+}
 // The guide and its connection check use the same per-page browser as lookup.
 ipcMain.handle('browser:default', (_e, pageUrl) => {
-  const b = browserSession.browserForPage(pageUrl);
+  const sel = browserService ? browserService.resolve(pageUrl) : null;
+  const b = browserSession.browserForPage(pageUrl, sel && sel.browserId);
   return { name: b.name, scheme: b.scheme, supported: b.supported !== false };
 });
 ipcMain.handle('browser:check', async (_e, pageUrl) => {
-  try { await browserSession.connectBrowser({ browser: browserSession.browserForPage(pageUrl) }); return { ok: true }; }
+  try {
+    const sel = browserService ? browserService.resolve(pageUrl) : null;
+    await browserSession.connectBrowser({ browser: browserSession.browserForPage(pageUrl, sel && sel.browserId) });
+    return { ok: true };
+  }
   catch (err) { return { ok: false, kind: err.kind }; }
 });
 ipcMain.handle('engine:extractors', () => engine.extractors());
@@ -194,13 +225,17 @@ ipcMain.handle('engine:update', () => {
 ipcMain.handle('engine:start', async (e, job) => {
   fs.mkdirSync(job.folder, { recursive: true });
   return browserSession.withSessionCookies(job.cookieRef, async (cookieFile) => {
-    const { child, done } = engine.download({ ...job, cookieFile }, (p) => {
+    if (job.browserRef && browserService) browserService.reportJob(job.browserRef, { phase: 'downloading' });
+    const { child, done } = engine.download({ ...job, cookieFile, ...(browserService ? { idleMs: browserService.deadlines().downloadIdleMs } : {}) }, (p) => {
       if (!e.sender.isDestroyed()) e.sender.send('engine:progress', { id: job.id, ...p });
     });
     jobs.set(job.id, child);
     try {
       const result = await done;
-      return jobs.get(job.id) === null ? { ok: false, stopped: true } : result;
+      const outcome = jobs.get(job.id) === null ? { ok: false, stopped: true } : result;
+      // "Completed" is reported to the browser only for a file that was really produced and verified.
+      if (outcome.ok && job.browserRef && browserService) browserService.reportJob(job.browserRef, { phase: 'completed', terminal: 'completed' });
+      return outcome;
     } finally { jobs.delete(job.id); }
   });
 });
@@ -213,12 +248,17 @@ ipcMain.handle('engine:stop', (_e, id) => {
   }
 });
 
-ipcMain.handle('settings:get', () => readSettings());
-ipcMain.handle('settings:set', (_e, s) => {
-  const next = { ...readSettings(), ...s };
+function writeSettings(patch) {
+  const next = { ...readSettings(), ...patch };
   fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
   fs.writeFileSync(settingsFile(), JSON.stringify(next, null, 2));
   return next;
+}
+ipcMain.handle('settings:get', () => readSettings());
+// Browser integration settings are validated and saved only through browser:set.
+ipcMain.handle('settings:set', (_e, s) => {
+  const { browser: _browser, ...allowed } = s || {};
+  return writeSettings(allowed);
 });
 
 const historyFile = () => path.join(app.getPath('userData'), 'history.json');
@@ -261,6 +301,52 @@ ipcMain.handle('folder:choose', async () => {
 ipcMain.handle('folder:show', (_e, file) => shell.showItemInFolder(file));
 ipcMain.handle('folder:open', (_e, dir) => { fs.mkdirSync(dir, { recursive: true }); return shell.openPath(dir); });
 
+// ---- browser integration (extension bridge, browser selection) ----
+let browserService = null;
+const sendToWindow = (channel, payload) => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+};
+// Asks the window whether an incoming "Send to GRAB" is new; resolves with its answer or 'unavailable'.
+const askRenderer = (channel, payload, timeoutMs) => new Promise((resolve) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return resolve('unavailable');
+  const reply = channel + '-reply:' + payload.ref;
+  const timer = setTimeout(() => { ipcMain.removeAllListeners(reply); resolve('unavailable'); }, timeoutMs);
+  ipcMain.once(reply, (_e, status) => { clearTimeout(timer); resolve(status); });
+  mainWindow.webContents.send(channel, payload);
+});
+async function startBrowserService() {
+  const svc = new BrowserService({
+    appVersion: app.getVersion(),
+    sourceRoot: app.isPackaged ? process.resourcesPath : path.join(__dirname, '..'),
+    getSettings: readSettings,
+    saveSettings: writeSettings,
+    notify: sendToWindow,
+    askRenderer,
+    engine,
+    session: browserSession,
+  });
+  await svc.init();
+  browserService = svc;
+  sendToWindow('browser:changed', null);
+}
+const unavailable = { unavailable: true };
+ipcMain.handle('browser:state', () => (browserService ? browserService.state() : unavailable));
+ipcMain.handle('browser:refresh', () => (browserService ? browserService.refresh() : unavailable));
+ipcMain.handle('browser:set', (_e, patch) => (browserService ? browserService.setSettings(patch) : unavailable));
+ipcMain.handle('browser:resolve', (_e, url, explicit) => (browserService ? browserService.resolve(String(url || ''), { browser: explicit }) : unavailable));
+ipcMain.handle('browser:setup', (_e, opts) => (browserService ? browserService.setup(opts) : unavailable));
+ipcMain.handle('browser:uninstall', () => (browserService ? browserService.uninstall() : unavailable));
+ipcMain.handle('browser:test', (_e, browserId) => (browserService ? browserService.test(browserId) : unavailable));
+ipcMain.handle('browser:reveal-playback', (_e, id) => (browserService ? browserService.revealPlayback(id) : false));
+ipcMain.handle('browser:job-report', (_e, ref, report) => (browserService ? browserService.reportJob(String(ref), report || {}) : false));
+ipcMain.handle('browser:open-extension-folder', () => {
+  if (!browserService) return false;
+  const dir = browserService.state().extensionDir;
+  if (!dir || !fs.existsSync(dir)) return false;
+  shell.openPath(dir);
+  return true;
+});
+
 // One Grab at a time: opening it again brings the open window to the front instead.
 const focusMain = () => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -276,9 +362,10 @@ app.whenReady().then(async () => {
   await engine.reconcileEngine();
   engine.cleanInfoCache();
   createWindow();
+  startBrowserService().catch((err) => console.error('Browser integration failed to start:', err && err.message));
 });
 app.on('window-all-closed', () => {
   for (const child of jobs.values()) child && child.kill();
   app.quit();
 });
-app.on('before-quit', browserSession.disconnectBrowser);
+app.on('before-quit', () => { browserSession.disconnectBrowser(); if (browserService) browserService.shutdown(); });

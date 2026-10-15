@@ -19,6 +19,43 @@ const REASON_TO_KIND = {
   navigation_changed: 'noVideo',
 };
 
+// Resolves the one connected browser instance a job may use, starting the browser if it is closed.
+// Never substitutes another profile or browser: a missing choice is an error the UI explains.
+async function connectInstance({ hub, browser, getInstance, settings = {}, deps = {}, signal }) {
+  const cfg = { ...DEFAULTS, ...settings };
+  const throwIfAborted = () => { if (signal && signal.aborted) throw new BrowserError('cancelled'); };
+  throwIfAborted();
+    let pick = getInstance();
+    if (pick.problem === 'choice_required') throw new BrowserError('choiceRequired', { options: pick.options });
+    if (pick.problem === 'instance_disconnected') {
+      // The profile the user chose is not connected. Wait briefly for it (extension reconnecting), never use another one.
+      const wanted = pick.wanted;
+      try { await hub.waitFor((i) => i.key === wanted, { timeoutMs: cfg.connectMs, signal: signal }); }
+      catch (e) { throw e.code === 'cancelled' ? new BrowserError('cancelled') : new BrowserError('wrongProfile', { options: pick.options }); }
+      pick = getInstance();
+    }
+    if (pick.problem === 'not_connected') {
+      let launched = false;
+      const running = deps.isRunning ? await deps.isRunning(browser.id) : false;
+      throwIfAborted();
+      if (!running) {
+        if (!browser.exe) throw new BrowserError('browserUnavailable');
+        try { deps.launch(browser.exe); launched = true; } catch (e) { throw new BrowserError('browserUnavailable', { message: String(e.message || e) }); }
+      }
+      try { await hub.waitFor((i) => i.browser === browser.id, { timeoutMs: cfg.connectMs + (launched ? cfg.launchGraceMs : 0), signal: signal }); }
+      catch (e) {
+        if (e.code === 'cancelled') throw new BrowserError('cancelled');
+        const failure = hub.failures.find((f) => f.browser === browser.id && Date.now() - f.at < 120000);
+        if (failure && ['origin_mismatch', 'protocol_version'].includes(failure.code)) throw new BrowserError('hostSetupError', { code: failure.code });
+        throw new BrowserError('extensionNotConnected', { browserRunning: running || launched });
+      }
+      pick = getInstance();
+      if (pick.problem === 'choice_required') throw new BrowserError('choiceRequired', { options: pick.options });
+    }
+    if (!pick.instance) throw new BrowserError('extensionNotConnected');
+  return pick.instance;
+}
+
 // deps: { isRunning(browserId) -> Promise<bool>, launch(exe) -> void }
 async function discover({ hub, browser, url, jobId = protocol.newId('job'), getInstance, settings = {}, deps = {}, signal, onPhase = () => {}, onSettle }) {
   const cfg = { ...DEFAULTS, ...settings };
@@ -34,35 +71,7 @@ async function discover({ hub, browser, url, jobId = protocol.newId('job'), getI
   try {
     throwIfAborted();
     onPhase('connecting');
-    let pick = getInstance();
-    if (pick.problem === 'choice_required') throw new BrowserError('choiceRequired', { options: pick.options });
-    if (pick.problem === 'instance_disconnected') {
-      // The profile the user chose is not connected. Wait briefly for it (extension reconnecting), never use another one.
-      const wanted = pick.wanted;
-      try { await hub.waitFor((i) => i.key === wanted, { timeoutMs: cfg.connectMs, signal: abort.signal }); }
-      catch (e) { throw e.code === 'cancelled' ? new BrowserError('cancelled') : new BrowserError('wrongProfile', { options: pick.options }); }
-      pick = getInstance();
-    }
-    if (pick.problem === 'not_connected') {
-      let launched = false;
-      const running = deps.isRunning ? await deps.isRunning(browser.id) : false;
-      throwIfAborted();
-      if (!running) {
-        if (!browser.exe) throw new BrowserError('browserUnavailable');
-        try { deps.launch(browser.exe); launched = true; } catch (e) { throw new BrowserError('browserUnavailable', { message: String(e.message || e) }); }
-      }
-      try { await hub.waitFor((i) => i.browser === browser.id, { timeoutMs: cfg.connectMs + (launched ? cfg.launchGraceMs : 0), signal: abort.signal }); }
-      catch (e) {
-        if (e.code === 'cancelled') throw new BrowserError('cancelled');
-        const failure = hub.failures.find((f) => f.browser === browser.id && Date.now() - f.at < 120000);
-        if (failure && ['origin_mismatch', 'protocol_version'].includes(failure.code)) throw new BrowserError('hostSetupError', { code: failure.code });
-        throw new BrowserError('extensionNotConnected', { browserRunning: running || launched });
-      }
-      pick = getInstance();
-      if (pick.problem === 'choice_required') throw new BrowserError('choiceRequired', { options: pick.options });
-    }
-    if (!pick.instance) throw new BrowserError('extensionNotConnected');
-    instance = pick.instance;
+    instance = await connectInstance({ hub, browser, getInstance, settings: cfg, deps, signal: abort.signal });
     throwIfAborted();
 
     // ---- discovery on that one instance
@@ -105,4 +114,4 @@ async function discover({ hub, browser, url, jobId = protocol.newId('job'), getI
 // Ask the extension to bring the job's temporary tab to the front (playback needs the user's click).
 function revealTab(hub, instance, jobId) { return hub.sendTo(instance.key, 'reveal-tab', { jobId }); }
 
-module.exports = { discover, revealTab, BrowserError, DEFAULTS };
+module.exports = { discover, connectInstance, revealTab, BrowserError, DEFAULTS };

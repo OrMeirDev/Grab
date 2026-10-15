@@ -19,7 +19,7 @@ function mainHandlers(engine, pageprobe, hiddenProbe = { findMedia: async () => 
     if (name === './hidden-probe.cjs') return hiddenProbe;
     if (name === './browser-session.cjs') return session;
     return nativeRequire(name);
-  }, process, console, setTimeout, setInterval, __dirname: path.dirname(entry) };
+  }, process, console, setTimeout, setInterval, clearTimeout, AbortController, __dirname: path.dirname(entry) };
   vm.runInNewContext(fs.readFileSync(entry, 'utf8'), sandbox, { filename: entry });
   return handlers;
 }

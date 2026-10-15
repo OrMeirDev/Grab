@@ -70,8 +70,16 @@ function spawnEnv() {
   };
 }
 
-function run(args, { onLine, exe } = {}) {
+// signal / timeoutMs bound a run that must not hang (lookups); onActivity reports any output so a
+// caller can watch for a stalled download.
+function run(args, { onLine, exe, signal, timeoutMs, onActivity } = {}) {
   const child = spawn(exe || findBinary('yt-dlp'), ['--encoding', 'utf-8', ...args], { env: spawnEnv(), windowsHide: true });
+  let timedOut = false;
+  let aborted = false;
+  const timer = timeoutMs ? setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs) : null;
+  const onAbort = () => { aborted = true; child.kill(); };
+  if (signal) { if (signal.aborted) onAbort(); else signal.addEventListener('abort', onAbort, { once: true }); }
+  const cleanup = () => { clearTimeout(timer); if (signal) signal.removeEventListener('abort', onAbort); };
   let out = '';
   let err = '';
   const bufs = { out: '', err: '' };
@@ -84,11 +92,11 @@ function run(args, { onLine, exe } = {}) {
   };
   child.stdout.setEncoding('utf8');
   child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (d) => { out += d; feed('out', d); });
-  child.stderr.on('data', (d) => { err += d; feed('err', d); });
+  child.stdout.on('data', (d) => { if (onActivity) onActivity(); out += d; feed('out', d); });
+  child.stderr.on('data', (d) => { if (onActivity) onActivity(); err += d; feed('err', d); });
   const done = new Promise((resolve) => {
-    child.on('error', (e) => resolve({ code: -1, out, err: String(e.message || e) }));
-    child.on('close', (code) => resolve({ code, out, err }));
+    child.on('error', (e) => { cleanup(); resolve({ code: -1, out, err: String(e.message || e), timedOut, aborted }); });
+    child.on('close', (code) => { cleanup(); resolve({ code, out, err, timedOut, aborted }); });
   });
   return { child, done };
 }
@@ -206,9 +214,12 @@ function hasMediaFormats(info) {
   });
 }
 
-async function analyze(url, { title: pageTitle, ...context } = {}) {
+const ANALYZE_TIMEOUT_MS = 120000;
+async function analyze(url, { title: pageTitle, signal, timeoutMs = ANALYZE_TIMEOUT_MS, ...context } = {}) {
   const extra = sessionArgs(context);
-  const { code, out, err } = await run(['-J', '--no-playlist', '--no-warnings', '--skip-download', '--sleep-requests', '1', ...extra, url]).done;
+  const { code, out, err, timedOut, aborted } = await run(['-J', '--no-playlist', '--no-warnings', '--skip-download', '--sleep-requests', '1', ...extra, url], { signal, timeoutMs }).done;
+  if (aborted) return { ok: false, kind: 'cancelled', error: 'Cancelled' };
+  if (timedOut) return { ok: false, kind: 'probeTimeout', error: 'The lookup took too long' };
   if (code !== 0) return failure(err);
   try {
     const j = JSON.parse(out);
@@ -294,11 +305,24 @@ function verifyOutput(file, format, onChild) {
   });
 }
 
-function download(opts, onProgress) {
+// A download that prints nothing for this long is stalled. Any output (progress, fragment retries,
+// merge messages) counts as activity, so a long download is never cut off for being long.
+const DOWNLOAD_IDLE_MS = 180000;
+
+function download(opts, onProgress, { runImpl = run } = {}) {
   let file = null;
   let stopped = false;
+  let stalled = false;
   let verifying = null;
-  const job = run(downloadArgs(opts), {
+  let idle = null;
+  let job = null;
+  const idleMs = opts.idleMs ?? DOWNLOAD_IDLE_MS;
+  const arm = () => {
+    clearTimeout(idle);
+    idle = setTimeout(() => { stalled = true; job.child.kill(); }, idleMs);
+  };
+  job = runImpl(downloadArgs(opts), {
+    onActivity: arm,
     onLine: (line) => {
       if (line.startsWith('GRAB|')) {
         const [, pct, speed, eta] = line.split('|');
@@ -308,9 +332,12 @@ function download(opts, onProgress) {
       }
     },
   });
-  const child = { kill: () => { stopped = true; job.child.kill(); verifying?.kill(); } };
+  arm();
+  const child = { kill: () => { stopped = true; clearTimeout(idle); job.child.kill(); if (verifying) verifying.kill(); } };
   const done = job.done.then(async ({ code, err }) => {
+    clearTimeout(idle);
     if (stopped) return { ok: false, stopped: true };
+    if (stalled) return { ok: false, kind: 'stalled', error: 'The download stopped making progress' };
     if (code !== 0) return failure(err);
     const result = await verifyOutput(file, opts.format, (probe) => { verifying = probe; if (stopped) probe.kill(); });
     return stopped ? { ok: false, stopped: true } : result;
@@ -354,4 +381,4 @@ async function extractors() {
   return extractorsCache;
 }
 
-module.exports = { version, analyze, download, safeName, extractors, cleanInfoCache, setUserBinDir, reconcileEngine, updateEngine };
+module.exports = { run, version, analyze, download, safeName, extractors, cleanInfoCache, setUserBinDir, reconcileEngine, updateEngine };
