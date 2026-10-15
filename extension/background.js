@@ -343,15 +343,16 @@ function registerScope(key, urls) {
 // would send to that URL.
 async function answerCookies(m) {
   const scope = scopes.get(m.jobId);
+  let available = !!scope && Date.now() - scope.at <= SCOPE_TTL_MS;
   const cookies = [];
   const seen = new Set();
-  if (scope) {
+  if (available) {
     for (const url of m.urls) {
       let origin = '';
       try { origin = new URL(url).origin; } catch (e) { continue; }
       if (!scope.origins.has(origin)) continue;
       let list = [];
-      try { list = await chrome.cookies.getAll({ url }); } catch (e) { list = []; }
+      try { list = await chrome.cookies.getAll({ url }); } catch (e) { available = false; break; }
       for (const c of list) {
         const key = `${c.domain}|${c.path}|${c.name}`;
         if (seen.has(key)) continue;
@@ -360,7 +361,7 @@ async function answerCookies(m) {
       }
     }
   }
-  if (!post(P.make('cookies', { jobId: m.jobId, cookies: cookies.slice(0, 400) }, m.id))) console.warn('[grab] cookies reply not sent');
+  if (!post(P.make('cookies', { jobId: m.jobId, available, cookies: available ? cookies.slice(0, 400) : [] }, m.id))) console.warn('[grab] cookies reply not sent');
 }
 
 // ---------------------------------------------------------------- discovery jobs

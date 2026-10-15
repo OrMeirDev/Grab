@@ -21,7 +21,7 @@ To test an installed build instead of development mode:
 npm run dist -- --publish never
 ```
 
-Run the resulting `release/Grab-Setup-1.6.7.exe`. Building this test installer does not publish a release. The normal GitHub latest-release download does not automatically contain changes from this feature branch.
+Run the resulting `release/Grab-Setup-1.7.0-rc.1.exe`. Building this test installer does not publish a release. The normal GitHub latest-release download does not automatically contain changes from this feature branch.
 
 ## One-time browser setup
 
@@ -136,10 +136,8 @@ The **Browser integration** GitHub Actions workflow runs Linux/Windows checks, r
 
 Automated Chromium fixtures do not prove access to personal mako sessions or actual branded-browser setup. Those checks remain manual until performed on that Windows PC.
 
-## Implementation checkpoint — 15 October 2026
+## Unified release candidate
 
-Continuation started from Claude's `ddcc409` on this feature branch. Additional fixes cover packaged resources, preserving multiple browser registrations, the live playback-tab action, genuinely fresh signed-URL discovery, cancellation, rate-limit propagation, session-bound video choices, concurrent Send-to-GRAB requests, and mutual desktop/host authentication.
+Version 1.7.0-rc.1 combines the audit branch, the media request-context fixes and the browser extension. The main-process DownloadCoordinator owns both paste and Send-to-GRAB jobs; private media URLs, headers and cookie handles never enter renderer snapshots or queue.json. Browser/profile choices survive restart. Cookie acquisition errors fail before the extractor is called; each disconnected extension profile loses only its own vault handles. The pinned engines, process-tree shutdown, verified output and upgrade checks remain enabled.
 
-Local verification: **125 passed, 0 failed, 4 skipped**, plus a successful production UI build. The suite used the real yt-dlp/ffmpeg/ffprobe for its media fixtures. This container disallows Unix-domain sockets, so a temporary test-only adapter transported native-host/hub test frames over authenticated loopback TCP; production IPC code was not replaced. This is protocol/lifecycle evidence, not a Windows named-pipe test.
-
-Still unverified: actual Windows registration/launcher, the packaged Windows executable, the full real-Chromium extension test, actual Edge/Chrome/Brave profiles, and a real mako download. The local Chromium binary download was unavailable. Windows CI is prepared but has not run: publishing the feature-branch commits was blocked by automatic approval review and awaits explicit approval for this public repository. No release or merge to `main` has occurred.
+See [Hebrew installation and personal-profile checks](INSTALL-1.7.0-rc.1-HE.md). The installer and SHA256SUMS are artifacts of the Browser integration workflow; Windows verify separately exercises installation over 1.6.7 and the installed app's update flow. Test results must refer to the actual unified commit, not an older branch's green run.

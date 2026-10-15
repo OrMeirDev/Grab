@@ -1,29 +1,26 @@
-// Find embedded media in the selected browser's existing session. No new browser
+// Find embedded media in the user's default browser (its existing session). No new browser
 // profile or Grab sign-in window is created.
+const { RequestContexts } = require('./request-context.cjs');
 const browserSession = require('./browser-session.cjs');
 const { collectorScript, isNotPlayer } = require('./media-collector.cjs');
-const { RequestContexts } = require('./request-context.cjs');
-
-const FILE = /\.(mp4|webm|mov|m4v|mkv|mp3|m4a|ogg|opus|wav|flac|aac)(\?|#|$)/i;
-const MANIFEST = /\.(m3u8|mpd)(\?|#|$)/i;
-const MEDIA_TYPE = /^(video\/|audio\/|application\/(vnd\.apple\.mpegurl|x-mpegurl|dash\+xml))/i;
-const SEGMENT = /\.(ts|m4s)(\?|#|$)|[/_-](seg|segment|chunk|frag)[-_]?\d|init[-_]?\d*\.mp4/i;
-const ADS = /doubleclick|googlesyndication|googleads|imasdk|adnxs|adsystem|advert|\/ads?\/|:\/\/ads?\./i;
-const LICENSE = /widevine|playready|fairplay|\/license/i;
+const { classify, unconfirmedPlayerSources, rankMedia, playerEmbeds, isLicenseRequest, isMediaType } = require('./domain/candidate-policy.cjs');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect = browserSession.connectBrowser } = {}) {
+async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect = browserSession.connectBrowser, signal } = {}) {
+  signal?.throwIfAborted();
   const page = new URL(pageUrl);
   if (!/^https?:$/.test(page.protocol)) throw new Error('Unsupported page URL');
   const cdp = await connect();
+  signal?.throwIfAborted();
   const target = await browserSession.chooseTarget(cdp, pageUrl, { refresh });
   const sessions = new Set();
   const contexts = new Map();
   const found = new Map();
   const embeds = new Set();
   const failed = new Set();
+
   const initializations = new Set();
-  const diagnostics = { framesScanned: 0, playersSeen: 0, scanErrors: 0 };
+  const diagnostics = { framesScanned: 0, playersSeen: 0, scanErrors: 0, rejected: {} };
   let rootSessionId;
   let mainFrameId;
   let title = '';
@@ -31,17 +28,25 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
   let userAgent = '';
   let lastNewSource = Date.now();
 
+  // Addresses a player element points at (see hidden-probe.cjs): an extensionless one is only
+  // recognized by its response type, and then still counts as the player's own source.
+  const playerSources = new Set();
   const add = (url, { type = '', size = 0, fromPlayer = false, referer = pageUrl, requestContext } = {}) => {
-    if (typeof url !== 'string' || !/^https?:/i.test(url) || isNotPlayer(url) || ADS.test(url) || SEGMENT.test(url) || /mp2t|iso\.segment/i.test(type)) return;
-    const kind = MANIFEST.test(url) || /mpegurl|dash/i.test(type) ? 'stream' : FILE.test(url) || /^(video|audio)\//i.test(type) ? 'file' : null;
-    if (!kind) return;
+    if (signal?.aborted || isNotPlayer(url)) return;
+    if (fromPlayer && typeof url === 'string') playerSources.add(url);
+    const verdict = classify(url, type);
+    if (!verdict.kind) {
+      if (verdict.reject !== 'not-media') diagnostics.rejected[verdict.reject] = (diagnostics.rejected[verdict.reject] || 0) + 1;
+      return;
+    }
+    const { kind } = verdict;
     const previous = found.get(url);
     requestContext = requestContext || requests.get(url) || previous?.requestContext;
     if (!previous) lastNewSource = Date.now();
     found.set(url, {
       ...previous, url, kind, size: Math.max(size, previous?.size || 0),
       fromPlayer: fromPlayer || !!previous?.fromPlayer,
-      referer: previous?.requestContext?.referer || referer || previous?.referer || pageUrl,
+      referer: previous?.requestContext?.referer ?? referer ?? previous?.referer ?? pageUrl,
       requestContext,
     });
   };
@@ -49,6 +54,7 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
   const requests = new RequestContexts(() => userAgent, (url, requestContext) => add(url, { requestContext }));
 
   const initialize = async (sessionId) => {
+    signal?.throwIfAborted();
     sessions.add(sessionId);
     await Promise.all([
       cdp.send('Runtime.enable', {}, sessionId),
@@ -59,6 +65,7 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
   };
 
   const onEvent = (event) => {
+    if (signal?.aborted) return;
     if (!sessions.has(event.sessionId)) return;
     const d = event.params || {};
     if (event.method === 'Target.attachedToTarget' && d.targetInfo?.type === 'iframe') {
@@ -77,19 +84,23 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
       for (const [key, context] of contexts) if (context.sessionId === event.sessionId) contexts.delete(key);
     } else if (event.method === 'Network.requestWillBeSent') {
       requests.request(event.sessionId, d);
-      if (LICENSE.test(d.request?.url || '') && ['XHR', 'Fetch'].includes(d.type)) drm = true;
+      if (isLicenseRequest(d.request?.url) && ['XHR', 'Fetch'].includes(d.type)) drm = true;
+      add(d.request?.url, { requestContext: requests.get(d.request?.url) });
     } else if (event.method === 'Network.requestWillBeSentExtraInfo') {
       requests.extra(event.sessionId, d);
     } else if (event.method === 'Network.responseReceived') {
       requests.response(event.sessionId, d);
       if (d.response?.status >= 400) { failed.add(d.response.url); return; }
       failed.delete(d.response?.url);
-      if (MEDIA_TYPE.test(d.response?.mimeType || '')) add(d.response.url, { type: d.response.mimeType, size: Number(d.response.headers?.['Content-Length']) || 0 });
+      if (isMediaType(d.response?.mimeType)) add(d.response.url, { type: d.response.mimeType, size: Number(d.response.headers?.['Content-Length']) || 0 });
     }
   };
   cdp.on('event', onEvent);
+  const onAbort = () => { if (target.created && cdp.connected) cdp.send('Target.closeTarget', { targetId: target.targetId }, undefined, 1000).catch(() => {}); };
+  signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
+    signal?.throwIfAborted();
     const attached = await cdp.send('Target.attachToTarget', { targetId: target.targetId, flatten: true });
     rootSessionId = attached.sessionId;
     const version = await cdp.send('Browser.getVersion');
@@ -97,10 +108,12 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
     await initialize(rootSessionId);
     const frameTree = await cdp.send('Page.getFrameTree', {}, rootSessionId);
     mainFrameId = frameTree.frameTree.frame.id;
+    signal?.throwIfAborted();
     if (target.created) await cdp.send('Page.navigate', { url: pageUrl }, rootSessionId);
 
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
+      signal?.throwIfAborted();
       await Promise.all([...initializations]);
       await Promise.all([...contexts.values()].map(async (context) => {
         try {
@@ -110,13 +123,12 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
           }, context.sessionId, 2500);
           const r = response.result?.value;
           if (!r) { diagnostics.scanErrors++; return; }
-          if (r.pageUrl && isNotPlayer(r.pageUrl)) return;
           diagnostics.framesScanned++;
           diagnostics.playersSeen = Math.max(diagnostics.playersSeen, r.players || 0);
           if (r.drm) drm = true;
           if (context.frameId === mainFrameId && r.title) title = r.title;
           r.media.forEach((url) => add(url, { fromPlayer: true, referer: r.pageUrl || pageUrl }));
-          r.embeds.forEach((url) => { if (/^https?:/i.test(url) && !ADS.test(url) && !isNotPlayer(url)) embeds.add(url); });
+          r.embeds.forEach((url) => embeds.add(url));
         } catch { diagnostics.scanErrors++; }
       }));
       // An unrelated iframe does not stop lookup. Allow newly loaded players to settle.
@@ -124,22 +136,27 @@ async function findMedia(pageUrl, { timeoutMs = 20000, refresh = false, connect 
       await sleep(750);
     }
 
-    const media = [...found.values()].filter((m) => !failed.has(m.url)).sort((a, b) =>
-      (b.fromPlayer - a.fromPlayer) || ((b.kind === 'stream') - (a.kind === 'stream')) || (b.size - a.size));
+    const media = rankMedia([
+      ...[...found.values()].filter((m) => !failed.has(m.url)).map((m) => ({ ...m, fromPlayer: m.fromPlayer || playerSources.has(m.url) })),
+      ...unconfirmedPlayerSources(playerSources, found).filter((m) => !failed.has(m.url)).map((m) => ({ ...m, referer: pageUrl, requestContext: requests.get(m.url) })),
+    ]);
     const candidates = [
       ...media.map((m) => ({ ...m, requestContext: { userAgent, referer: m.referer, ...m.requestContext } })),
-      ...[...embeds].filter((url) => { try { return new URL(url).host !== page.host; } catch { return false; } }).map((url) => ({ url, kind: 'embed', size: 0, requestContext: { userAgent, referer: pageUrl } })),
+      ...playerEmbeds(embeds, pageUrl, isNotPlayer).map((url) => ({ url, kind: 'embed', size: 0, requestContext: { userAgent, referer: pageUrl } })),
     ];
+    signal?.throwIfAborted();
     const urls = [...new Set([pageUrl, ...candidates.map((c) => c.url)])];
     const { cookies = [] } = await cdp.send('Network.getCookies', { urls }, rootSessionId);
-    return { candidates, title: title.trim(), reusedTab: !target.created, requestContext: { userAgent, referer: pageUrl }, protected: drm && !media.some((m) => m.kind === 'file'), cookieRef: browserSession.rememberCookies(cookies), diagnostics };
+    signal?.throwIfAborted();
+    return { candidates, title: title.trim(), reusedTab: !target.created, requestContext: { userAgent, referer: pageUrl }, protected: drm && !media.some((m) => m.kind === 'file'), cookieRef: browserSession.rememberCookies(cookies, { source: 'browser' }), diagnostics };
   } finally {
+    signal?.removeEventListener('abort', onAbort);
     cdp.removeListener('event', onEvent);
     // Detach from existing tabs; only close the background tab created for this lookup.
     if (rootSessionId && cdp.connected) {
-      for (const sessionId of sessions) await cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {});
+      await Promise.allSettled([...sessions].map((sessionId) => cdp.send('Target.detachFromTarget', { sessionId }, undefined, 1000)));
     }
-    if (target.created && cdp.connected) await cdp.send('Target.closeTarget', { targetId: target.targetId }).catch(() => {});
+    if (target.created && cdp.connected) await cdp.send('Target.closeTarget', { targetId: target.targetId }, undefined, 1000).catch(() => {});
   }
 }
 

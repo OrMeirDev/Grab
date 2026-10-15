@@ -19,7 +19,7 @@ const ITEMS = [
   { status: 'downloading', name: 'שיעור 1', site: 'Generic', duration: 1181, height: 1080, progress: 6, speed: '3.21MiB/s', eta: '01:28' },
   { status: 'downloading', name: LONG, site: 'BunnyCdn', duration: 533, height: 720, progress: 64, speed: '12.40MiB/s', eta: '00:07' },
   { status: 'ready', name: LONG, site: 'Generic', duration: 797, height: 1080 },
-  { status: 'error', name: '', url: 'https://whop.com/ob-trading/exp_BIcppVGOxRBmA3/app/courses/cors_D9rofCdo3B66B/lessons/lesn_yTOO6A0Juj8Uf/', errorLabel: 'לא נמצא סרטון בקישור, וגם לא בנגן שבתוך העמוד', signInHint: true },
+  { status: 'error', name: '', url: 'https://whop.com/ob-trading/exp_BIcppVGOxRBmA3/app/courses/cors_D9rofCdo3B66B/lessons/lesn_yTOO6A0Juj8Uf/', errorKind: 'notfoundPage', signInHint: true },
   { status: 'analyzing', name: '', url: 'https://my.schooler.biz/s/48083/1627997226605-2/8DxboIo', phase: 'browser', phaseBrowser: 'Brave' },
   { status: 'paused', name: LONG, site: 'YouTube', duration: 3600, height: 2160, progress: 42 },
   { status: 'done', name: 'מה זה ביטקוין', site: 'Youtube', duration: 60, height: 1080 },
@@ -94,22 +94,10 @@ app.whenReady().then(async () => {
   const shot = async (name) => { win.webContents.invalidate(); await wait(300); fs.writeFileSync(path.join(out, name), (await win.webContents.capturePage()).toPNG()); };
   const nav = (label) => js(`[...document.querySelectorAll('.sidebar button, .sidebar a')].find((b) => b.textContent.includes(${JSON.stringify(label)}))?.click()`);
 
-  // Put the rows into App's queue state (in memory only; nothing is saved).
-  const injected = await js(`(() => {
-    const items = ${JSON.stringify(ITEMS)};
-    // The app's root element belongs to App; its names are minified, so go from the DOM.
-    const appEl = document.querySelector('.app');
-    let n = appEl[Object.keys(appEl).find((k) => k.startsWith('__reactFiber'))];
-    while (n && typeof n.type !== 'function') n = n.return;
-    // The queue is the first empty list in App's state whose setter accepts items.
-    let i = 0;
-    for (let h = n && n.memoizedState; h; h = h.next, i++) {
-      if (Array.isArray(h.memoizedState) && h.queue && h.queue.dispatch && h.memoizedState.length === 0) { h.queue.dispatch(items); return i; }
-    }
-    return -1;
-  })()`);
+  // Show the rows through the download coordinator's test seam (in memory only; nothing runs or is saved).
+  require(path.join(grab, 'electron', 'main.cjs')).__e2e.seedQueue(ITEMS);
   await wait(500);
-  console.log('INJECTED hook', injected, 'rows', await js(`document.querySelectorAll('.queue-item').length`));
+  console.log('INJECTED rows', await js(`document.querySelectorAll('.queue-item').length`));
 
   for (const [w, h] of [[1000, 660], [1200, 760], [1347, 852], [1920, 1040]]) {
     win.setContentSize(w, h); toSecondScreen(win);

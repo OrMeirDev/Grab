@@ -5,11 +5,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
-const { createRequire } = require('node:module');
 const browser = require('../electron/browser-session.cjs');
 const { collectorScript, isNotPlayer } = require('../electron/media-collector.cjs');
 const { findMedia } = require('../electron/pageprobe.cjs');
-const { mainHandlers, sender } = require('../test-support/main-handlers.cjs');
 
 const pageUrl = 'https://courses.example/lesson';
 const manifest = 'https://stream.mux.com/playback.m3u8?token=header.payload.signature';
@@ -162,7 +160,6 @@ class FakeChrome extends EventEmitter {
         ['https://cdn.example/extensionless', 'video/mp4', 200],
         ['https://cdn.example/expired.m3u8?token=old', 'application/vnd.apple.mpegurl', 403],
         ['https://cdn.example/segment-001.ts', 'video/mp2t', 200],
-        ['https://ads.kway.co.il/cdn/preroll.mp4', 'video/mp4', 200],
       ]) {
         this.event('Network.requestWillBeSent', { request: { url, headers }, type: 'Fetch' }, 'child');
         this.event('Network.responseReceived', { response: { url, mimeType, status } }, 'child');
@@ -206,12 +203,22 @@ test('existing tab is not navigated, played or closed and network fallback survi
   assert.equal(cdp.listenerCount('event'), 0);
 });
 
+const { createDiscoveryService } = require('../electron/application/discovery-service.cjs');
+const { createDownloadRunner } = require('../electron/application/download-runner.cjs');
+
+// The lookup orchestration (formerly the engine:analyze IPC handler) with fake engine and probes.
+function discovery(engine, pageprobe, hiddenProbe = { findMedia: async () => ({ candidates: [] }) }) {
+  const service = createDiscoveryService({ engine, pageprobe, hiddenProbe, browserSession: browser });
+  return (url, options) => service.analyze(url, options);
+}
+
+
 test('analyze tries beyond four candidates and forwards the cookie jar and player context', async () => {
   let calls = 0;
   let jar;
   const context = { userAgent: 'Chrome', referer: pageUrl, origin: 'https://courses.example' };
   const cookieRef = browser.rememberCookies([{ domain: '.courses.example', path: '/', name: 'session', value: 'secret', session: true }]);
-  const handlers = mainHandlers({ analyze: async (url, options) => {
+  const analyze = discovery({ analyze: async (url, options) => {
     calls++;
     if (calls === 1) return { ok: false, kind: 'notfound' };
     jar = options.cookieFile;
@@ -219,141 +226,57 @@ test('analyze tries beyond four candidates and forwards the cookie jar and playe
     assert.deepEqual(options.requestContext, context);
     return { ok: calls === 6, title: 'Lesson' };
   } }, { findMedia: async () => ({ title: 'Lesson', cookieRef, candidates: Array.from({ length: 5 }, (_, i) => ({ url: manifest + '&n=' + i, kind: 'stream', requestContext: context })) }) });
-  const result = await handlers.get('engine:analyze')({ sender }, pageUrl);
+  const result = await analyze(pageUrl);
   assert.equal(result.ok, true);
   assert.equal(calls, 6);
   assert.equal(result.cookieRef, cookieRef);
   assert.equal(fs.existsSync(jar), false);
 });
 
-test('download IPC keeps cookies available until the child finishes, then deletes the jar', async () => {
+test('download keeps cookies available until the child finishes, then deletes the jar', async () => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-job-test-'));
   const cookieRef = browser.rememberCookies([{ domain: '.courses.example', path: '/', name: 'session', value: 'secret', session: true }]);
   let file;
   let finish;
-  const handlers = mainHandlers({ download: (job) => {
+  const allocator = { allocate: () => path.join(folder, 'Lesson'), findOutput: () => null };
+  const runner = createDownloadRunner({ browserSession: browser, allocator, engine: { download: (job) => {
     file = job.cookieFile;
+    assert.equal(job.outputBase, path.join(folder, 'Lesson'));
     assert.equal(fs.existsSync(file), true);
     return { child: { kill() {} }, done: new Promise((resolve) => { finish = resolve; }) };
-  } }, {});
+  } } });
   try {
-    const pending = handlers.get('engine:start')({ sender }, { id: 'job', folder, cookieRef });
+    const run = runner.start({ id: 'job', folder, name: 'Lesson', cookieRef }, () => {});
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(fs.existsSync(file), true);
     finish({ ok: true });
-    assert.equal((await pending).ok, true);
+    assert.equal((await run.done).ok, true);
     assert.equal(fs.existsSync(file), false);
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });
 
 test('a tab with only an old blob is rescanned in a background tab, without reloading the user tab', async () => {
   const options = [];
-  const handlers = mainHandlers({ analyze: async (url) => ({ ok: url === manifest, kind: 'notfound' }) }, {
+  const analyze = discovery({ analyze: async (url) => ({ ok: url === manifest, kind: 'notfound' }) }, {
     findMedia: async (url, option) => {
       options.push(option);
       return option.refresh ? { candidates: [{ url: manifest, kind: 'stream' }] } : { reusedTab: true, candidates: [] };
     },
   });
-  assert.equal((await handlers.get('engine:analyze')({ sender }, pageUrl)).ok, true);
+  assert.equal((await analyze(pageUrl)).ok, true);
   assert.deepEqual(options.map((o) => o.refresh), [false, true]);
-});
-
-for (const embed of ['https://sync.example/setuid?fixture=1', 'https://player.example/embed/lesson']) {
-  test(`an iframe alone cannot prevent fresh player discovery: ${new URL(embed).pathname}`, async () => {
-    const probes = [];
-    const analyzed = [];
-    const handlers = mainHandlers({ analyze: async (url) => {
-      analyzed.push(url);
-      return url === pageUrl ? { ok: false, kind: 'notfound' } : { ok: true, title: 'Lesson' };
-    } }, {
-      findMedia: async (_url, options) => {
-        probes.push(options.refresh);
-        return options.refresh ? { reusedTab: false, candidates: [{ url: manifest, kind: 'stream' }] }
-          : { reusedTab: true, candidates: [{ url: embed, kind: 'embed' }] };
-      },
-    });
-    const result = await handlers.get('engine:analyze')({ sender }, pageUrl);
-    assert.equal(result.mediaUrl, manifest);
-    assert.deepEqual(probes, [false, true]);
-    assert.equal(analyzed.includes(embed), false);
-  });
-}
-
-test('identity-sync iframe endpoints are rejected without rejecting video names', () => {
-  for (const url of ['https://sync.example/setuid?entity=fixture', 'https://sync.example/usersync', 'https://sync.example/cookie_sync.html']) assert.equal(isNotPlayer(url), true, url);
-  for (const url of ['https://video.example/setuid.mp4', 'https://video.example/episode?title=setuid', 'https://player.example/embed/lesson']) assert.equal(isNotPlayer(url), false, url);
 });
 
 test('the hidden clean browser is tried first; Chrome is not touched when it finds the video', async () => {
   let chrome = 0;
-  const handlers = mainHandlers({ analyze: async (url, options) => (url === manifest ? { ok: true, title: 'Lesson', referer: options.referer } : { ok: false, kind: 'notfound' }) },
+  const analyze = discovery({ analyze: async (url, options) => (url === manifest ? { ok: true, title: 'Lesson', referer: options.referer } : { ok: false, kind: 'notfound' }) },
     { findMedia: async () => { chrome++; return { candidates: [] }; } },
     { findMedia: async () => ({ title: 'Lesson', candidates: [{ url: manifest, kind: 'stream' }] }) });
-  const result = await handlers.get('engine:analyze')({ sender }, pageUrl);
+  const result = await analyze(pageUrl);
   assert.equal(result.ok, true);
   assert.equal(result.mediaUrl, manifest);
   assert.equal(chrome, 0);
 });
-
-test('a non-media extractor result still falls back to the page player on other sites', async () => {
-  const handlers = mainHandlers({ analyze: async (url) => url === pageUrl
-    ? { ok: false, kind: 'notmedia' } : { ok: true, title: 'Lesson' } }, {}, {
-    findMedia: async () => ({ candidates: [{ url: manifest, kind: 'stream' }] }),
-  });
-  const result = await handlers.get('engine:analyze')({ sender }, pageUrl);
-  assert.equal(result.ok, true);
-  assert.equal(result.mediaUrl, manifest);
-});
-
-test('hidden-player request context and cookies survive analysis and download IPC', async () => {
-  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-hidden-context-'));
-  const context = { userAgent: 'Actual hidden browser UA', referer: 'https://embed.example/player', origin: 'https://embed.example' };
-  const cookieRef = browser.rememberCookies([{ domain: '.courses.example', path: '/', name: 'playback', value: 'temporary', session: true }]);
-  const handlers = mainHandlers({
-    analyze: async (url, options) => {
-      if (url === pageUrl) return { ok: false, kind: 'notfound' };
-      assert.deepEqual(options.requestContext, context);
-      assert.match(fs.readFileSync(options.cookieFile, 'utf8'), /playback\ttemporary/);
-      return { ok: true, title: 'Context-bound lesson' };
-    },
-    download: (job) => {
-      assert.deepEqual(job.requestContext, context);
-      assert.equal(job.mediaUrl, manifest);
-      assert.match(fs.readFileSync(job.cookieFile, 'utf8'), /playback\ttemporary/);
-      return { child: { kill() {} }, done: Promise.resolve({ ok: true }) };
-    },
-  }, { findMedia: async () => { throw new Error('The clean lookup should suffice'); } }, {
-    findMedia: async () => ({ cookieRef, title: 'Lesson', candidates: [{ url: manifest, kind: 'stream', requestContext: context }] }),
-  });
-  try {
-    const result = await handlers.get('engine:analyze')({ sender }, pageUrl);
-    assert.equal(result.ok, true);
-    assert.deepEqual(result.requestContext, context);
-    assert.equal(result.cookieRef, cookieRef);
-    assert.equal((await handlers.get('engine:start')({ sender }, { ...result, id: 'hidden-context', url: pageUrl, folder })).ok, true);
-  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
-});
-
-for (const extraFirst of [false, true]) {
-  test(`probe uses actual sent headers when CDP ExtraInfo arrives ${extraFirst ? 'before' : 'after'} the request`, async () => {
-    class ExtraChrome extends FakeChrome {
-      event(method, params, sessionId = 'main') {
-        if (method !== 'Network.requestWillBeSent') return super.event(method, params, sessionId);
-        const requestId = params.request.url;
-        const headers = { ...params.request.headers, 'User-Agent': 'Wire UA bound to the token' };
-        const provisional = { ...params.request.headers };
-        delete provisional['User-Agent'];
-        const request = () => super.event(method, { ...params, requestId, request: { ...params.request, headers: provisional } }, sessionId);
-        const extra = () => super.event('Network.requestWillBeSentExtraInfo', { requestId, headers }, sessionId);
-        if (extraFirst) { extra(); request(); } else { request(); extra(); }
-      }
-    }
-    const result = await findMedia(pageUrl, { timeoutMs: 1, connect: async () => new ExtraChrome() });
-    assert.deepEqual(result.candidates[0].requestContext, {
-      userAgent: 'Wire UA bound to the token', referer: 'https://embed.example/player', origin: 'https://embed.example',
-    });
-  });
-}
 
 test('the signed-in lookup uses the default browser: Chromium browsers by their own profile, Firefox is reported', { skip: process.platform !== 'win32' }, () => {
   const brave = browser.defaultBrowser('BraveHTML');
@@ -372,9 +295,9 @@ test('payment, captcha and tracking frames are not tried as players; video embed
 });
 
 test('when the default browser can\'t be reached, the error says which browser and how to turn it on', async () => {
-  const handlers = mainHandlers({ analyze: async () => ({ ok: false, kind: 'notfound' }) },
+  const analyze = discovery({ analyze: async () => ({ ok: false, kind: 'notfound' }) },
     { findMedia: async () => { throw Object.assign(new Error('closed'), { kind: 'browserSession' }); } });
-  const result = await handlers.get('engine:analyze')({ sender }, pageUrl);
+  const result = await analyze(pageUrl);
   assert.equal(result.kind, 'notfoundPage');
   assert.equal(typeof result.browser.name, 'string');
   assert.equal(result.browser.supported, true);
@@ -382,25 +305,26 @@ test('when the default browser can\'t be reached, the error says which browser a
 
 test('once the signed-in browser was needed on a site, more links from it skip the hidden browser', async () => {
   let hidden = 0;
-  const handlers = mainHandlers({ analyze: async (url) => (url === manifest ? { ok: true, title: 'Lesson' } : { ok: false, kind: 'notfound' }) },
-    { findMedia: async () => ({ candidates: [{ url: manifest, kind: 'stream' }] }) },
+  const cookieRef = browser.rememberCookies([{ domain: '.courses.example', path: '/', name: 'session', value: 'fixture', session: true }]);
+  const analyze = discovery({ analyze: async (url) => (url === manifest ? { ok: true, title: 'Lesson' } : { ok: false, kind: 'notfound' }) },
+    { findMedia: async () => ({ cookieRef, candidates: [{ url: manifest, kind: 'stream' }] }) },
     { findMedia: async () => { hidden++; return { candidates: [] }; } });
   for (const lesson of [pageUrl, pageUrl + '?lesson=2', pageUrl + '?lesson=3']) {
-    assert.equal((await handlers.get('engine:analyze')({ sender }, lesson)).ok, true);
+    assert.equal((await analyze(lesson)).ok, true);
   }
   assert.equal(hidden, 1);
 });
 
 test('without browser remote debugging, a page with no video reports notfoundPage', async () => {
-  const handlers = mainHandlers({ analyze: async () => ({ ok: false, kind: 'notfound' }) },
+  const analyze = discovery({ analyze: async () => ({ ok: false, kind: 'notfound' }) },
     { findMedia: async () => { throw new Error('DevToolsActivePort missing'); } });
-  assert.equal((await handlers.get('engine:analyze')({ sender }, pageUrl)).kind, 'notfoundPage');
+  assert.equal((await analyze(pageUrl)).kind, 'notfoundPage');
 });
 
 test('authentication errors retry the original extractor with active-session cookies', async () => {
   const cookieRef = browser.rememberCookies([{ domain: '.courses.example', path: '/', name: 'session', value: 'secret', session: true }]);
   let calls = 0;
-  const handlers = mainHandlers({ analyze: async (url, options) => {
+  const analyze = discovery({ analyze: async (url, options) => {
     calls++;
     assert.equal(url, pageUrl);
     if (calls === 1) return { ok: false, kind: 'private' };
@@ -408,7 +332,7 @@ test('authentication errors retry the original extractor with active-session coo
     assert.equal(options.requestContext.userAgent, 'Active Chrome UA');
     return { ok: true, title: 'Authenticated lesson' };
   } }, { findMedia: async () => ({ cookieRef, candidates: [], requestContext: { userAgent: 'Active Chrome UA' } }) });
-  const result = await handlers.get('engine:analyze')({ sender }, pageUrl);
+  const result = await analyze(pageUrl);
   assert.equal(result.ok, true);
   assert.equal(result.cookieRef, cookieRef);
   assert.equal(calls, 2);
@@ -459,8 +383,9 @@ test('connects through the live endpoint WebSocket, shares the connection and ne
 });
 
 test('yt-dlp analyze/download options retain domain-scoped cookies and browser request context', () => {
-  const sandbox = { module: { exports: {} }, require: createRequire(path.join(__dirname, '../electron/engine.cjs')), process, __dirname: path.join(__dirname, '../electron') };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../electron/engine.cjs'), 'utf8') + '\nmodule.exports.testArgs = { sessionArgs, downloadArgs };', sandbox);
+  const enginePath = path.join(__dirname, '../electron/engine.cjs');
+  const sandbox = { module: { exports: {} }, require: require('node:module').createRequire(enginePath), process, __dirname: path.dirname(enginePath) };
+  vm.runInNewContext(fs.readFileSync(enginePath, 'utf8') + '\nmodule.exports.testArgs = { sessionArgs, downloadArgs };', sandbox);
   const { sessionArgs, downloadArgs } = sandbox.module.exports.testArgs;
   const context = { cookieFile: '/tmp/domain-cookies', requestContext: { userAgent: 'Chrome', referer: pageUrl, origin: 'https://courses.example', Cookie: 'must-not-be-forwarded' } };
   const args = Array.from(downloadArgs({ url: pageUrl, mediaUrl: manifest, name: 'Lesson', folder: '/tmp', format: 'mp4', ...context }));

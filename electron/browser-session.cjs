@@ -2,7 +2,7 @@ const { EventEmitter } = require('events');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const crypto = require('crypto');
+const { CookieVault } = require('./infrastructure/cookie-vault.cjs');
 
 // The user's default browser (where they are signed in). Chromium-based browsers all have the same
 // remote-debugging switch (<scheme>://inspect/#remote-debugging) and DevToolsActivePort file.
@@ -133,7 +133,8 @@ async function connectBrowser({ endpointFile, browser = endpointFile ? { name: '
   connections.set(key, connection);
   connection.connecting = (async () => {
     const WebSocket = require('ws');
-    const socket = new WebSocket(readEndpoint(browser.endpointFile, browser), { handshakeTimeout: 60000, perMessageDeflate: false });
+    const endpoint = readEndpoint(browser.endpointFile, browser);
+    const socket = new WebSocket(endpoint, { handshakeTimeout: 60000, perMessageDeflate: false });
     connection.socket = socket;
     await new Promise((resolve, reject) => {
       const done = (error) => {
@@ -149,10 +150,11 @@ async function connectBrowser({ endpointFile, browser = endpointFile ? { name: '
       socket.once('error', failed);
       socket.once('close', failed);
     });
-    const connected = new CdpClient(socket);
+    const connected = watchConnection(new CdpClient(socket));
     try { await connected.send('Browser.getVersion', {}, undefined, 60000); }
     catch (error) { connected.disconnect(); throw sessionError(error.message, 'browserSession', browser); }
     connected.browser = browser;
+    connected.endpoint = endpoint;
     connection.client = connected;
     connected.once('disconnected', () => { if (connections.get(key) === connection) connections.delete(key); });
     return connected;
@@ -184,41 +186,18 @@ async function chooseTarget(cdp, pageUrl, { refresh = false } = {}) {
   return { targetId, created: true };
 }
 
-const cookieSnapshots = new Map();
-const activeCookieDirs = new Set();
-function rememberCookies(cookies) {
-  const reference = crypto.randomUUID();
-  cookieSnapshots.set(reference, { cookies, at: Date.now() });
-  for (const [key, value] of cookieSnapshots) if (Date.now() - value.at > 24 * 60 * 60 * 1000) cookieSnapshots.delete(key);
-  return reference;
+const vault = new CookieVault();
+const rememberCookies = (cookies, options) => vault.remember(cookies, options);
+const withSessionCookies = (reference, work) => vault.withJar(reference, work);
+const hasCookies = (reference) => !!reference && vault.has(reference);
+const forgetCookies = (reference) => vault.forget(reference);
+function watchConnection(cdp) {
+  cdp.once('disconnected', () => vault.forgetSource('browser'));
+  return cdp;
 }
-
-async function withSessionCookies(reference, work) {
-  const snapshot = cookieSnapshots.get(reference);
-  if (!snapshot?.cookies.length) return work(undefined);
-  const lines = snapshot.cookies.filter((c) => ![c.domain, c.path, c.name, c.value].some((v) => /[\t\r\n]/.test(v || ''))).map((c) => [
-    (c.httpOnly ? '#HttpOnly_' : '') + c.domain,
-    c.domain.startsWith('.') ? 'TRUE' : 'FALSE', c.path || '/',
-    c.secure ? 'TRUE' : 'FALSE', c.session || c.expires < 0 ? 0 : Math.floor(c.expires || 0), c.name, c.value,
-  ].join('\t'));
-  if (!lines.length) return work(undefined);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-cookies-'));
-  activeCookieDirs.add(dir);
-  const file = path.join(dir, 'cookies.txt');
-  try {
-    fs.writeFileSync(file, '# Netscape HTTP Cookie File\n' + lines.join('\n') + '\n', { mode: 0o600 });
-    return await work(file);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-    activeCookieDirs.delete(dir);
-  }
-}
-
 function disconnectBrowser() {
   for (const connection of connections.values()) connection.socket?.close();
   connections.clear();
-  // Called on app shutdown, including while a download is being cancelled.
-  for (const dir of activeCookieDirs) fs.rmSync(dir, { recursive: true, force: true });
-  activeCookieDirs.clear();
+  vault.clear();
 }
-module.exports = { connectBrowser, defaultBrowser, browserForPage, isMakoPage, chooseTarget, rememberCookies, withSessionCookies, disconnectBrowser, CdpClient, readEndpoint };
+module.exports = { connectBrowser, defaultBrowser, browserForPage, isMakoPage, chooseTarget, rememberCookies, withSessionCookies, forgetCookies, hasCookies, watchConnection, disconnectBrowser, scavengeCookieJars: () => vault.scavenge(), CdpClient, readEndpoint };

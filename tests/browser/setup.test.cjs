@@ -191,3 +191,31 @@ test('real registry round trip under a throwaway host name (opt-in: GRAB_TEST_RE
   for (const b of setup.BROWSER_IDS) assert.equal(await setup.windowsRegistry.get(setup.REGISTRY_KEYS[b](hostName)), null);
   void execFileSync;
 });
+
+test('packaged integration isolates the shipped runtime so an active browser does not lock the app during upgrades', async (t) => {
+  const dir = tmpDir('grab packaged isolation');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const packaged = path.join(dir, 'installed');
+  const resources = path.join(packaged, 'resources');
+  const integrationDir = path.join(dir, 'connection');
+  fs.mkdirSync(resources, { recursive: true });
+  fs.writeFileSync(path.join(resources, 'app.asar'), 'fixture marker');
+  fs.writeFileSync(path.join(packaged, 'Grab.exe'), 'fixture embedded runtime');
+  fs.writeFileSync(path.join(packaged, 'node.dll'), 'fixture runtime dependency');
+  fs.cpSync(path.join(root, 'extension'), path.join(resources, 'extension'), { recursive: true });
+  fs.cpSync(path.join(root, 'native-host'), path.join(resources, 'native-host'), { recursive: true });
+  const registry = memoryRegistry();
+  const options = { sourceRoot: resources, integrationDir, runtime: path.join(packaged, 'Grab.exe'), appVersion: '1.7.0-rc.1', browsers: ['chrome'], registry };
+  const installed = await setup.install(options);
+  assert.equal(path.basename(installed.hostRuntime), 'GrabBrowserHost.exe');
+  assert.notEqual(path.dirname(installed.hostRuntime), packaged);
+  assert.equal(fs.readFileSync(installed.hostRuntime, 'utf8'), 'fixture embedded runtime');
+  assert.equal(fs.readFileSync(path.join(path.dirname(installed.hostRuntime), 'node.dll'), 'utf8'), 'fixture runtime dependency');
+  assert.ok(fs.readFileSync(path.join(integrationDir, 'native-host', 'grab-host-chrome.cmd'), 'utf8').includes(installed.hostRuntime));
+  assert.equal((await setup.install(options)).hostRuntime, installed.hostRuntime, 'one prepared runtime per app revision');
+  let stoppedAfterUnregister = false;
+  await setup.uninstall({ integrationDir, registry, beforeRemove: async () => { assert.equal(registry.keys.size, 0); stoppedAfterUnregister = true; } });
+  assert.equal(stoppedAfterUnregister, true);
+  assert.equal(fs.existsSync(installed.hostRuntime), false);
+  assert.equal(fs.existsSync(options.runtime), true, 'uninstalling browser integration never deletes Grab itself');
+});

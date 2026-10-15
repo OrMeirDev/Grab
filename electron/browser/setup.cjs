@@ -16,7 +16,7 @@ const { execFile } = require('child_process');
 const protocol = require('../../extension/lib/protocol.js');
 
 const HOST_NAME = protocol.HOST_NAME;
-const INTEGRATION_VERSION = 2;
+const INTEGRATION_VERSION = 3;
 const HOST_FILES = ['host.cjs', 'framing.cjs', 'ipc-paths.cjs'];
 
 const REGISTRY_KEYS = {
@@ -109,17 +109,41 @@ function launcherText({ runtime, hostScript, browser, integrationDir }) {
 // Standalone dev runtime: the Electron binary (it runs the host as plain Node with ELECTRON_RUN_AS_NODE).
 function resolveRuntime() {
   if (process.versions.electron) return process.execPath;
-  try { const electron = require('electron'); if (typeof electron === 'string') return electron; } catch { /* not installed */ }
   return process.execPath;
 }
 
 const installFile = (dir) => path.join(dir, 'install.json');
 function readInstall(dir) { try { return JSON.parse(fs.readFileSync(installFile(dir), 'utf8')); } catch { return null; } }
 
+// The browser keeps its native host alive after the UI closes. Run it from a versioned
+// private copy of the shipped runtime, under a distinct executable name, so an active
+// extension cannot lock Grab.exe/DLLs or look like the UI to the Windows installer.
+async function prepareHostRuntime(runtime, sourceRoot, integrationDir, appVersion) {
+  if (!fs.existsSync(path.join(sourceRoot, 'app.asar'))) return runtime;
+  const stat = fs.statSync(runtime);
+  const revision = crypto.createHash('sha256').update([runtime, appVersion, stat.size, stat.mtimeMs].join(':')).digest('hex').slice(0, 16);
+  const dir = path.join(integrationDir, 'runtimes', revision);
+  const target = path.join(dir, 'GrabBrowserHost.exe');
+  if (fs.existsSync(target) && fs.existsSync(path.join(dir, '.ready'))) return target;
+  const stage = dir + '-' + crypto.randomUUID();
+  await fs.promises.mkdir(stage, { recursive: true });
+  try {
+    const root = path.dirname(runtime);
+    for (const ent of await fs.promises.readdir(root, { withFileTypes: true })) {
+      if (ent.isFile()) await fs.promises.copyFile(path.join(root, ent.name), path.join(stage, ent.name === path.basename(runtime) ? 'GrabBrowserHost.exe' : ent.name));
+      else if (ent.isDirectory() && ent.name === 'locales') await fs.promises.cp(path.join(root, ent.name), path.join(stage, ent.name), { recursive: true });
+    }
+    await fs.promises.writeFile(path.join(stage, '.ready'), appVersion);
+    await fs.promises.rename(stage, dir);
+  } catch (error) { await fs.promises.rm(stage, { recursive: true, force: true }); throw error; }
+  return target;
+}
+
 // sourceRoot has extension\ and native-host\ (the repository in development, resources\ when packaged).
 async function install({ sourceRoot, integrationDir = defaultIntegrationDir(), browsers = BROWSER_IDS, runtime = resolveRuntime(), appVersion = '0', registry = windowsRegistry, hostName = HOST_NAME } = {}) {
   if (!browsers.every((b) => BROWSER_IDS.includes(b))) throw new Error('Unsupported browser in install request');
   if (!fs.existsSync(runtime)) throw new Error('The Grab program file for the browser connection was not found');
+  const hostRuntime = await prepareHostRuntime(runtime, sourceRoot, integrationDir, appVersion);
   const identity = readExtensionIdentity(path.join(sourceRoot, 'extension'));
   copyDirExact(path.join(sourceRoot, 'extension'), path.join(integrationDir, 'extension'));
   const hostDir = path.join(integrationDir, 'native-host');
@@ -131,7 +155,7 @@ async function install({ sourceRoot, integrationDir = defaultIntegrationDir(), b
   const registered = [];
   for (const browser of requested) {
     const launcher = path.join(hostDir, `grab-host-${browser}.cmd`);
-    fs.writeFileSync(launcher, launcherText({ runtime, hostScript: path.join(hostDir, 'host.cjs'), browser, integrationDir }));
+    fs.writeFileSync(launcher, launcherText({ runtime: hostRuntime, hostScript: path.join(hostDir, 'host.cjs'), browser, integrationDir }));
     const manifestDir = path.join(integrationDir, 'manifests', browser);
     fs.mkdirSync(manifestDir, { recursive: true });
     const manifest = path.join(manifestDir, `${hostName}.json`);
@@ -145,19 +169,20 @@ async function install({ sourceRoot, integrationDir = defaultIntegrationDir(), b
     await registry.set(REGISTRY_KEYS[browser](hostName), manifest);
     registered.push(browser);
   }
-  const record = { appVersion, integrationVersion: INTEGRATION_VERSION, runtime, extensionId: identity.id, extensionVersion: identity.version, browsers: registered, hostName, at: new Date().toISOString() };
+  const record = { appVersion, integrationVersion: INTEGRATION_VERSION, runtime, hostRuntime, extensionId: identity.id, extensionVersion: identity.version, browsers: registered, hostName, at: new Date().toISOString() };
   fs.writeFileSync(installFile(integrationDir), JSON.stringify(record, null, 2));
   return { ...record, extensionDir: path.join(integrationDir, 'extension'), origin: identity.origin };
 }
 
 // Removes only Grab's registration, host, manifests and (optionally) the unpacked extension folder.
-async function uninstall({ integrationDir = defaultIntegrationDir(), registry = windowsRegistry, hostName = HOST_NAME, removeExtension = true } = {}) {
+async function uninstall({ integrationDir = defaultIntegrationDir(), registry = windowsRegistry, hostName = HOST_NAME, removeExtension = true, beforeRemove = async () => {} } = {}) {
   const removed = [];
   for (const browser of BROWSER_IDS) {
     const key = REGISTRY_KEYS[browser](hostName);
     if (await registry.get(key)) { await registry.remove(key); removed.push(browser); }
   }
-  for (const part of ['native-host', 'manifests', ...(removeExtension ? ['extension'] : [])]) fs.rmSync(path.join(integrationDir, part), { recursive: true, force: true });
+  await beforeRemove(); // registrations are gone before any live host is stopped (no reconnect race)
+  for (const part of ['native-host', 'manifests', 'runtimes', ...(removeExtension ? ['extension'] : [])]) fs.rmSync(path.join(integrationDir, part), { recursive: true, force: true });
   fs.rmSync(installFile(integrationDir), { force: true });
   return { removed };
 }
@@ -185,6 +210,7 @@ async function health({ integrationDir = defaultIntegrationDir(), registry = win
         if ((manifest.allowed_origins || []).some((o) => /\*/.test(o) || !/^chrome-extension:\/\/[a-p]{32}\/$/.test(o))) problems.push('bad_origin');
       } catch { problems.push('manifest_invalid'); }
       if (record.runtime && !fs.existsSync(record.runtime)) problems.push('runtime_missing');
+      if (record.hostRuntime && !fs.existsSync(record.hostRuntime)) problems.push('runtime_missing');
       if (HOST_FILES.some((f) => !fs.existsSync(path.join(integrationDir, 'native-host', f)))) problems.push('host_script_missing');
       if (record.appVersion !== appVersion || record.integrationVersion !== INTEGRATION_VERSION || record.extensionVersion !== expected?.version) problems.push('stale_version');
     }

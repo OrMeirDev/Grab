@@ -178,14 +178,18 @@ class BrowserHub extends EventEmitter {
   }
 
   // Request/response with a correlation id and a deadline. The reply must come from the same connection.
-  request(key, type, payload, { timeoutMs = 10000 } = {}) {
+  request(key, type, payload, { timeoutMs = 10000, signal } = {}) {
     const conn = this.byKey.get(key);
     if (!conn) return Promise.reject(Object.assign(new Error('Browser instance not connected'), { code: 'not_connected' }));
     const message = protocol.make(type, payload);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(message.id); reject(Object.assign(new Error('No reply from the browser'), { code: 'timeout' })); }, timeoutMs);
-      this.pending.set(message.id, { resolve, reject, timer, conn });
-      if (!this.send(conn, message)) { clearTimeout(timer); this.pending.delete(message.id); reject(Object.assign(new Error('Send failed'), { code: 'not_connected' })); }
+      const finish = (fn, value) => { clearTimeout(timer); this.pending.delete(message.id); signal?.removeEventListener('abort', onAbort); fn(value); };
+      const onAbort = () => finish(reject, Object.assign(new Error('Cancelled'), { code: 'cancelled' }));
+      const timer = setTimeout(() => finish(reject, Object.assign(new Error('No reply from the browser'), { code: 'timeout' })), timeoutMs);
+      if (signal?.aborted) return onAbort();
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.pending.set(message.id, { resolve: (v) => finish(resolve, v), reject: (e) => finish(reject, e), timer, conn });
+      if (!this.send(conn, message)) finish(reject, Object.assign(new Error('Send failed'), { code: 'not_connected' }));
     });
   }
 

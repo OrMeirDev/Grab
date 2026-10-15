@@ -112,6 +112,8 @@ test('real Chromium + real extension + real native host + hub', { skip, timeout:
     });
     svc.hub = hub;
     svc.detected = { browsers: [{ id: 'chrome', exe: first.exe }], systemDefault: 'chrome' };
+    // This harness registers the same real host under Chromium's isolated registry key.
+    svc.health = { installed: true, results: [{ browser: 'chrome', registered: true, problems: [] }] };
     const analysis = await svc.analyze(fixture.url('/hls'), { itemId: 'real-download', browser: 'chrome', instance: key });
     assert.equal(analysis.ok, true, JSON.stringify(analysis));
     assert.equal(analysis.requestContext.origin, fixture.pageOrigin);
@@ -127,6 +129,65 @@ test('real Chromium + real extension + real native host + hub', { skip, timeout:
       assert.ok(mediaRequests.some((r) => /seg\d+\.ts$/.test(r.path)), 'the actual video segments were downloaded');
       assert.ok(mediaRequests.every((r) => r.authorized), 'every manifest and segment request kept the session and playback context');
     } finally { if (analysis.infoFile) fs.rmSync(analysis.infoFile, { force: true }); }
+  });
+
+  await run('real popup Send to GRAB → main coordinator → authenticated download, without a renderer', async () => {
+    const { DownloadCoordinator } = require('../electron/application/download-coordinator.cjs');
+    const { createDiscoveryService } = require('../electron/application/discovery-service.cjs');
+    const { createDownloadRunner } = require('../electron/application/download-runner.cjs');
+    const { OutputAllocator } = require('../electron/infrastructure/output-allocator.cjs');
+    const history = [];
+    const allocator = new OutputAllocator();
+    const runner = createDownloadRunner({ engine, browserSession: session, allocator });
+    let coordinator;
+    const svc = new BrowserService({ sourceRoot: root, integrationDir: dir, engine, session,
+      getSettings: () => ({ browser: { defaultBrowser: 'edge', siteRules: [] } }), saveSettings() {},
+      deps: { isRunning: async () => true },
+      acceptIncoming: async (incoming) => {
+        const r = coordinator.add([{ url: incoming.url }], { browser: incoming.browserId, instance: incoming.instanceKey, ref: incoming.ref, sourceId: incoming.sourceId, autoQueue: true });
+        return r.added ? 'accepted' : 'duplicate';
+      },
+    });
+    svc.hub = hub;
+    svc.identity = setup.readExtensionIdentity(path.join(root, 'extension'));
+    svc.detected = { browsers: [{ id: 'chrome', exe: first.exe }, { id: 'edge', exe: first.exe }], systemDefault: 'edge' };
+    svc.health = { installed: true, results: [{ browser: 'chrome', registered: true, problems: [] }] };
+    const discovery = createDiscoveryService({ engine, browserSession: session, getBrowserService: () => svc,
+      hiddenProbe: { findMedia: async () => assert.fail('a send must not visit anonymously') }, pageprobe: {} });
+    coordinator = new DownloadCoordinator({ random: () => 0,
+      discover: (url, options) => discovery.analyze(url, options),
+      startDownload: (plan, progress) => runner.start(plan, progress),
+      getSettings: async () => ({ folder: dir, format: 'mp4', quality: 'best' }),
+      hasSession: (ref) => session.hasCookies(ref),
+      recordCompletion: async (entry) => history.push(entry),
+      reportJob: (ref, report) => svc.reportJob(ref, report),
+      releaseContext: (job, { finished }) => { svc.releaseSession(job.cookieRef); if (job.infoFile) fs.rmSync(job.infoFile, { force: true }); if (finished) allocator.release(job.id); },
+    });
+    const incoming = (inst, message) => { if (message.type === 'send-to-grab') svc.onSend(inst, message); };
+    hub.on('message', incoming);
+    const page = await first.newTab(fixture.url('/hls'));
+    const popup = await first.newTab(installed.origin + 'popup/popup.html');
+    const scan = () => first.evaluate(popup, `(async () => { const tab = (await chrome.tabs.query({})).find((t) => t.url === ${JSON.stringify(fixture.url('/hls'))}); return tab && chrome.runtime.sendMessage({type:'popup:scan',tabId:tab.id}); })()`);
+    try {
+      await until(() => first.evaluate(popup, "typeof chrome !== 'undefined' && !!chrome.runtime?.id").catch(() => false), 10000, 'popup extension context');
+      await until(async () => (await scan())?.candidates?.length, 15000, 'the actual popup to see the media');
+      fixture.clearRequests();
+      const replies = await first.evaluate(popup, `(async () => { const tab = (await chrome.tabs.query({})).find((t) => t.url === ${JSON.stringify(fixture.url('/hls'))}); return Promise.all([1,2].map(() => chrome.runtime.sendMessage({type:'popup:send',tabId:tab.id}))); })()`);
+      assert.deepEqual(replies.map((r) => r.result.status).sort(), ['accepted', 'duplicate']);
+      assert.equal(coordinator.jobs.length, 1);
+      await until(() => ['done', 'error'].includes(coordinator.jobs[0].status), 60000, 'the coordinator to finish');
+      assert.equal(coordinator.jobs[0].status, 'done', JSON.stringify(coordinator.jobs[0].error));
+      assert.equal(coordinator.jobs[0].browserPick, 'chrome', 'the sending browser wins over the Edge default');
+      assert.equal(history.length, 1);
+      assert.ok(fs.statSync(history[0].file).size > 1000);
+      await until(async () => (await scan())?.send?.terminal === 'completed', 10000, 'verified completion to reach the popup');
+      assert.ok(fixture.requests.filter((r) => r.path.startsWith('/media/')).every((r) => r.authorized));
+    } finally {
+      hub.removeListener('message', incoming);
+      await coordinator.shutdown();
+      await first.closeTab(popup);
+      await first.closeTab(page);
+    }
   });
 
   await run('HLS via XMLHttpRequest, DASH and an opaque URL (content-type only)', async () => {

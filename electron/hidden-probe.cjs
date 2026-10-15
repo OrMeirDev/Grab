@@ -3,58 +3,68 @@
 // addresses its player uses: video elements, the stream requests it makes, embedded players.
 // Works on public pages with no setup. The user's default browser (pageprobe.cjs) is only the backup.
 // A DRM-protected player is reported, never touched.
+//
+// Each source keeps the context its player fetched it with (User-Agent, Referer, Origin), and
+// the cookies the page set in this throwaway session are kept behind an opaque handle, so yt-dlp
+// can fetch the source the way the player did (GRB-12).
 const { BrowserWindow, session } = require('electron');
 const { collectorScript, isNotPlayer } = require('./media-collector.cjs');
-const browserSession = require('./browser-session.cjs');
+const { classify, unconfirmedPlayerSources, rankMedia, playerEmbeds, isLicenseRequest, isMediaType } = require('./domain/candidate-policy.cjs');
 const { contextFromHeaders } = require('./request-context.cjs');
+const browserSession = require('./browser-session.cjs');
 
-const FILE = /\.(mp4|webm|mov|m4v|mkv|mp3|m4a|ogg|opus|wav|flac|aac)(\?|#|$)/i;
-const MANIFEST = /\.(m3u8|mpd)(\?|#|$)/i;
-const MEDIA_TYPE = /^(video\/|audio\/|application\/(vnd\.apple\.mpegurl|x-mpegurl|dash\+xml))/i;
-// Pieces of a stream (the manifest is what's wanted) and common ad servers.
-const SEGMENT = /\.(ts|m4s)(\?|#|$)|[/_-](seg|segment|chunk|frag)[-_]?\d|init[-_]?\d*\.mp4/i;
-const ADS = /doubleclick|googlesyndication|googleads|imasdk|adnxs|adsystem|advert|\/ads?\/|:\/\/ads?\./i;
-const LICENSE = /widevine|playready|fairplay|\/license/i;
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const header = (headers, name) => {
+  const key = Object.keys(headers || {}).find((k) => k.toLowerCase() === name);
+  return key ? [].concat(headers[key])[0] : undefined;
+};
 
-async function findMedia(pageUrl, { timeoutMs = 20000 } = {}) {
+async function findMedia(pageUrl, { timeoutMs = 20000, signal } = {}) {
+  signal?.throwIfAborted();
   const ses = session.fromPartition(`grab-probe-${Date.now()}-${Math.random()}`, { cache: false });
   ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+  ses.setPermissionCheckHandler(() => false);
   ses.on('will-download', (e) => e.preventDefault());
 
-  const found = new Map(); // each URL keeps its own actual playback request context
-  const requests = new Map();
+  const found = new Map(); // url -> { url, kind, size, fromPlayer }
+  const requests = new Map(); // url -> { userAgent, referer, origin } as the player sent it
+  const diagnostics = { framesScanned: 0, rejected: {} };
   const failed = new Set();
   let userAgent = '';
   let drm = false;
   let title = '';
-  const add = (url, { type = '', size = 0, fromPlayer = false, referer = pageUrl, requestContext } = {}) => {
-    // Stream pieces are skipped by name and by type (some services give them odd names, e.g. ".dts").
-    if (typeof url !== 'string' || !/^https?:/i.test(url) || isNotPlayer(url) || ADS.test(url) || SEGMENT.test(url) || /mp2t|iso\.segment/i.test(type)) return;
-    const kind = MANIFEST.test(url) || /mpegurl|dash/i.test(type) ? 'stream' : FILE.test(url) || /^(video|audio)\//i.test(type) ? 'file' : null;
-    if (!kind) return;
+  // Addresses a player element points at. One without a media extension is only recognized once
+  // its response type is known; it still counts as the player's own source then.
+  const playerSources = new Set();
+  const add = (url, { type = '', size = 0, fromPlayer = false } = {}) => {
+    if (signal?.aborted || isNotPlayer(url)) return;
+    if (fromPlayer && typeof url === 'string') playerSources.add(url);
+    const verdict = classify(url, type);
+    if (!verdict.kind) {
+      if (verdict.reject !== 'not-media') diagnostics.rejected[verdict.reject] = (diagnostics.rejected[verdict.reject] || 0) + 1;
+      return;
+    }
     const prev = found.get(url) || {};
-    found.set(url, { url, kind, size: Math.max(size, prev.size || 0), fromPlayer: fromPlayer || !!prev.fromPlayer,
-      requestContext: requestContext || requests.get(url) || prev.requestContext || { userAgent, referer } });
+    found.set(url, { url, kind: verdict.kind, size: Math.max(size, prev.size || 0), fromPlayer: fromPlayer || !!prev.fromPlayer || playerSources.has(url) });
   };
   ses.webRequest.onBeforeRequest((d, cb) => {
-    if (LICENSE.test(d.url)) drm = true;
+    if (isLicenseRequest(d.url)) drm = true;
     add(d.url);
     cb({});
   });
   ses.webRequest.onSendHeaders((d) => {
-    const requestContext = contextFromHeaders(d.requestHeaders, userAgent);
-    requests.set(d.url, requestContext);
-    add(d.url, { requestContext });
+    requests.set(d.url, contextFromHeaders(d.requestHeaders, userAgent));
   });
   ses.webRequest.onHeadersReceived((d, cb) => {
     if (d.statusCode >= 400) { failed.add(d.url); cb({}); return; }
     failed.delete(d.url);
-    const h = Object.fromEntries(Object.entries(d.responseHeaders || {}).map(([k, v]) => [k.toLowerCase(), [].concat(v)[0]]));
-    if (MEDIA_TYPE.test(h['content-type'] || '')) add(d.url, { type: h['content-type'], size: Number(h['content-length']) || 0 });
+    const type = header(d.responseHeaders, 'content-type') || '';
+    if (d.statusCode < 400 && isMediaType(type)) add(d.url, { type, size: Number(header(d.responseHeaders, 'content-length')) || 0 });
     cb({});
   });
+
   const win = new BrowserWindow({
     show: false,
     width: 1280,
@@ -62,6 +72,8 @@ async function findMedia(pageUrl, { timeoutMs = 20000 } = {}) {
     webPreferences: { session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false, autoplayPolicy: 'no-user-gesture-required', backgroundThrottling: false },
   });
   userAgent = win.webContents.getUserAgent();
+  const abort = () => { if (!win.isDestroyed()) win.destroy(); };
+  signal?.addEventListener('abort', abort, { once: true });
   win.webContents.setAudioMuted(true);
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e, url) => { if (!/^https?:/i.test(url)) e.preventDefault(); });
@@ -71,43 +83,58 @@ async function findMedia(pageUrl, { timeoutMs = 20000 } = {}) {
     for (const frame of win.webContents.mainFrame.framesInSubtree) {
       try {
         const r = await frame.executeJavaScript(collectorScript({ startPlayback: true }));
-        if (r.pageUrl && isNotPlayer(r.pageUrl)) continue;
+        diagnostics.framesScanned++;
         if (r.drm) drm = true;
         if (frame === win.webContents.mainFrame && r.title) title = r.title;
-        r.media.forEach((u) => add(u, { fromPlayer: true, referer: r.pageUrl || pageUrl }));
-        r.embeds.forEach((u) => { if (/^https?:/i.test(u) && !ADS.test(u) && !isNotPlayer(u)) embeds.add(u); });
+        r.media.forEach((u) => add(u, { fromPlayer: true }));
+        r.embeds.forEach((u) => embeds.add(u));
       } catch { /* frame went away */ }
     }
   };
 
+  let cookies = [];
   try {
     const start = Date.now();
     await Promise.race([win.loadURL(pageUrl).catch(() => {}), sleep(15000)]);
     // Players often start a moment after the page loads: look a few times, and stop early once
     // the player's own source, a stream manifest or an embedded player has shown up.
     while (Date.now() - start < timeoutMs) {
+      signal?.throwIfAborted();
       await collect();
       if (Date.now() - start > 6000 && (embeds.size || [...found.values()].some((f) => f.fromPlayer || f.kind === 'stream'))) break;
       await sleep(1500);
     }
+    // The cookies this page set while playing (this session started empty).
+    signal?.throwIfAborted();
+    const urls = [pageUrl, ...found.keys()];
+    const seen = new Set();
+    for (const url of urls) {
+      for (const c of await ses.cookies.get({ url }).catch(() => [])) {
+        const key = `${c.domain}|${c.path}|${c.name}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        cookies.push({ domain: c.domain, path: c.path, name: c.name, value: c.value, secure: c.secure, httpOnly: c.httpOnly, session: c.session, expires: c.expirationDate });
+      }
+    }
   } finally {
+    signal?.removeEventListener('abort', abort);
     if (!win.isDestroyed()) win.destroy();
+    ses.clearStorageData().catch(() => {});
   }
 
-  // The player's own source first, then stream manifests, then the largest files, then embeds.
-  const media = [...found.values()].filter((m) => !failed.has(m.url)).sort((a, b) => (b.fromPlayer - a.fromPlayer) || ((b.kind === 'stream') - (a.kind === 'stream')) || (b.size - a.size));
-  const host = new URL(pageUrl).host;
+  const media = rankMedia([
+    ...[...found.values()].filter((m) => !failed.has(m.url)).map((m) => ({ ...m, fromPlayer: m.fromPlayer || playerSources.has(m.url) })),
+    ...unconfirmedPlayerSources(playerSources, found).filter((m) => !failed.has(m.url)),
+  ]);
+  const context = (url) => requests.get(url) || { userAgent, referer: pageUrl };
   const candidates = [
-    ...media.map((m) => ({ url: m.url, kind: m.kind, size: m.size, requestContext: m.requestContext })),
-    ...[...embeds].filter((u) => { try { return new URL(u).host !== host; } catch { return false; } }).map((u) => ({ url: u, kind: 'embed', size: 0, requestContext: { userAgent, referer: pageUrl } })),
+    ...media.map((m) => ({ url: m.url, kind: m.kind, size: m.size, requestContext: context(m.url) })),
+    ...playerEmbeds(embeds, pageUrl, isNotPlayer).map((u) => ({ url: u, kind: 'embed', size: 0, requestContext: { userAgent, referer: pageUrl } })),
   ];
-  const cookies = new Map();
-  for (const url of new Set([pageUrl, ...candidates.map((c) => c.url)])) {
-    for (const cookie of await ses.cookies.get({ url })) {
-      cookies.set(JSON.stringify([cookie.domain, cookie.path, cookie.name]), { ...cookie, expires: cookie.expirationDate });
-    }
-  }
-  return { candidates, title: title.trim(), cookieRef: browserSession.rememberCookies([...cookies.values()]), protected: drm && !media.some((m) => m.kind === 'file') };
+  signal?.throwIfAborted();
+  const cookieRef = cookies.length ? browserSession.rememberCookies(cookies, { source: 'probe' }) : null;
+  cookies = null;
+  return { candidates, title: title.trim(), protected: drm && !media.some((m) => m.kind === 'file'), cookieRef, diagnostics };
 }
 
 module.exports = { findMedia };

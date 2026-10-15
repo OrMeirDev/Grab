@@ -1,10 +1,15 @@
 // Wraps yt-dlp: resolves the binaries, reads video info, runs downloads with live progress.
-const { spawn } = require('child_process');
+// Every run has a deadline, bounded output and a stop that ends its whole process tree
+// (process-runner.cjs); all runs are tracked so the engine is never replaced while one is active.
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 const path = require('path');
-const { normalizeContext, mediaExpiry, redactMediaSecrets } = require('./request-context.cjs');
+const { runProcess } = require('./infrastructure/process-runner.cjs');
+const { ProcessRegistry } = require('./infrastructure/process-registry.cjs');
+const { errorKind, cleanError } = require('./domain/engine-errors.cjs');
+const { normalizeContext, mediaExpiry } = require('./domain/media-request-context.cjs');
+const { safeName } = require('./domain/output-names.cjs');
 
 const IS_WIN = process.platform === 'win32';
 const EXE = IS_WIN ? '.exe' : '';
@@ -13,13 +18,21 @@ const EXE = IS_WIN ? '.exe' : '';
 // updating Grab never overwrites it with an older copy. It takes priority over the bundled one.
 let userBinDir = null;
 function setUserBinDir(dir) { userBinDir = dir; }
+
+// Tools from the machine itself (WinGet, PATH) are a development convenience only: the installed
+// app runs the tools it ships (pinned in native-tools.lock.json) or the user's updated yt-dlp, so
+// what it runs never depends on what else is installed (GRB-06).
+let allowSystemTools = true;
+function configure(options = {}) {
+  if ('allowSystemTools' in options) allowSystemTools = !!options.allowSystemTools;
+}
 const userEnginePath = () => userBinDir && path.join(userBinDir, 'yt-dlp' + EXE);
 
 function bundledDirs() {
   const dirs = [];
   if (process.resourcesPath) dirs.push(path.join(process.resourcesPath, 'bin'));
   dirs.push(path.join(__dirname, '..', 'bin'));
-  if (IS_WIN && process.env.LOCALAPPDATA) dirs.push(path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links'));
+  if (allowSystemTools && IS_WIN && process.env.LOCALAPPDATA) dirs.push(path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links'));
   return dirs;
 }
 
@@ -36,7 +49,7 @@ function findIn(dirs, name) {
 }
 
 function findBinary(name) {
-  return findIn(candidateDirs(), name) || name; // fall back to PATH
+  return findIn(candidateDirs(), name) || (allowSystemTools ? name : path.join(bundledDirs()[0], name + EXE)); // PATH only in development
 }
 
 // winget installs ffmpeg in its own package folder without a Links shortcut, so look there too.
@@ -47,7 +60,7 @@ function ffmpegDir() {
   for (const dir of candidateDirs()) {
     if (fs.existsSync(path.join(dir, 'ffmpeg' + EXE))) return (ffmpegDirCache = dir);
   }
-  const pkgs = IS_WIN && process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Packages');
+  const pkgs = allowSystemTools && IS_WIN && process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Packages');
   if (pkgs && fs.existsSync(pkgs)) {
     for (const pkg of fs.readdirSync(pkgs).filter((n) => /ffmpeg/i.test(n))) {
       const root = path.join(pkgs, pkg);
@@ -64,45 +77,48 @@ function spawnEnv() {
   const extra = candidateDirs().filter((d) => fs.existsSync(d));
   return {
     ...process.env,
-    PATH: [...extra, process.env.PATH || ''].join(path.delimiter),
+    PATH: [...extra, ...(allowSystemTools ? [process.env.PATH || ''] : [process.env.SystemRoot ? path.join(process.env.SystemRoot, 'System32') : '']) ].filter(Boolean).join(path.delimiter),
     PYTHONIOENCODING: 'utf-8',
     PYTHONUTF8: '1',
   };
 }
 
-// signal / timeoutMs bound a run that must not hang (lookups); onActivity reports any output so a
-// caller can watch for a stalled download.
-function run(args, { onLine, exe, signal, timeoutMs, onActivity } = {}) {
-  const child = spawn(exe || findBinary('yt-dlp'), ['--encoding', 'utf-8', ...args], { env: spawnEnv(), windowsHide: true });
-  let timedOut = false;
-  let aborted = false;
-  const timer = timeoutMs ? setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs) : null;
-  const onAbort = () => { aborted = true; child.kill(); };
-  if (signal) { if (signal.aborted) onAbort(); else signal.addEventListener('abort', onAbort, { once: true }); }
-  const cleanup = () => { clearTimeout(timer); if (signal) signal.removeEventListener('abort', onAbort); };
-  let out = '';
-  let err = '';
-  const bufs = { out: '', err: '' };
-  const feed = (key, d) => {
-    if (!onLine) return;
-    bufs[key] += d;
-    const lines = bufs[key].split(/\r?\n/);
-    bufs[key] = lines.pop();
-    lines.forEach(onLine);
-  };
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (d) => { if (onActivity) onActivity(); out += d; feed('out', d); });
-  child.stderr.on('data', (d) => { if (onActivity) onActivity(); err += d; feed('err', d); });
-  const done = new Promise((resolve) => {
-    child.on('error', (e) => { cleanup(); resolve({ code: -1, out, err: String(e.message || e), timedOut, aborted }); });
-    child.on('close', (code) => { cleanup(); resolve({ code, out, err, timedOut, aborted }); });
+// Deadlines per kind of run. A download has none overall (files can be hours long) but is stopped
+// when yt-dlp and ffmpeg print nothing at all for DOWNLOAD_IDLE_MS.
+const LIMITS = {
+  version: { timeoutMs: 30 * 1000 },
+  analyze: { timeoutMs: 3 * 60 * 1000 },
+  extractors: { timeoutMs: 60 * 1000 },
+  update: { timeoutMs: 5 * 60 * 1000 },
+  download: { idleTimeoutMs: 30 * 60 * 1000 },
+};
+
+// All engine processes Grab has running. While the engine is being replaced no new run starts.
+const registry = new ProcessRegistry();
+let replacing = false;
+
+// --ignore-config: a yt-dlp configuration file on the user's PC never changes how Grab runs it.
+function run(args, { onLine, exe, kind = 'analyze', signal, internal = false, timeoutMs, idleTimeoutMs } = {}) {
+  if (replacing && !internal) {
+    const result = { code: -1, out: '', err: 'ERROR: the download engine is being updated', engineUpdating: true };
+    return { child: null, done: Promise.resolve(result), stop: () => {} };
+  }
+  return runProcess(exe || findBinary('yt-dlp'), ['--ignore-config', '--encoding', 'utf-8', ...args], {
+    env: spawnEnv(), onLine, signal, registry, label: kind, ...LIMITS[kind], ...(timeoutMs !== undefined ? { timeoutMs } : {}), ...(idleTimeoutMs !== undefined ? { idleTimeoutMs } : {}),
   });
-  return { child, done };
 }
 
-async function version(exe) {
-  const { code, out } = await run(['--version'], { exe }).done;
+// A run that ended because of its deadline, its silence limit or a cancel, as a yt-dlp-like error.
+function stopNote(r) {
+  if (r.timedOut) return 'ERROR: timed out';
+  if (r.idle) return 'ERROR: timed out (no progress for 30 minutes)';
+  if (r.truncated) return 'ERROR: Unreadable response (too large)';
+  if (r.aborted) return 'ERROR: cancelled';
+  return '';
+}
+
+async function version(exe, { internal = false } = {}) {
+  const { code, out } = await run(['--version'], { exe, kind: 'version', internal }).done;
   return code === 0 ? out.trim() : null;
 }
 
@@ -123,7 +139,7 @@ async function reconcileEngine() {
   if (!userExe || !fs.existsSync(userExe)) return;
   const bundled = findIn(bundledDirs(), 'yt-dlp');
   if (!bundled) return;
-  const [vUser, vBundled] = await Promise.all([version(userExe), version(bundled)]);
+  const [vUser, vBundled] = await Promise.all([version(userExe, { internal: true }), version(bundled, { internal: true })]);
   if (!vUser || (vBundled && compareVersions(vBundled, vUser) >= 0)) {
     try { fs.unlinkSync(userExe); } catch { /* in use; try again next start */ }
   }
@@ -131,47 +147,36 @@ async function reconcileEngine() {
 
 // Self-update via `yt-dlp -U` on the user's own copy (the install folder may be read-only
 // and gets replaced on reinstall). Downloads the new release from yt-dlp's GitHub.
+// Refused (busy) while any engine process runs: Windows can't replace yt-dlp.exe in use, and a
+// lookup or download must never run half on the old engine and half on the new one.
 async function updateEngine() {
   const userExe = userEnginePath();
   if (!userExe) return { ok: false, error: 'no user folder' };
-  const before = await version();
+  if (registry.size || replacing) return { ok: false, busy: true };
+  replacing = true;
   try {
-    if (!fs.existsSync(userExe)) {
-      const bundled = findIn(bundledDirs(), 'yt-dlp');
-      if (!bundled) return { ok: false, before, error: 'yt-dlp not found' };
-      fs.mkdirSync(userBinDir, { recursive: true });
-      fs.copyFileSync(bundled, userExe);
+    const before = await version(undefined, { internal: true });
+    try {
+      if (!fs.existsSync(userExe)) {
+        const bundled = findIn(bundledDirs(), 'yt-dlp');
+        if (!bundled) return { ok: false, before, error: 'yt-dlp not found' };
+        fs.mkdirSync(userBinDir, { recursive: true });
+        fs.copyFileSync(bundled, userExe);
+      }
+    } catch (e) {
+      return { ok: false, before, error: String(e.message || e) };
     }
-  } catch (e) {
-    return { ok: false, before, error: String(e.message || e) };
+    const { code, out, err } = await run(['-U'], { exe: userExe, kind: 'update', internal: true }).done;
+    const after = await version(userExe, { internal: true });
+    extractorsCache = null; // a new version may support different sites
+    if (code !== 0 || !after) return { ok: false, before, after, error: cleanError(err || out) };
+    const updated = compareVersions(after, before || '0') > 0;
+    // A record of what the in-app updater changed, next to the updated engine.
+    try { fs.writeFileSync(path.join(userBinDir, 'engine-update.json'), JSON.stringify({ before, after, at: new Date().toISOString() }, null, 2)); } catch { /* not essential */ }
+    return { ok: true, before, after, updated };
+  } finally {
+    replacing = false;
   }
-  const { code, out, err } = await run(['-U'], { exe: userExe }).done;
-  const after = await version(userExe);
-  extractorsCache = null; // a new version may support different sites
-  if (code !== 0 || !after) return { ok: false, before, after, error: cleanError(err || out) };
-  return { ok: true, before, after, updated: compareVersions(after, before || '0') > 0 };
-}
-
-// Classify failures so the UI can say what actually happened.
-function errorKind(err) {
-  if (/not a bot|Sign in to confirm|HTTP Error 429|Too Many Requests/i.test(err)) return 'blocked';
-  if (/Private video|members-only|Join this channel|login required|requires authentication|logged[- ]in/i.test(err)) return 'private';
-  if (/HTTP(?:\s+Error)?\s*:?\s*403|403 Forbidden|returned 403/i.test(err)) return 'forbidden';
-  if (/Unsupported URL|No video formats|is not a valid URL|Unable to extract/i.test(err)) return 'notfound';
-  if (/Video unavailable|removed|does not exist|HTTP Error 404/i.test(err)) return 'unavailable';
-  if (/getaddrinfo|Network is unreachable|timed out|Connection reset/i.test(err)) return 'network';
-  return 'other';
-}
-
-function cleanError(err) {
-  err = redactMediaSecrets(err);
-  const line = err.split(/\r?\n/).reverse().find((l) => l.includes('ERROR')) || err.trim().split(/\r?\n/).pop() || '';
-  return line.replace(/^ERROR:\s*/, '').replace(/^\[[^\]]+\]\s*[\w-]+:\s*/, '').slice(0, 200);
-}
-
-function failure(err) {
-  const status = String(err || '').match(/(?:HTTP(?:\s+Error)?\s*:?\s*|returned\s+)([45]\d\d)\b/i);
-  return { ok: false, error: cleanError(err), kind: errorKind(err), ...(status ? { httpStatus: Number(status[1]) } : {}) };
 }
 
 // The lookup result is saved so the download can reuse it instead of asking the site again.
@@ -179,12 +184,11 @@ function failure(err) {
 const INFO_DIR = path.join(os.tmpdir(), 'grab-info');
 const INFO_MAX_AGE_MS = 4 * 60 * 60 * 1000;
 
+// Start-up: lookup files of an earlier run are never used again (a restored job looks up afresh),
+// and they hold signed media addresses, so all of them go.
 function cleanInfoCache() {
   try {
-    for (const f of fs.readdirSync(INFO_DIR)) {
-      const p = path.join(INFO_DIR, f);
-      if (Date.now() - fs.statSync(p).mtimeMs > 24 * 60 * 60 * 1000) fs.unlinkSync(p);
-    }
+    for (const f of fs.readdirSync(INFO_DIR)) fs.rmSync(path.join(INFO_DIR, f), { force: true });
   } catch { /* nothing cached yet */ }
 }
 
@@ -214,19 +218,21 @@ function hasMediaFormats(info) {
   });
 }
 
-const ANALYZE_TIMEOUT_MS = 120000;
-async function analyze(url, { title: pageTitle, signal, timeoutMs = ANALYZE_TIMEOUT_MS, ...context } = {}) {
+// signal: an AbortSignal that cancels the lookup.
+async function analyze(url, { title: pageTitle, signal, timeoutMs, ...context } = {}) {
   const extra = sessionArgs(context);
-  const { code, out, err, timedOut, aborted } = await run(['-J', '--no-playlist', '--no-warnings', '--skip-download', '--sleep-requests', '1', ...extra, url], { signal, timeoutMs }).done;
-  if (aborted) return { ok: false, kind: 'cancelled', error: 'Cancelled' };
-  if (timedOut) return { ok: false, kind: 'probeTimeout', error: 'The lookup took too long' };
-  if (code !== 0) return failure(err);
+  const r = await run(['-J', '--no-playlist', '--no-warnings', '--skip-download', '--sleep-requests', '1', ...extra, '--', url], { kind: 'analyze', signal, timeoutMs }).done;
+  const { code, out } = r;
+  const err = stopNote(r) || r.err;
+  if (r.aborted) return { ok: false, error: 'cancelled', kind: 'cancelled' };
+  if (r.engineUpdating) return { ok: false, error: 'engine updating', kind: 'engineUpdating' };
+  if (code !== 0 || r.truncated || r.timedOut) return failure(err, r.timedOut ? 'probeTimeout' : undefined);
   try {
     const j = JSON.parse(out);
     if (!hasMediaFormats(j)) return { ok: false, kind: 'notmedia', error: 'The response contains no recognized video or audio format' };
     let infoFile = null;
     try {
-      fs.mkdirSync(INFO_DIR, { recursive: true });
+      fs.mkdirSync(INFO_DIR, { recursive: true, mode: 0o700 });
       infoFile = path.join(INFO_DIR, `${crypto.createHash('sha1').update(url).digest('hex')}-${crypto.randomUUID()}.json`);
       fs.writeFileSync(infoFile, out, { mode: 0o600 });
     } catch { infoFile = null; }
@@ -246,26 +252,26 @@ async function analyze(url, { title: pageTitle, signal, timeoutMs = ANALYZE_TIME
   }
 }
 
-const INVALID = /[<>:"/\\|?*\u0000-\u001f]/g;
-function safeName(name) {
-  return (name || 'video').replace(INVALID, ' ').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '').slice(0, 180) || 'video';
-}
-
 function freshInfo(infoFile, infoAt, expiresAt) {
   return !!infoFile && (!expiresAt || Date.now() < expiresAt - 5000) && Date.now() - (infoAt || 0) < INFO_MAX_AGE_MS && fs.existsSync(infoFile);
 }
 
-function downloadArgs({ url, mediaUrl, referer, requestContext, cookieFile, name, folder, format, quality, infoFile, infoAt, infoExpiresAt }) {
-  const out = path.join(folder, safeName(name) + '.%(ext)s');
+// outputBase: the job's file path without extension, chosen by the output allocator (unique and
+// safe). folder/name are the older form, still accepted for callers that don't allocate.
+function downloadArgs({ url, mediaUrl, referer, requestContext, cookieFile, outputBase, name, folder, format, quality, infoFile, infoAt, infoExpiresAt }) {
+  // A literal % in the name must not be read as part of yt-dlp's output template.
+  const out = (outputBase || path.join(folder, safeName(name))).replace(/%/g, '%%') + '.%(ext)s';
   // Reuse the lookup result when it's still fresh; otherwise fetch the page again, slowly.
   // A video found inside a page's player is fetched from its own address, as that page does.
-  const expiry = [infoExpiresAt, mediaExpiry(mediaUrl || url)].filter((t) => Number.isFinite(t) && t > 0);
-  const source = freshInfo(infoFile, infoAt, expiry.length ? Math.min(...expiry) : null) ? ['--load-info-json', infoFile] : ['--sleep-requests', '1', mediaUrl || url];
+  const expiry = [infoExpiresAt, mediaExpiry(mediaUrl || url)].filter((v) => Number.isFinite(v) && v > 0);
+  const source = freshInfo(infoFile, infoAt, expiry.length ? Math.min(...expiry) : null) ? ['--load-info-json', infoFile] : ['--sleep-requests', '1', '--', mediaUrl || url];
   source.unshift(...sessionArgs({ referer, requestContext, cookieFile }));
   // --print implies quiet mode, so --progress is needed to keep the progress lines coming.
   const common = ['--newline', '--progress', '--no-playlist', '--no-warnings', '-R', '10', '--fragment-retries', '10',
     '--progress-template', 'download:GRAB|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s',
-    '--print', 'after_move:GRABFILE|%(filepath)s', '-o', out];
+    '--print', 'after_move:GRABFILE|%(filepath)s',
+    // What was actually delivered (the quality setting is a preference, not a guarantee): GRB-11.
+    '--print', 'after_move:GRABMETA|%(height)s|%(vcodec)s|%(acodec)s|%(ext)s', '-o', out];
   if (ffmpegDir()) common.push('--ffmpeg-location', ffmpegDir());
   if (format === 'mp3') {
     return [...common, '-f', 'ba/b', '-x', '--audio-format', 'mp3', '--audio-quality', '0', ...source];
@@ -276,73 +282,71 @@ function downloadArgs({ url, mediaUrl, referer, requestContext, cookieFile, name
   return [...common, '-f', 'bv*+ba/b', '-S', sort, '--merge-output-format', 'mp4', '--remux-video', 'mp4', ...source];
 }
 
-function verifyOutput(file, format, onChild) {
-  const invalid = () => ({ ok: false, kind: 'notmedia', error: 'Downloaded file is not valid audio/video in the requested format' });
-  try { if (!file || !fs.statSync(file).isFile() || !fs.statSync(file).size) return Promise.resolve(invalid()); }
-  catch { return Promise.resolve(invalid()); }
-  return new Promise((resolve) => {
-    const exe = findIn([ffmpegDir()].filter(Boolean), 'ffprobe') || findBinary('ffprobe');
-    const probe = spawn(exe, ['-v', 'error', '-show_entries', 'stream=codec_type:format=format_name', '-of', 'json', file], { env: spawnEnv(), windowsHide: true });
-    let out = '';
-    let finished = false;
-    const finish = (result) => { if (!finished) { finished = true; clearTimeout(timer); resolve(result); } };
-    const timer = setTimeout(() => { probe.kill(); finish({ ok: false, kind: 'verification', error: 'Media verification timed out' }); }, 15000);
-    probe.stdout.on('data', (data) => { out = (out + data).slice(0, 65536); });
-    probe.stderr.resume();
-    probe.on('error', () => finish({ ok: false, kind: 'verification', error: 'Could not run ffprobe to verify the downloaded file' }));
-    probe.on('close', (code) => {
-      if (code !== 0) return finish(invalid());
-      try {
-        const info = JSON.parse(out);
-        const types = new Set((info.streams || []).map((s) => s.codec_type));
-        const containers = String(info.format?.format_name || '').split(',');
-        const valid = format === 'mp3' ? types.has('audio') && containers.includes('mp3')
-          : (types.has('video') || types.has('audio')) && containers.includes('mp4');
-        finish(valid ? { ok: true, file } : invalid());
-      } catch { finish(invalid()); }
-    });
-    onChild(probe);
-  });
+// Exit code 0 is not enough: the finished file must exist. When yt-dlp didn't print its path,
+// findOutput(base) may still find it (see output-allocator.cjs).
+function verifiedFile(reported, { outputBase, findOutput } = {}) {
+  if (reported) return fs.existsSync(reported) ? reported : null;
+  return outputBase && findOutput ? findOutput(outputBase) : null;
 }
 
-// A download that prints nothing for this long is stalled. Any output (progress, fragment retries,
-// merge messages) counts as activity, so a long download is never cut off for being long.
-const DOWNLOAD_IDLE_MS = 180000;
+function failure(err, kind) {
+  const status = String(err || '').match(/(?:HTTP(?:\s+Error)?\s*:?\s*|returned\s+)([45]\d\d)\b/i);
+  return { ok: false, error: cleanError(err), kind: kind || errorKind(err), ...(status ? { httpStatus: Number(status[1]) } : {}) };
+}
 
-function download(opts, onProgress, { runImpl = run } = {}) {
+async function verifyOutput(file, format) {
+  const invalid = () => ({ ok: false, kind: 'notmedia', error: 'Downloaded file is not valid audio/video in the requested format' });
+  try { if (!file || !fs.statSync(file).isFile() || !fs.statSync(file).size) return invalid(); } catch { return invalid(); }
+  const exe = findIn([ffmpegDir()].filter(Boolean), 'ffprobe') || findBinary('ffprobe');
+  const run = runProcess(exe, ['-v', 'error', '-show_entries', 'stream=codec_type:format=format_name', '-of', 'json', file],
+    { env: spawnEnv(), timeoutMs: 15000, maxStdout: 65536, registry, label: 'verification' });
+  return { ...run, result: run.done.then((r) => {
+    if (r.aborted) return { ok: false, stopped: true };
+    if (r.timedOut || r.spawnError) return { ok: false, kind: 'verification', error: 'Could not verify the downloaded media' };
+    if (r.code !== 0) return invalid();
+    try {
+      const info = JSON.parse(r.out);
+      const types = new Set((info.streams || []).map((v) => v.codec_type));
+      const containers = String(info.format?.format_name || '').split(',');
+      const valid = format === 'mp3' ? types.has('audio') && containers.includes('mp3')
+        : (types.has('video') || types.has('audio')) && containers.includes('mp4');
+      return valid ? { ok: true, file } : invalid();
+    } catch { return invalid(); }
+  }) };
+}
+
+function download(opts, onProgress, { runImpl = run, verifyImpl = verifyOutput } = {}) {
   let file = null;
+  let delivered = null;
   let stopped = false;
-  let stalled = false;
-  let verifying = null;
-  let idle = null;
-  let job = null;
-  const idleMs = opts.idleMs ?? DOWNLOAD_IDLE_MS;
-  const arm = () => {
-    clearTimeout(idle);
-    idle = setTimeout(() => { stalled = true; job.child.kill(); }, idleMs);
-  };
-  job = runImpl(downloadArgs(opts), {
-    onActivity: arm,
+  let verifier = null;
+  const job = runImpl(downloadArgs(opts), {
+    kind: 'download', idleTimeoutMs: opts.idleMs,
     onLine: (line) => {
       if (line.startsWith('GRAB|')) {
         const [, pct, speed, eta] = line.split('|');
         onProgress({ percent: parseFloat(pct) || 0, speed: (speed || '').trim(), eta: (eta || '').trim() });
-      } else if (line.startsWith('GRABFILE|')) {
-        file = line.slice(9).trim();
+      } else if (line.startsWith('GRABFILE|')) file = line.slice(9).trim();
+      else if (line.startsWith('GRABMETA|')) {
+        const [, height, vcodec, acodec, ext] = line.split('|').map((v) => (v || '').trim());
+        const val = (v) => v && v !== 'NA' && v !== 'none' ? v : null;
+        delivered = { height: Number(val(height)) || null, vcodec: val(vcodec), acodec: val(acodec), ext: val(ext) };
       }
     },
   });
-  arm();
-  const child = { kill: () => { stopped = true; clearTimeout(idle); job.child.kill(); if (verifying) verifying.kill(); } };
-  const done = job.done.then(async ({ code, err }) => {
-    clearTimeout(idle);
-    if (stopped) return { ok: false, stopped: true };
-    if (stalled) return { ok: false, kind: 'stalled', error: 'The download stopped making progress' };
-    if (code !== 0) return failure(err);
-    const result = await verifyOutput(file, opts.format, (probe) => { verifying = probe; if (stopped) probe.kill(); });
-    return stopped ? { ok: false, stopped: true } : result;
+  const stop = (reason = 'aborted') => { stopped = true; job.stop ? job.stop(reason) : job.child?.kill(); verifier?.stop?.(reason); };
+  const done = job.done.then(async (r) => {
+    if (stopped || r.aborted) return { ok: false, stopped: true };
+    if (r.engineUpdating) return { ok: false, error: 'engine updating', kind: 'engineUpdating' };
+    if (r.code !== 0 || r.idle || r.truncated) return failure(stopNote(r) || r.err, r.idle ? 'stalled' : undefined);
+    const verified = verifiedFile(file, opts);
+    if (!verified) return { ok: false, error: 'Download finished without an output file', kind: 'other' };
+    verifier = await verifyImpl(verified, opts.format);
+    if (stopped) verifier.stop?.('aborted');
+    const result = verifier.result ? await verifier.result : verifier;
+    return stopped ? { ok: false, stopped: true } : { ...result, ...(result.ok ? { delivered } : {}) };
   });
-  return { child, done };
+  return { child: { kill: () => stop() }, done, stop };
 }
 
 // Adult sites stay downloadable but are hidden from the browsable list; the UI only confirms
@@ -364,7 +368,7 @@ const isAdult = (name) => ADULT.some((a) => name.toLowerCase().startsWith(a));
 let extractorsCache;
 async function extractors() {
   if (extractorsCache) return extractorsCache;
-  const { code, out } = await run(['--list-extractors']).done;
+  const { code, out } = await run(['--list-extractors'], { kind: 'extractors' }).done;
   if (code !== 0) return [];
   const groups = new Map();
   for (const raw of out.split(/\r?\n/)) {
@@ -381,4 +385,11 @@ async function extractors() {
   return extractorsCache;
 }
 
-module.exports = { run, version, analyze, download, safeName, extractors, cleanInfoCache, setUserBinDir, reconcileEngine, updateEngine, mediaExpiry };
+// True while any engine process runs (a lookup, a download, a version or site-list query).
+const busy = () => registry.size > 0 || replacing;
+// Stops every engine process and waits for the process trees to exit (app quit, app update).
+const stopAll = (timeoutMs) => registry.stopAll(timeoutMs);
+// A lookup result file Grab wrote itself (the only info file a download may load).
+const isInfoFile = (p) => typeof p === 'string' && path.dirname(path.resolve(p)) === path.resolve(INFO_DIR) && /^[0-9a-f]{40}-(?:\d+|[0-9a-f-]{36})\.json$/.test(path.basename(p));
+
+module.exports = { configure, version, analyze, download, safeName, extractors, cleanInfoCache, setUserBinDir, reconcileEngine, updateEngine, busy, stopAll, isInfoFile, mediaExpiry };

@@ -1,0 +1,77 @@
+# Required checks for every pull request and push to main (GRB-10).
+# Tests and the build run on Linux and Windows (the Windows-only browser test runs there);
+# the end-to-end checks run the real Electron app under a virtual display.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'claude/**', feature/browser-extension-integration]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      # Lifecycle scripts are not needed for unit tests or the renderer build.
+      - run: npm ci --ignore-scripts --no-fund --no-audit
+      # The pinned yt-dlp (Linux build of the version in native-tools.lock.json), hash-checked,
+      # for tests/real-engine.integration.test.cjs.
+      - name: pinned yt-dlp for the engine integration test
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p "$RUNNER_TEMP/ytdlp"
+          curl -sSL -o "$RUNNER_TEMP/ytdlp/yt-dlp" https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp
+          echo "1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6  $RUNNER_TEMP/ytdlp/yt-dlp" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/ytdlp/yt-dlp"
+          echo "GRAB_TEST_YTDLP_DIR=$RUNNER_TEMP/ytdlp" >> "$GITHUB_ENV"
+      # FFmpeg for tests/merge-pause.integration.test.cjs (pause during a real merge).
+      - name: ffmpeg for the merge integration test
+        if: runner.os == 'Linux'
+        run: command -v ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg)
+      - run: npm test
+      - run: npm run build
+
+  e2e:
+    name: e2e (electron, linux)
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      # Electron's own install script downloads the runtime used by the checks.
+      - run: npm ci --no-fund --no-audit
+      - run: npm run build
+      - name: queue cooldown (GRB-01)
+        run: xvfb-run -a npx electron --no-sandbox e2e/queue-cooldown.cjs
+      - name: hidden player probe (GRB-12)
+        run: xvfb-run -a npx electron --no-sandbox e2e/hidden-probe.cjs
+      - name: browser integration UI and screenshots
+        run: xvfb-run -a npx electron --no-sandbox e2e/browser-ui.cjs
+      - name: queue layout at supported window sizes
+        run: xvfb-run -a npx electron --no-sandbox e2e/layout.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: grab-ui-screenshots
+          path: e2e/output/
+          retention-days: 7

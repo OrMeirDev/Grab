@@ -1,42 +1,45 @@
 {
   "name": "grab",
-  "version": "1.6.7",
+  "version": "1.7.0-rc.1",
   "description": "Grab - video downloader",
   "author": "Or meir Tzarfati",
   "main": "electron/main.cjs",
   "private": true,
   "scripts": {
     "test": "node --test",
-    "test:media": "cross-env GRAB_REQUIRE_MEDIA_TOOLS=1 node --test tests/media-context.integration.test.cjs",
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV=1 electron .\"",
     "build": "vite build",
     "start": "electron .",
-    "dist": "vite build && electron-builder --win nsis --x64",
-    "release": "vite build && electron-builder --win nsis --x64 --publish always",
+    "dist": "node scripts/verify-native-tools.cjs && vite build && electron-builder --win nsis --x64",
+    "release": "node scripts/verify-native-tools.cjs && vite build && electron-builder --win nsis --x64 --publish always",
     "fetch-bin": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fetch-bin.ps1",
-    "e2e:media-context": "electron e2e/media-context.cjs",
     "e2e:glass-menu": "vite build && electron e2e/glass-menu.cjs",
+    "e2e:hidden-probe": "electron e2e/hidden-probe.cjs",
     "e2e:layout": "vite build && electron e2e/layout.cjs",
     "e2e:liquid-glass": "vite build && electron e2e/liquid-glass.cjs",
+    "e2e:queue-cooldown": "vite build && electron e2e/queue-cooldown.cjs",
     "e2e:screenshots": "vite build && electron e2e/screenshots.cjs",
+    "verify-bin": "node scripts/verify-native-tools.cjs",
+    "test:media": "cross-env GRAB_REQUIRE_MEDIA_TOOLS=1 node --test tests/media-context.integration.test.cjs",
+    "e2e:media-context": "electron e2e/media-context.cjs",
     "e2e:extension": "node --test --test-timeout=600000 e2e/extension-bridge.cjs",
     "test:package": "node --test tests/browser/packaging.test.cjs",
     "browser:setup": "node scripts/browser-integration.cjs"
   },
   "repository": "github:OrMeirDev/Grab",
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^6.1.2",
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
-    "electron": "^33.2.1",
-    "electron-builder": "^25.1.8",
+    "electron": "^44.7.2",
+    "electron-builder": "^26.15.3",
     "lucide-react": "^0.460.0",
-    "playwright": "1.58.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "simple-icons": "^16.35.0",
-    "vite": "^5.4.11",
-    "wait-on": "^8.0.1"
+    "vite": "^8.3.4",
+    "wait-on": "^8.0.1",
+    "playwright": "1.58.2"
   },
   "build": {
     "appId": "com.grab.downloader",
@@ -48,15 +51,17 @@
     "files": [
       "dist/**",
       "electron/**",
+      "package.json",
       "extension/lib/**",
-      "native-host/*.cjs",
-      "package.json"
+      "native-host/*.cjs"
     ],
     "extraResources": [
       {
         "from": "bin",
         "to": "bin"
       },
+      "THIRD_PARTY_NOTICES.md",
+      "native-tools.lock.json",
       {
         "from": "extension",
         "to": "extension"
@@ -64,8 +69,7 @@
       {
         "from": "native-host",
         "to": "native-host"
-      },
-      "THIRD_PARTY_NOTICES.md"
+      }
     ],
     "publish": [
       {
@@ -97,7 +101,8 @@
         "he_IL"
       ],
       "language": "1037",
-      "artifactName": "Grab-Setup-${version}.${ext}"
+      "artifactName": "Grab-Setup-${version}.${ext}",
+      "include": "build/installer.nsh"
     }
   },
   "dependencies": {

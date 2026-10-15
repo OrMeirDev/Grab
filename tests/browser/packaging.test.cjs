@@ -47,6 +47,8 @@ test('packaged browser service loads; resources install a native host that uses 
   const installed = await setup.install({ sourceRoot: resources, integrationDir, browsers: ['edge'], runtime,
     registry: { get: async (k) => registry.get(k), set: async (k, v) => registry.set(k, v) }, appVersion: 'package-test' });
   assert.equal(installed.extensionId, identity.id);
+  assert.notEqual(installed.hostRuntime, runtime, 'the host cannot lock the application runtime during an upgrade');
+  assert.equal(path.basename(installed.hostRuntime), 'GrabBrowserHost.exe');
   assert.equal(fs.readFileSync(path.join(integrationDir, 'extension', 'background.js'), 'utf8'), fs.readFileSync(path.join(resources, 'extension', 'background.js'), 'utf8'));
   if (process.platform !== 'win32') return; // archive checks are portable; launch evidence is Windows-only
 
@@ -79,6 +81,10 @@ test('packaged browser service loads; resources install a native host that uses 
   child.stdin.write(encodeFrame(protocol.make('hello', { instanceId: 'packaged-proof', extVersion: '1', protocol: protocol.PROTOCOL_VERSION })));
   await until((m) => m.type === 'welcome');
   assert.equal(hub.instances()[0].browser, 'edge');
+  // While the actual packaged native host is running, the installer must be able to replace
+  // the original app executable. It uses its private runtime, not Grab.exe in the install dir.
+  fs.renameSync(runtime, runtime + '.upgrade-proof');
+  fs.renameSync(runtime + '.upgrade-proof', runtime);
   child.stdin.end();
   await closed;
   assert.equal(child.exitCode, 0);

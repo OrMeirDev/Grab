@@ -4,6 +4,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
+const { createRequire } = require('node:module');
+const sessionRequire = createRequire(require.resolve('../electron/browser-session.cjs'));
 const { WebSocketServer } = require('ws');
 const browser = require('../electron/browser-session.cjs');
 const { mainHandlers, sender } = require('../test-support/main-handlers.cjs');
@@ -14,7 +16,7 @@ function windowsBrowser() {
     module: { exports: {} }, URL, setTimeout, clearTimeout,
     process: { platform: 'win32', env: { LOCALAPPDATA: 'C:\\Users\\fixture\\AppData\\Local' } },
     require: (name) => name === 'path' ? path.win32 : name === 'child_process'
-      ? { execFileSync: () => 'ProgId    REG_SZ    BraveHTML' } : require(name),
+      ? { execFileSync: () => 'ProgId    REG_SZ    BraveHTML' } : sessionRequire(name),
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../electron/browser-session.cjs'), 'utf8'), sandbox);
   return sandbox.module.exports;

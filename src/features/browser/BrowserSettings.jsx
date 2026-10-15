@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { RefreshCw, Loader2, Copy, FolderOpen, CheckCircle2, AlertTriangle, XCircle, Trash2, Plus } from 'lucide-react';
-import GlassSelect from './glass-select.jsx';
+import GlassSelect from '../../design/GlassSelect.jsx';
 
-const api = window.grab;
+import { api } from '../../platform/grabApi.js';
 
 const PROBLEM_TEXT = {
   not_registered: 'ההתקנה עוד לא בוצעה',
@@ -15,6 +15,7 @@ const PROBLEM_TEXT = {
   runtime_missing: 'קובץ ההפעלה של Grab הועבר. לחץ "תיקון"',
   stale_version: 'גרסה ישנה של החיבור. לחץ "תיקון"',
   extension_folder_missing: 'תיקיית ההרחבה נמחקה. לחץ "תיקון" והטען אותה מחדש בדפדפן',
+  extension_outdated: 'הדפדפן מריץ הרחבה ישנה. לחץ תיקון ואז Reload בדף ההרחבות',
 };
 const FAILURE_TEXT = {
   protocol_version: 'גרסת ההרחבה לא תואמת ל-Grab. אחרי "תיקון" טען מחדש את ההרחבה בדפדפן',
@@ -25,7 +26,7 @@ const TEST_TEXT = {
   notSetUp: 'ההתקנה עוד לא בוצעה. לחץ "התקנה" ואז הטען את ההרחבה בדפדפן.',
   browserUnavailable: 'הדפדפן הזה לא מותקן במחשב.',
   extensionNotConnected: 'ההרחבה לא ענתה. ודא שהיא מותקנת ומופעלת בדפדפן (בפרופיל שבו אתה מחובר).',
-  hostSetupError: 'יש בעיית התקנה בחיבור. לחץ "תיקון".',
+  hostSetupError: 'יש בעיית התקנה או גרסת הרחבה ישנה. לחץ "תיקון" ואז Reload בדף ההרחבות.',
   wrongProfile: 'הפרופיל שבחרת לא מחובר כרגע.',
   choiceRequired: 'כמה פרופילים מחוברים. בחר למטה את זה שבו אתה מחובר לאתרים.',
   cancelled: 'הבדיקה בוטלה.',
@@ -69,6 +70,11 @@ export default function BrowserSettings() {
     let text = r.ok ? `מחובר (${r.instance?.label || ''}) · תגובה תוך ${r.latencyMs} מ״ש` : (TEST_TEXT[r.kind] || 'אי אפשר להתחבר.');
     if (!r.ok && r.kind === 'notSetUp' && r.problems?.length) text += ' ' + (PROBLEM_TEXT[r.problems[0]] || '');
     setResults((x) => ({ ...x, [id]: { ok: !!r.ok, text } }));
+  });
+  const uninstall = () => act('uninstall', async () => {
+    if (!window.confirm('להסיר את החיבור של Grab לדפדפנים? לאחר מכן הסר את התוסף מדף ההרחבות בכל דפדפן.')) return;
+    const r = await api.browserUninstall();
+    if (r.busy) setResults((x) => ({ ...x, chrome: { ok: false, text: 'סיים או השהה את הפעולות הפעילות לפני הסרת החיבור.' } }));
   });
   const save = (patch) => api.browserSet(patch).then((s) => { setState(s); setRuleError(''); });
   const copy = (text, tag) => navigator.clipboard.writeText(text).then(() => { setCopied(tag); setTimeout(() => setCopied(''), 1800); }).catch(() => {});
@@ -202,6 +208,7 @@ export default function BrowserSettings() {
         </div>
       )}
 
+      {state.installed && <div className="setting"><div className="row-meta">אפשר להסיר את רכיב החיבור; את התוסף מסירים בנפרד בדף ההרחבות.</div><button className="btn-ghost small" onClick={uninstall} disabled={!!busy}><Trash2 size={14} /> הסר חיבור</button></div>}
       <details className="setting advanced">
         <summary>הגדרות זמן (מתקדם)</summary>
         <div className="advanced-grid">

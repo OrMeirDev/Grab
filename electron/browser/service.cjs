@@ -13,8 +13,7 @@ const { detectBrowsers, browserName } = require('./browsers.cjs');
 const selection = require('./selection.cjs');
 const setup = require('./setup.cjs');
 
-const DEADLINE_DEFAULTS = { connectMs: 10000, discoveryMs: 60000, probeMs: 45000, downloadIdleMs: 180000 };
-const DEADLINE_LIMITS = { connectMs: [2000, 60000], discoveryMs: [10000, 300000], probeMs: [10000, 300000], downloadIdleMs: [30000, 1800000] };
+const { DEADLINE_DEFAULTS, DEADLINE_LIMITS } = selection;
 
 const defaultDeps = {
   isRunning: (browserId) => new Promise((resolve) => {
@@ -25,6 +24,11 @@ const defaultDeps = {
   }),
   // Argument array, no shell: the browser is started with no arguments and opens as the user normally does.
   launch: (exe) => { const child = spawn(exe, [], { detached: true, stdio: 'ignore' }); child.on('error', () => {}); child.unref(); },
+  stopHost: (pid) => new Promise((resolve) => {
+    if (!Number.isInteger(pid) || pid <= 0) return resolve();
+    if (process.platform === 'win32') execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => resolve());
+    else { try { process.kill(pid, 'SIGTERM'); } catch { /* already exited */ } resolve(); }
+  }),
 };
 
 const domainMatches = (host, domain) => {
@@ -34,10 +38,11 @@ const domainMatches = (host, domain) => {
 };
 
 class BrowserService extends EventEmitter {
-  constructor({ appVersion = '0', sourceRoot, integrationDir = setup.defaultIntegrationDir(), getSettings, saveSettings, notify = () => {}, askRenderer = async () => 'unavailable', engine, session, deps = {}, registry = setup.windowsRegistry } = {}) {
+  constructor({ appVersion = '0', sourceRoot, integrationDir = setup.defaultIntegrationDir(), getSettings, saveSettings, notify = () => {}, askRenderer = async () => 'unavailable', acceptIncoming, engine, session, deps = {}, registry = setup.windowsRegistry } = {}) {
     super();
     Object.assign(this, { appVersion, sourceRoot, integrationDir, getSettings, saveSettings, notify, askRenderer, engine, session, registry });
     this.deps = { ...defaultDeps, ...deps };
+    this.acceptIncoming = acceptIncoming || ((payload) => this.askRenderer('browser:incoming', payload, 3000));
     this.active = new Map(); // renderer item id -> { abort, jobId, instance }
     this.choices = new Map(); // token -> pending "which video?" choice
     this.incoming = new Map(); // ref -> { instanceKey, scopeKey, candidate, url, terminal }
@@ -47,6 +52,8 @@ class BrowserService extends EventEmitter {
     this.healthAt = 0;
     this.hub = null;
     this.startError = '';
+    this.settingsWrites = Promise.resolve();
+    this.cookieRefs = new Map(); // instance key -> this connection's opaque vault handles
   }
 
   // ---------------------------------------------------------------- lifecycle
@@ -56,6 +63,7 @@ class BrowserService extends EventEmitter {
     try { await this.hub.start(); } catch (e) { this.startError = String(e && e.message || e); }
     this.hub.on('instances', () => this.changed());
     this.hub.on('failure', () => this.changed());
+    this.hub.on('disconnected', (inst) => this.dropInstanceSession(inst.key));
     this.hub.on('message', (inst, m) => { if (m.type === 'send-to-grab') this.onSend(inst, m); });
     await this.refresh();
     await this.autoRepair();
@@ -64,6 +72,7 @@ class BrowserService extends EventEmitter {
   shutdown() {
     for (const entry of this.active.values()) entry.abort.abort();
     this.active.clear();
+    for (const key of this.cookieRefs.keys()) this.dropInstanceSession(key);
     if (this.hub) this.hub.stop();
   }
 
@@ -105,6 +114,12 @@ class BrowserService extends EventEmitter {
   }
 
   setSettings(patch) {
+    const saved = this.settingsWrites.then(() => this.applySettings(patch));
+    this.settingsWrites = saved.catch(() => {});
+    return saved;
+  }
+
+  async applySettings(patch) {
     const current = this.settings();
     const next = selection.sanitizeBrowserSettings(patch, current);
     for (const [key, [lo, hi]] of Object.entries(DEADLINE_LIMITS)) {
@@ -113,7 +128,7 @@ class BrowserService extends EventEmitter {
         else if (Number.isFinite(patch[key]) && patch[key] >= lo && patch[key] <= hi) next[key] = Math.round(patch[key]);
       }
     }
-    this.saveSettings({ browser: next });
+    await this.saveSettings({ browser: next });
     this.changed();
     return this.state();
   }
@@ -141,9 +156,11 @@ class BrowserService extends EventEmitter {
       browsers: ['edge', 'chrome', 'brave'].map((id) => {
         const det = this.detected.browsers.find((b) => b.id === id);
         const h = health.results.find((r) => r.browser === id) || { state: 'not_detected', problems: [] };
+        const problems = [...h.problems];
+        if (this.identity?.version && instances.some((i) => i.browser === id && i.extVersion !== this.identity.version)) problems.push('extension_outdated');
         return {
           id, name: browserName(id), detected: !!det, systemDefault: this.detected.systemDefault === id,
-          state: h.state, problems: h.problems, failure: h.failure,
+          state: problems.length ? 'setup_problem' : instances.some((i) => i.browser === id) ? 'connected' : h.state, problems, failure: h.failure,
           instances: instances.filter((i) => i.browser === id).map((i) => ({ key: i.key, label: this.instanceLabel(i), extVersion: i.extVersion })),
         };
       }),
@@ -169,6 +186,10 @@ class BrowserService extends EventEmitter {
     const h = this.health && this.health.results.find((r) => r.browser === browserId);
     return !!h && h.registered && !h.problems.some((p) => p !== 'stale_version');
   }
+  isConfigured(browserId) {
+    return !!this.health?.results?.some((h) => h.browser === browserId && h.registered) ||
+      !!setup.readInstall(this.integrationDir)?.browsers?.includes(browserId);
+  }
   hasConnected(browserId) { return !!this.hub && this.hub.instances().some((i) => i.browser === browserId); }
 
   getInstanceFn(browserId, explicitInstance) {
@@ -192,7 +213,10 @@ class BrowserService extends EventEmitter {
   }
 
   async uninstall() {
-    await setup.uninstall({ integrationDir: this.integrationDir, registry: this.registry });
+    const pids = this.hub.instances().map((i) => this.hub.hostPid(i.key));
+    await setup.uninstall({ integrationDir: this.integrationDir, registry: this.registry,
+      beforeRemove: () => Promise.all(pids.map((pid) => this.deps.stopHost(pid))) });
+    for (const key of this.cookieRefs.keys()) this.dropInstanceSession(key);
     await this.refresh();
     return this.state();
   }
@@ -205,6 +229,7 @@ class BrowserService extends EventEmitter {
     const controller = new AbortController();
     try {
       const inst = await connectInstance({ hub: this.hub, browser: this.browserEntry(browserId), getInstance: this.getInstanceFn(browserId), settings: this.deadlines(), deps: this.deps, signal: controller.signal });
+      if (this.identity?.version && inst.extVersion !== this.identity.version) throw new BrowserError('hostSetupError');
       const started = Date.now();
       await this.hub.request(inst.key, 'ping', {}, { timeoutMs: 4000 });
       return { ok: true, latencyMs: Date.now() - started, instance: { key: inst.key, label: this.instanceLabel(inst) } };
@@ -224,23 +249,46 @@ class BrowserService extends EventEmitter {
     return this.fail(kindMap[error.kind] || error.kind, browser, extra);
   }
 
-  async cookiesFor(instance, scopeKey, candidate) {
+  releaseSession(reference) {
+    this.session.forgetCookies?.(reference);
+    for (const refs of this.cookieRefs.values()) refs.delete(reference);
+  }
+
+  dropInstanceSession(key) {
+    for (const reference of this.cookieRefs.get(key) || []) this.session.forgetCookies?.(reference);
+    this.cookieRefs.delete(key);
+  }
+
+  async cookiesFor(instance, scopeKey, candidate, signal) {
     const urls = media.scopeUrls(candidate);
     let reply;
-    try { reply = await this.hub.request(instance.key, 'cookies-request', { jobId: scopeKey, urls }, { timeoutMs: 8000 }); } catch { return null; }
+    try { reply = await this.hub.request(instance.key, 'cookies-request', { jobId: scopeKey, urls }, { timeoutMs: 8000, signal }); }
+    catch { throw new BrowserError(signal?.aborted ? 'cancelled' : 'browserDisconnected'); }
+    if (signal?.aborted) throw new BrowserError('cancelled');
+    if (reply.available === false) throw new BrowserError('sessionExpired');
     const hosts = urls.map((u) => new URL(u).hostname);
     const cookies = (reply.cookies || [])
       .filter((c) => hosts.some((h) => domainMatches(h, c.domain)))
       .map((c) => ({ name: c.name, value: c.value, domain: c.domain, path: c.path || '/', secure: !!c.secure, httpOnly: !!c.httpOnly, session: !!c.session, expires: c.session ? -1 : c.expirationDate || 0 }));
-    return cookies.length ? this.session.rememberCookies(cookies) : null;
+    // A successful empty snapshot is different from a failed cookie request. Its handle
+    // still binds this job to the chosen browser, so disconnect/restart requires rediscovery.
+    const reference = this.session.rememberCookies(cookies, { source: 'extension:' + instance.key });
+    if (!this.cookieRefs.has(instance.key)) this.cookieRefs.set(instance.key, new Set());
+    this.cookieRefs.get(instance.key).add(reference);
+    return reference;
   }
 
   describeChoice(c) {
     try {
       const u = new URL(c.url);
-      const last = u.pathname.split('/').filter(Boolean).pop() || u.hostname;
-      return `${{ hls: 'HLS', dash: 'DASH', file: 'קובץ', opaque: 'וידאו' }[c.kind] || ''} · ${u.hostname} · ${last}`;
+      return `${{ hls: 'HLS', dash: 'DASH', file: 'קובץ', opaque: 'וידאו' }[c.kind] || ''} · ${u.hostname}`;
     } catch { return c.kind; }
+  }
+
+  restoreJob(ref, instanceKey, url) {
+    if (!ref || !instanceKey || this.incoming.has(ref)) return;
+    // Status routing only: neither a stale candidate nor an old cookie scope is restored.
+    this.incoming.set(ref, { instanceKey, url, candidate: null, scopeKey: null, sendKey: null, terminal: '' });
   }
 
   /**
@@ -255,6 +303,7 @@ class BrowserService extends EventEmitter {
     const sel = this.resolve(url, { browser: explicitBrowser });
     const browser = this.browserEntry(sel.browserId || 'edge');
     if (!sel.browserId || !sel.available) return this.fail('browserUnavailable', browser);
+    if (!this.isSetUp(browser.id)) return this.fail('hostSetupError', browser);
 
     const previous = this.active.get(itemId);
     if (previous) previous.abort.abort();
@@ -322,22 +371,30 @@ class BrowserService extends EventEmitter {
           }
           candidates = ranked.plausible.slice(0, 3);
         }
+        if (this.identity?.version && instance.extVersion !== this.identity.version) throw new BrowserError('hostSetupError');
         phase('validating', { instance });
         lastFailure = null;
         for (const c of candidates) {
           if (abort.signal.aborted) throw new BrowserError('cancelled');
           const expiry = this.engine.mediaExpiry ? this.engine.mediaExpiry(c.url) : null;
           if (expiry && expiry < Date.now() + 5000) { lastFailure = { kind: 'forbidden', httpStatus: 410 }; continue; }
-          const cookieRef = await this.cookiesFor(instance, scopeKey, c);
-          const r = await this.session.withSessionCookies(cookieRef, (cookieFile) => this.engine.analyze(c.url, {
-            cookieFile, requestContext: c.context, referer: url, title: title || undefined, signal: abort.signal, timeoutMs: cfg.probeMs,
-          }));
-          if (abort.signal.aborted) throw new BrowserError('cancelled');
+          const cookieRef = await this.cookiesFor(instance, scopeKey, c, abort.signal);
+          let r;
+          try {
+            r = await this.session.withSessionCookies(cookieRef, (cookieFile) => this.engine.analyze(c.url, {
+              cookieFile, requestContext: c.context, referer: url, title: title || undefined, signal: abort.signal, timeoutMs: cfg.probeMs,
+            }));
+            if (abort.signal.aborted) throw new BrowserError('cancelled');
+          } catch (error) { this.releaseSession(cookieRef); throw error; }
           // Rate limiting is not a session-expiry signal. Stop immediately, preserving queue backoff.
-          if (r.kind === 'blocked' || r.httpStatus === 429) return { ...r, ok: false, kind: 'blocked', browser: { id: browser.id, name: browser.name } };
-          if (r.ok) {
-            return { ...r, mediaUrl: c.url, referer: (c.context && c.context.referer) || url, requestContext: c.context, cookieRef, browser: { id: browser.id, name: browser.name }, instanceKey: instance.key };
+          if (['blocked', 'rateLimited'].includes(r.kind) || r.httpStatus === 429) {
+            this.releaseSession(cookieRef);
+            return { ...r, ok: false, kind: r.kind === 'blocked' && r.httpStatus !== 429 ? 'blocked' : 'rateLimited', browser: { id: browser.id, name: browser.name } };
           }
+          if (r.ok) {
+            return { ...r, mediaUrl: c.url, referer: c.context?.referer ?? url, requestContext: c.context, cookieRef, needsSession: true, sessionSource: 'browser', browser: { id: browser.id, name: browser.name }, instanceKey: instance.key };
+          }
+          this.releaseSession(cookieRef);
           lastFailure = r;
         }
         // An expired or refused signed URL gets ONE fresh discovery in the same session; never a loop.
@@ -381,18 +438,19 @@ class BrowserService extends EventEmitter {
     const ref = protocol.newId('ref');
     let release;
     const reservation = { ref, at: Date.now(), terminal: '', pending: new Promise((resolve) => { release = resolve; }) };
-    // Reserve before notifying React: a fast renderer may start analysis before its acknowledgment,
+    // Reserve before queue intake: the coordinator may start analysis before its acknowledgment,
     // and a double-click must not create two jobs while the first acknowledgment is pending.
     this.recentSends.set(sendKey, reservation);
     this.incoming.set(ref, { instanceKey: instance.key, scopeKey: m.id, candidate: m.candidate || null, title: m.title || '', url: m.url, sendKey, terminal: '' });
     try {
       const sourceId = crypto.createHash('sha256').update(sendKey).digest('hex');
-      const answer = await this.askRenderer('browser:incoming', { ref, sourceId, url: m.url, title: m.title || '', browserId: instance.browser, instanceKey: instance.key, hasCandidate: !!m.candidate }, 3000);
-      if (answer !== 'accepted') {
+      const answer = await this.acceptIncoming({ ref, sourceId, url: m.url, title: m.title || '', browserId: instance.browser, instanceKey: instance.key, hasCandidate: !!m.candidate });
+      const status = typeof answer === 'string' ? answer : answer?.status;
+      if (status !== 'accepted') {
         this.incoming.delete(ref);
         this.recentSends.delete(sendKey);
-        if (answer === 'duplicate') reply('duplicate');
-        else reply('rejected', { reason: answer === 'unavailable' ? 'app_not_ready' : 'refused' });
+        if (status === 'duplicate') reply('duplicate', answer?.ref ? { ref: answer.ref } : {});
+        else reply('rejected', { reason: status === 'unavailable' ? 'app_not_ready' : 'refused' });
         return;
       }
       reply('accepted', { ref });

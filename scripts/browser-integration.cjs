@@ -20,7 +20,7 @@ async function main(args) {
   if (action === 'install' || action === 'repair') {
     const browsers = ids.length ? ids : detected.map((b) => b.id);
     if (!browsers.length) throw new Error('No supported installed browser found.');
-    const installed = await setup.install({ sourceRoot, appVersion, browsers });
+    const installed = await setup.install({ sourceRoot, appVersion, browsers, runtime: require('electron') });
     console.log('Load unpacked from: ' + installed.extensionDir);
     console.log('Extension ID: ' + installed.extensionId);
   }

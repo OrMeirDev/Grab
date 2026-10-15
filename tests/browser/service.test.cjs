@@ -9,7 +9,7 @@ const { BrowserService } = require('../../electron/browser/service.cjs');
 const { BrowserHub } = require('../../electron/browser/hub.cjs');
 const { FakeBrowser } = require('../../test-support/fake-browser.cjs');
 
-const ORIGIN = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/';
+const ORIGIN = require('../../electron/browser/setup.cjs').readExtensionIdentity(path.join(__dirname, '..', '..', 'extension')).origin;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ctx = { userAgent: 'UA/1', referer: 'https://site.test/lesson', origin: 'https://site.test' };
 const cand = (url, extra = {}) => ({ url, kind: 'hls', size: 0, at: Date.now(), firstAt: Date.now(), fromPlayer: true, frameId: 0, context: ctx, redirects: [], hosts: [], ...extra });
@@ -37,9 +37,7 @@ async function rig(t, { settings = {}, detected = installedAll } = {}) {
     deps: { isRunning: async () => true, launch() {} },
     registry: { get: async () => null, set: async () => {}, remove: async () => true },
   });
-  svc.hub = new BrowserHub({ integrationDir: dir, allowedOrigins: [ORIGIN] });
-  await svc.hub.start();
-  svc.hub.on('message', (inst, m) => { if (m.type === 'send-to-grab') svc.onSend(inst, m); });
+  await svc.init();
   svc.detected = detected;
   svc.health = { installed: true, results: ['edge', 'chrome', 'brave'].map((browser) => ({ browser, detected: true, registered: true, problems: [], state: 'unknown', instances: [] })) };
   const made = [];
@@ -47,7 +45,7 @@ async function rig(t, { settings = {}, detected = installedAll } = {}) {
     const b = new FakeBrowser({ integrationDir: dir, origin: ORIGIN, ...o });
     made.push(b);
     await b.waitFor((m) => m.type === 'app-status' && m.online);
-    b.hello();
+    b.hello({ extVersion: svc.identity.version });
     await b.waitFor((m) => m.type === 'welcome');
     b.cookieRequests = [];
     // A scripted extension: answers discover / cookies-request like the real one would.
@@ -189,7 +187,7 @@ test('a source rate limit stops at once without another source or session refres
   const b = await r.connect();
   r.engine.result = () => ({ ok: false, kind: 'blocked', httpStatus: 429, error: 'HTTP 429' });
   const out = await r.svc.analyze('https://x.test/p', { itemId: 61, browser: 'edge' });
-  assert.equal(out.kind, 'blocked');
+  assert.equal(out.kind, 'rateLimited');
   assert.equal(out.httpStatus, 429);
   assert.equal(r.analyzeCalls.length, 1);
   assert.equal(b.received.filter((m) => m.type === 'discover').length, 1);
@@ -343,7 +341,7 @@ test('Send to GRAB reserves pending jobs and keeps same-page browser sessions in
 test('deadlines default sensibly, accept valid saved values and ignore out-of-range ones', async (t) => {
   const r = await rig(t, { settings: {} });
   assert.deepEqual(r.svc.deadlines(), { connectMs: 10000, discoveryMs: 60000, probeMs: 45000, downloadIdleMs: 180000 });
-  r.svc.setSettings({ connectMs: 5000, discoveryMs: 99999999, downloadIdleMs: 10 });
+  await r.svc.setSettings({ connectMs: 5000, discoveryMs: 99999999, downloadIdleMs: 10 });
   assert.equal(r.svc.deadlines().connectMs, 5000);
   assert.equal(r.svc.deadlines().discoveryMs, 60000);
   assert.equal(r.svc.deadlines().downloadIdleMs, 180000);
@@ -351,9 +349,78 @@ test('deadlines default sensibly, accept valid saved values and ignore out-of-ra
 
 test('saved settings go through validation: unknown browsers and malformed hosts never persist', async (t) => {
   const r = await rig(t, { settings: {} });
-  r.svc.setSettings({ defaultBrowser: 'firefox', siteRules: [{ host: 'evil host', browser: 'edge' }, { host: 'example.org', browser: 'brave' }] });
+  await r.svc.setSettings({ defaultBrowser: 'firefox', siteRules: [{ host: 'evil host', browser: 'edge' }, { host: 'example.org', browser: 'brave' }] });
   const s = r.svc.state().settings;
   assert.equal(s.defaultBrowser, null);
   assert.deepEqual(s.siteRules, [{ host: 'example.org', browser: 'brave' }]);
   assert.equal(r.svc.resolve('https://www.mako.co.il/x').source, 'suggested', 'the seeded mako rule was replaced by the saved list');
+});
+
+test('disconnect while acquiring cookies never calls the extractor without the session', async (t) => {
+  const r = await rig(t, { settings: fast });
+  const b = await r.connect();
+  const write = b.write.bind(b);
+  b.write = (m) => { if (m.type === 'cookies') b.kill(); else write(m); };
+  const out = await r.svc.analyze('https://www.mako.co.il/v/member', { itemId: 'cookie-disconnect' });
+  assert.equal(out.ok, false);
+  assert.equal(out.kind, 'browserDisconnected');
+  assert.equal(r.analyzeCalls.length, 0, 'not one unauthenticated extractor request');
+});
+
+test('a connected profile losing its scope is an explicit session failure before any extractor request', async (t) => {
+  const r = await rig(t, { settings: fast });
+  await r.connect();
+  const request = r.svc.hub.request.bind(r.svc.hub);
+  r.svc.hub.request = (key, type, data, options) => type === 'cookies-request'
+    ? Promise.resolve({ cookies: [], available: false }) : request(key, type, data, options);
+  const out = await r.svc.analyze('https://www.mako.co.il/v/member', { itemId: 'lost-scope' });
+  assert.equal(out.kind, 'sessionExpired');
+  assert.equal(r.analyzeCalls.length, 0);
+});
+
+test('disconnect drops only that extension profile session; another connected profile stays usable', async (t) => {
+  const r = await rig(t, { settings: fast });
+  const a = await r.connect({ instanceId: 'profile-a' });
+  await r.connect({ instanceId: 'profile-b' });
+  const one = await r.svc.analyze('https://www.mako.co.il/v/one', { itemId: 'session-a', instance: 'edge:profile-a' });
+  const two = await r.svc.analyze('https://www.mako.co.il/v/two', { itemId: 'session-b', instance: 'edge:profile-b' });
+  assert.equal(one.ok, true);
+  assert.equal(two.ok, true);
+  assert.equal(session.hasCookies(one.cookieRef), true);
+  assert.equal(session.hasCookies(two.cookieRef), true);
+  await a.kill();
+  for (let i = 0; i < 100 && session.hasCookies(one.cookieRef); i++) await sleep(10);
+  assert.equal(session.hasCookies(one.cookieRef), false);
+  assert.equal(session.hasCookies(two.cookieRef), true);
+  await assert.rejects(session.withSessionCookies(one.cookieRef, () => assert.fail('expired context was used')), { kind: 'contextExpired' });
+});
+
+test('cancelling while waiting for cookies settles promptly and leaves no extractor request or pending reply', async (t) => {
+  const r = await rig(t, { settings: fast });
+  const b = await r.connect();
+  // Prevent only the cookie reply; the discovery still goes through the real host and hub.
+  const write = b.write.bind(b);
+  b.write = (m) => { if (m.type !== 'cookies') write(m); };
+  const pending = r.svc.analyze('https://www.mako.co.il/v/member', { itemId: 'cancel-cookies' });
+  await b.waitFor((m) => m.type === 'cookies-request');
+  r.svc.cancel('cancel-cookies');
+  assert.equal((await pending).kind, 'cancelled');
+  assert.equal(r.analyzeCalls.length, 0);
+  assert.equal(r.svc.hub.pending.size, 0);
+});
+
+test('concurrent browser preference changes serialize without losing the first change', async (t) => {
+  const r = await rig(t);
+  await Promise.all([r.svc.setSettings({ defaultBrowser: 'chrome' }), r.svc.setSettings({ instanceAliases: { 'chrome:personal': 'אישי' } })]);
+  assert.equal(r.saved.browser.defaultBrowser, 'chrome');
+  assert.equal(r.saved.browser.instanceAliases['chrome:personal'], 'אישי');
+});
+
+test('an old extension is rejected with repair instructions before the extractor uses its cookie protocol', async (t) => {
+  const r = await rig(t, { settings: fast });
+  const b = await r.connect();
+  b.hello({ extVersion: '1.0.0' });
+  await sleep(50);
+  assert.equal((await r.svc.analyze('https://www.mako.co.il/v/member', { itemId: 'outdated' })).kind, 'hostSetupError');
+  assert.equal(r.analyzeCalls.length, 0);
 });

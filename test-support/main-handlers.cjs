@@ -1,32 +1,33 @@
-// Exercise the application's real IPC handlers without starting its desktop UI.
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const vm = require('node:vm');
-const { createRequire } = require('node:module');
 const browser = require('../electron/browser-session.cjs');
+const { createDiscoveryService } = require('../electron/application/discovery-service.cjs');
+const { createDownloadRunner } = require('../electron/application/download-runner.cjs');
+const { OutputAllocator } = require('../electron/infrastructure/output-allocator.cjs');
 
 function mainHandlers(engine, pageprobe, hiddenProbe = { findMedia: async () => ({ candidates: [] }) }, session = browser, service) {
   const handlers = new Map();
-  const entry = path.join(__dirname, '../electron/main.cjs');
-  const nativeRequire = createRequire(entry);
-  const app = { getPath: () => os.tmpdir(), whenReady: () => ({ then() {} }), on() {}, requestSingleInstanceLock: () => true };
-  const sandbox = { require: (name) => {
-    if (name === 'electron') return { app, ipcMain: { handle: (key, value) => handlers.set(key, value) } };
-    if (name === 'electron-updater') return { autoUpdater: { on() {} } };
-    if (name === './engine.cjs') return engine;
-    if (name === './pageprobe.cjs') return pageprobe;
-    if (name === './hidden-probe.cjs') return hiddenProbe;
-    if (name === './browser-session.cjs') return session;
-    return nativeRequire(name);
-  }, process, console, setTimeout, setInterval, clearTimeout, AbortController, __dirname: path.dirname(entry) };
-  const context = vm.createContext(sandbox);
-  vm.runInContext(fs.readFileSync(entry, 'utf8'), context, { filename: entry });
-  if (service) {
-    context.injectedBrowserService = service;
-    vm.runInContext('browserService = injectedBrowserService', context);
-  }
+  const controllers = new Map();
+  const jobs = new Map();
+  const discovery = createDiscoveryService({ engine, pageprobe, hiddenProbe, browserSession: session, getBrowserService: () => service });
+  const runner = createDownloadRunner({ engine, browserSession: session, allocator: new OutputAllocator() });
+  handlers.set('engine:analyze', async (event, url, options = {}) => {
+    const ctl = new AbortController();
+    controllers.set(options.id, ctl);
+    try {
+      const r = await discovery.analyze(url, { ...options, itemId: options.id, signal: ctl.signal,
+        onPhase: (phase, name) => event.sender?.send?.('engine:lookup-phase', { url, phase, browser: name }) });
+      return ctl.signal.aborted ? { ok: false, kind: 'cancelled' } : r;
+    } finally { if (controllers.get(options.id) === ctl) controllers.delete(options.id); }
+  });
+  handlers.set('engine:cancel-analyze', (_e, id) => { controllers.get(id)?.abort(); return !!controllers.get(id); });
+  handlers.set('engine:start', async (_event, plan) => {
+    const run = runner.start(plan, () => {});
+    const job = { run, stopped: false }; jobs.set(plan.id, job);
+    try { const r = await run.done; return job.stopped ? { ok: false, stopped: true } : r; }
+    finally { jobs.delete(plan.id); }
+  });
+  handlers.set('engine:stop', (_e, id) => { const job = jobs.get(id); if (job) { job.stopped = true; job.run.stop(); } });
+  handlers.set('browser:default', (_e, url) => { const b = session.browserForPage(url); return { name: b.name, scheme: b.scheme, supported: b.supported !== false }; });
+  handlers.set('browser:check', async (_e, url) => { try { await session.connectBrowser({ browser: session.browserForPage(url) }); return { ok: true }; } catch (error) { return { ok: false, kind: error.kind }; } });
   return handlers;
 }
-
 module.exports = { mainHandlers, sender: { isDestroyed: () => false, send() {} } };
