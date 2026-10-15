@@ -90,9 +90,11 @@ jobs:
           node scripts/windows/stamp-test-build.cjs --version $env:NEXT_VERSION --feed $env:TEST_FEED
           npm run dist -- --publish never
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # A "-test.N" version puts both builds on the "test" update channel: electron-builder
+          # writes test.yml and the app asks the feed for test.yml.
           New-Item -ItemType Directory -Force feed | Out-Null
-          Copy-Item "release/Grab-Setup-$env:NEXT_VERSION.exe", release/latest.yml feed/
-          Get-Content feed/latest.yml | Tee-Object evidence/feed-latest.yml
+          Copy-Item "release/Grab-Setup-$env:NEXT_VERSION.exe", release/test.yml feed/
+          Get-Content feed/test.yml | Tee-Object evidence/feed-test.yml
           $sums = foreach ($f in "release-a/Grab-Setup-$env:TEST_VERSION.exe", "feed/Grab-Setup-$env:NEXT_VERSION.exe") {
             "$((Get-FileHash -Algorithm SHA256 $f).Hash.ToLowerInvariant())  $(Split-Path $f -Leaf)"
           }

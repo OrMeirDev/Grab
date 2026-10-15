@@ -533,7 +533,7 @@ async function scenarioUpdateWhileDownloading() {
     const ready = await until(async () => { const b = await banner(); return /מוכן/.test(b) ? b : null; }, 600000, 500);
     const installerServed = feed.log.filter((l) => l.status === 200 && /\.exe$/.test(new URL(l.url, 'http://feed').pathname));
     record('W-07d', 'the installed app finds the newer test version on the local feed and downloads it (its own banner)',
-      !!available && !!ready && feed.log.some((l) => /latest\.yml/.test(l.url) && l.status === 200) && installerServed.length > 0 && /provider: generic/.test(appUpdateYml || '') && /127\.0\.0\.1/.test(appUpdateYml || ''),
+      !!available && !!ready && feed.log.some((l) => /\.yml(\?|$)/.test(l.url) && l.status === 200) && installerServed.length > 0 && /provider: generic/.test(appUpdateYml || '') && /127\.0\.0\.1/.test(appUpdateYml || ''),
       { appUpdateYml, available, ready, feedRequests: feed.log.map((l) => `${l.status} ${l.url.split('?')[0]}${l.range ? ' ' + l.range : ''}`) });
     if (!ready) return;
 
