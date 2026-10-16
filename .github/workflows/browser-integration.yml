@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: browser-integration-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   checks:
     strategy:

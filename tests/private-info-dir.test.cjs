@@ -28,3 +28,13 @@ test('signed metadata cache rejects ordinary files and symlinks', () => {
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('Windows: private-directory ACL setup succeeds independently of inherited PowerShell module paths', { skip: process.platform !== 'win32' }, () => {
+  const { protectWindowsDirectory } = require('../electron/infrastructure/windows-private-directory.cjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-synthetic-acl-'));
+  const diagnostics = [];
+  try {
+    assert.equal(protectWindowsDirectory(dir, { diagnostic: (d) => diagnostics.push(d) }), true, JSON.stringify(diagnostics));
+    assert.equal(ensurePrivateDir(dir), true);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

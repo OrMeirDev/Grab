@@ -16,6 +16,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows-privacy-acl:
+    name: Windows private directory ACLs
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Exact ACL setup and cookie-vault lifecycle without downloaded engines
+        run: node --test --test-timeout=120000 tests/private-info-dir.test.cjs tests/cookie-vault-jar.test.cjs tests/privacy-settings.test.cjs
   test:
     name: test (${{ matrix.os }})
     strategy:

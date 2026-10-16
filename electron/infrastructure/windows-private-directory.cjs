@@ -9,7 +9,7 @@ $p = $env:GRAB_PRIVATE_DIR
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $user = $identity.User
 $system = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
-$old = Get-Acl -LiteralPath $p
+$old = [IO.Directory]::GetAccessControl($p)
 $owner = $old.GetOwner([Security.Principal.SecurityIdentifier]).Value
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $adminOwnedByThisToken = $owner -eq 'S-1-5-32-544' -and $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -24,14 +24,14 @@ foreach ($sid in @($user, $system)) {
   $acl.AddAccessRule($rule)
 }
 [IO.Directory]::SetAccessControl($p, $acl)
-$check = Get-Acl -LiteralPath $p
+$check = [IO.Directory]::GetAccessControl($p)
 if (!$check.AreAccessRulesProtected) { throw 'Inherited access remains' }
 foreach ($rule in $check.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
   if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -notin @($user.Value, $system.Value)) { throw 'Unexpected access' }
 }
 `;
 
-function protectWindowsDirectory(dir) {
+function protectWindowsDirectory(dir, { diagnostic } = {}) {
   try {
     const info = fs.lstatSync(dir);
     if (!info.isDirectory() || info.isSymbolicLink()) return false;
@@ -39,10 +39,14 @@ function protectWindowsDirectory(dir) {
     if (verified.get(dir) === fingerprint) return true;
     const exe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
     execFileSync(exe, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
-      { env: { ...process.env, GRAB_PRIVATE_DIR: dir }, windowsHide: true, timeout: 15000, stdio: 'ignore' });
+      { env: { ...process.env, GRAB_PRIVATE_DIR: dir }, windowsHide: true, timeout: 15000, stdio: ['ignore', 'pipe', 'pipe'] });
     verified.set(dir, fingerprint);
     return true;
-  } catch { return false; }
+  } catch (error) {
+    // Used only by synthetic CI diagnostics. Production callers do not log these details.
+    diagnostic?.({ code: error.code, status: error.status, detail: String(error.stderr || '').slice(-4000) });
+    return false;
+  }
 }
 
 module.exports = { protectWindowsDirectory };
