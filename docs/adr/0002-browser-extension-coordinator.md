@@ -21,6 +21,13 @@ that instance disconnects. Persisted jobs retain the chosen browser/profile and 
 routing ids; they reacquire context after restart. Media URLs, headers, choice tokens and cookie
 handles stay private to main. Only verified files can produce a completed status.
 
+For YouTube, the adapter acquires a page-scoped session before calling the original page's
+extractor. This bounded Native Messaging request reads cookies only for that first-party URL and
+returns the browser user agent; it does not navigate, start playback or wait for media candidates.
+Short links use the canonical youtube.com cookie scope while retaining the original extractor URL.
+Generic embedded players retain their existing media-discovery path. Connection presentation
+follows live instances; past test results cannot override a reconnect or disconnect.
+
 The native host uses a versioned private copy of the already-shipped Electron runtime, named
 GrabBrowserHost.exe. This avoids locking the app executable/DLLs or matching the installer's
 Grab.exe process check while Chrome keeps the native port alive. No new system Node/Python is

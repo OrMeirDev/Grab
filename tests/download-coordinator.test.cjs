@@ -396,6 +396,30 @@ test('extension intake belongs to main: browser/profile survive restore, sends d
   assert.equal(t.history.length, 1);
 });
 
+test('two YouTube extension sends keep page sessions, and the second starts only after the YouTube rest', async () => {
+  const page = (n) => ({ ok: true, title: 'YouTube ' + n, site: 'Youtube', cookieRef: 'session-' + n,
+    needsSession: true, sessionSource: 'browser', browser: { id: 'chrome', name: 'Chrome' }, instanceKey: 'chrome:personal' });
+  const t = setup({ lookups: { [YT(1)]: page(1), [YT(2)]: page(2) } });
+  for (const n of [1, 2]) t.c.add([{ url: YT(n) }], { browser: 'chrome', instance: 'chrome:personal', ref: 'send-' + n, sourceId: 'yt-' + n, autoQueue: true });
+  await t.clock.advance(2000);
+  assert.equal(t.starts.length, 1);
+  assert.equal(t.starts[0].plan.url, YT(1));
+  assert.equal(t.starts[0].plan.cookieRef, 'session-1');
+  assert.ok(t.discovers.every((d) => d.requireSession && d.instance === 'chrome:personal'));
+  t.starts[0].finish();
+  await settle();
+  await t.clock.advance(4999);
+  assert.equal(t.starts.length, 1);
+  await t.clock.advance(1);
+  assert.equal(t.starts.length, 2);
+  assert.equal(t.starts[1].plan.url, YT(2));
+  assert.equal(t.starts[1].plan.cookieRef, 'session-2');
+  t.starts[1].finish();
+  await settle();
+  assert.deepEqual(t.status(), ['done', 'done']);
+  assert.equal(t.history.length, 2);
+});
+
 test('profile/video choices stay attached to the same auto-queued job and private tokens never reach snapshots', async () => {
   const url = 'https://course.example/choice';
   let n = 0;

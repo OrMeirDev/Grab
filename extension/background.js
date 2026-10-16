@@ -137,6 +137,7 @@ function onNative(m) {
     case 'cancel': cancelJob(m.jobId, 'cancelled'); break;
     case 'reveal-tab': revealJobTab(m.jobId); break;
     case 'cookies-request': answerCookies(m); break;
+    case 'page-session-request': answerPageSession(m); break;
     case 'ack': { const r = pendingAck.get(m.replyTo); if (r) { pendingAck.delete(m.replyTo); r({ status: m.status, ref: m.ref, reason: m.reason }); } break; }
     case 'job-status': recordSendStatus(m); break;
     default: break;
@@ -361,7 +362,14 @@ async function answerCookies(m) {
       }
     }
   }
-  if (!post(P.make('cookies', { jobId: m.jobId, available, cookies: available ? cookies.slice(0, 400) : [] }, m.id))) console.warn('[grab] cookies reply not sent');
+  if (!post(P.make('cookies', { jobId: m.jobId, available, userAgent: navigator.userAgent.slice(0, 500), cookies: available ? cookies.slice(0, 400) : [] }, m.id))) console.warn('[grab] cookies reply not sent');
+}
+
+// A site-specific extractor needs the page session, not a browser-observed media fragment.
+// Grant only this requested page origin. No navigation, media discovery or playback is needed.
+async function answerPageSession(m) {
+  registerScope(m.jobId, [m.url]);
+  await answerCookies({ ...m, urls: [m.url] });
 }
 
 // ---------------------------------------------------------------- discovery jobs

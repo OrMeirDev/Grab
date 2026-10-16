@@ -21,7 +21,7 @@ To test an installed build instead of development mode:
 npm run dist -- --publish never
 ```
 
-Run the resulting `release/Grab-Setup-1.7.0-rc.1.exe`. Building this test installer does not publish a release. The normal GitHub latest-release download does not automatically contain changes from this feature branch.
+Run the resulting `release/Grab-Setup-1.7.0-rc.2.exe`. Building this test installer does not publish a release. The normal GitHub latest-release download does not automatically contain changes from this feature branch.
 
 ## One-time browser setup
 
@@ -138,6 +138,6 @@ Automated Chromium fixtures do not prove access to personal mako sessions or act
 
 ## Unified release candidate
 
-Version 1.7.0-rc.1 combines the audit branch, the media request-context fixes and the browser extension. The main-process DownloadCoordinator owns both paste and Send-to-GRAB jobs; private media URLs, headers and cookie handles never enter renderer snapshots or queue.json. Browser/profile choices survive restart. Cookie acquisition errors fail before the extractor is called; each disconnected extension profile loses only its own vault handles. The pinned engines, process-tree shutdown, verified output and upgrade checks remain enabled.
+Version 1.7.0-rc.2 combines the audit branch, the media request-context fixes and the browser extension. The main-process DownloadCoordinator owns both paste and Send-to-GRAB jobs; private media URLs, headers and cookie handles never enter renderer snapshots or queue.json. Browser/profile choices survive restart. Cookie acquisition errors fail before the extractor is called; each disconnected extension profile loses only its own vault handles. The pinned engines, process-tree shutdown, verified output and upgrade checks remain enabled.
 
-See [Hebrew installation and personal-profile checks](INSTALL-1.7.0-rc.1-HE.md). The installer and SHA256SUMS are artifacts of the Browser integration workflow; Windows verify separately exercises installation over 1.6.7 and the installed app's update flow. Test results must refer to the actual unified commit, not an older branch's green run.
+See [Hebrew installation and personal-profile checks](INSTALL-1.7.0-rc.2-HE.md). The installer and SHA256SUMS are artifacts of the Browser integration workflow; Windows verify separately exercises installation over 1.6.7 and the installed app's update flow. Test results must refer to the actual unified commit, not an older branch's green run.

@@ -2,6 +2,7 @@
 // extension (when configured), otherwise the existing browser's CDP adapter. Session-required
 // jobs acquire their context before any extractor request; no anonymous fallback is allowed.
 const { budget } = require('../domain/candidate-policy.cjs');
+const { siteKey } = require('../domain/site-policy.cjs');
 
 const LOOKUP_BUDGET_MS = 6 * 60 * 1000;
 const PROBE_MS = 45000;
@@ -59,7 +60,7 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
       if (r.ok) signedInSites.add(host);
       return r;
     };
-    if (configured && (requireSession || forcePage || options.browser || options.instance || options.ref || options.choice)) return extensionLookup();
+    if (configured && (siteKey(url) === 'youtube' || requireSession || forcePage || options.browser || options.instance || options.ref || options.choice)) return extensionLookup();
     const first = forcePage ? { ok: false, kind: 'notfound', error: 'Unsupported URL' }
       : requireSession ? { ok: false, kind: 'private', error: 'The site needs your browser session' } : await probe(url);
     check();

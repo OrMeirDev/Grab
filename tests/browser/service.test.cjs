@@ -57,6 +57,11 @@ async function rig(t, { settings = {}, detected = installedAll } = {}) {
         seen.add(m.id);
         if (m.type === 'discover') for (const out of b.script.discover(m)) b.write(out);
         if (m.type === 'cookies-request') { b.cookieRequests.push(m); b.write(protocol.make('cookies', { jobId: m.jobId, cookies: b.script.cookies(m) }, m.id)); }
+        if (m.type === 'page-session-request') {
+          b.cookieRequests.push(m);
+          b.write(protocol.make('cookies', { jobId: m.jobId, available: b.script.sessionAvailable !== false,
+            userAgent: 'Browser UA/1', cookies: b.script.cookies(m) }, m.id));
+        }
       }
     }, 10);
     b.exited.then(() => clearInterval(tick));
@@ -68,6 +73,79 @@ async function rig(t, { settings = {}, detected = installedAll } = {}) {
 
 const cookie = (domain, name, value, extra = {}) => ({ name, value, domain, path: '/', secure: true, httpOnly: true, hostOnly: !domain.startsWith('.'), session: true, expirationDate: 0, ...extra });
 const fast = { connectMs: 2000, discoveryMs: 10000, probeMs: 10000 };
+
+test('YouTube sent without a visible media source uses the original page extractor with the sending session', async (t) => {
+  const r = await rig(t, { settings: { ...fast, defaultBrowser: 'edge' } });
+  const b = await r.connect({ browser: 'chrome' });
+  const page = 'https://www.youtube.com/watch?v=fixture123';
+  b.script.discover = (m) => [protocol.make('job-failed', { jobId: m.jobId, reason: 'timeout' })];
+  b.script.cookies = () => [cookie('.youtube.com', 'SID', 'YOUTUBE-SESSION'), cookie('.other.test', 'sid', 'DO-NOT-LEAK')];
+  await r.svc.onSend(r.svc.hub.instances()[0], protocol.make('send-to-grab', { url: page }));
+  const ref = (await b.waitFor((m) => m.type === 'ack')).ref;
+  const out = await r.svc.analyze(page, { itemId: 101, ref });
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.equal(r.analyzeCalls.length, 1);
+  assert.equal(r.analyzeCalls[0].url, page, 'the page extractor sees the original YouTube URL');
+  assert.match(r.analyzeCalls[0].cookies, /SID\tYOUTUBE-SESSION/);
+  assert.ok(!r.analyzeCalls[0].cookies.includes('DO-NOT-LEAK'));
+  assert.equal(r.analyzeCalls[0].requestContext.userAgent, 'Browser UA/1');
+  assert.equal(out.browser.id, 'chrome', 'the sending browser wins over the saved Edge default');
+  assert.equal(out.instanceKey, r.svc.hub.instances()[0].key);
+  assert.equal(out.needsSession, true);
+  assert.equal(out.mediaUrl, undefined, 'no browser-observed fragment replaces the original page');
+  assert.equal(b.received.some((m) => m.type === 'discover'), false);
+  assert.equal(fs.existsSync(r.analyzeCalls[0].cookiePath), false);
+  r.svc.releaseSession(out.cookieRef);
+});
+
+test('a pasted YouTube link acquires the chosen profile session before its extractor, even with no cookies', async (t) => {
+  const r = await rig(t, { settings: fast });
+  const b = await r.connect({ browser: 'chrome' });
+  b.script.discover = (m) => [protocol.make('job-failed', { jobId: m.jobId, reason: 'timeout' })];
+  const out = await r.svc.analyze('https://youtu.be/fixture123', { itemId: 102, browser: 'chrome' });
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.equal(b.cookieRequests[0].type, 'page-session-request');
+  assert.equal(r.analyzeCalls[0].cookies, null, 'a valid empty snapshot does not need a cookie file');
+  assert.ok(out.cookieRef, 'the selected session still has an opaque live handle');
+  assert.equal(out.needsSession, true, 'a valid empty snapshot still binds the selected profile');
+  r.svc.releaseSession(out.cookieRef);
+});
+
+test('a refused YouTube page session never runs an anonymous extractor or media discovery', async (t) => {
+  const r = await rig(t, { settings: fast });
+  const b = await r.connect({ browser: 'chrome' });
+  b.script.sessionAvailable = false;
+  b.script.discover = (m) => [protocol.make('job-failed', { jobId: m.jobId, reason: 'timeout' })];
+  const out = await r.svc.analyze('https://www.youtube.com/watch?v=fixture123', { itemId: 103, browser: 'chrome' });
+  assert.equal(out.kind, 'sessionExpired');
+  assert.equal(r.analyzeCalls.length, 0);
+  assert.equal(b.received.some((m) => m.type === 'discover'), false);
+});
+
+test('YouTube extractor failures retain rate-limit and timeout kinds without a browser scan retry', async (t) => {
+  const r = await rig(t, { settings: fast });
+  const b = await r.connect({ browser: 'chrome' });
+  b.script.discover = (m) => [protocol.make('job-failed', { jobId: m.jobId, reason: 'timeout' })];
+  for (const kind of ['rateLimited', 'probeTimeout', 'blocked']) {
+    r.engine.result = () => ({ ok: false, kind, error: kind });
+    const out = await r.svc.analyze('https://www.youtube.com/watch?v=fixture123', { itemId: 'failure-' + kind, browser: 'chrome' });
+    assert.equal(out.kind, kind);
+  }
+  assert.equal(r.analyzeCalls.length, 3);
+  assert.equal(b.received.some((m) => m.type === 'discover'), false);
+});
+
+test('connection state follows live instances after a cached successful health check', async (t) => {
+  const r = await rig(t);
+  const b = await r.connect({ browser: 'chrome' });
+  r.svc.health.results.find((h) => h.browser === 'chrome').state = 'connected';
+  assert.equal(r.svc.state().browsers.find((v) => v.id === 'chrome').state, 'connected');
+  await b.kill();
+  await sleep(100);
+  const disconnected = r.svc.state().browsers.find((v) => v.id === 'chrome');
+  assert.equal(disconnected.instances.length, 0);
+  assert.notEqual(disconnected.state, 'connected', 'cached health cannot keep a disconnected profile green');
+});
 
 test('happy path: candidate validated with only the scoped cookies and the observed request context, file cleaned up', async (t) => {
   const r = await rig(t, { settings: fast });

@@ -54,6 +54,20 @@ export default function BrowserSettings() {
     const off = api?.onBrowserChanged?.(load);
     return () => off?.();
   }, [load]);
+  useEffect(() => {
+    // A live connection supersedes an earlier failed connection test. Keep genuine setup
+    // problems visible; receiving an extension message alone does not clear a version error.
+    setResults((previous) => {
+      const stale = (state?.browsers || []).filter((b) => {
+        const r = previous[b.id];
+        return r && (b.state === 'connected' ? !r.ok : r.ok && r.kind === 'connection');
+      }).map((b) => b.id);
+      if (!stale.length) return previous;
+      const next = { ...previous };
+      for (const id of stale) delete next[id];
+      return next;
+    });
+  }, [state]);
 
   if (!api?.browserState) return null;
   if (!state) return <section className="card settings"><div className="setting"><div className="setting-title">דפדפן והרחבה</div><div className="row-meta">טוען…</div></div></section>;
@@ -69,7 +83,7 @@ export default function BrowserSettings() {
     const r = await api.browserTest(id);
     let text = r.ok ? `מחובר (${r.instance?.label || ''}) · תגובה תוך ${r.latencyMs} מ״ש` : (TEST_TEXT[r.kind] || 'אי אפשר להתחבר.');
     if (!r.ok && r.kind === 'notSetUp' && r.problems?.length) text += ' ' + (PROBLEM_TEXT[r.problems[0]] || '');
-    setResults((x) => ({ ...x, [id]: { ok: !!r.ok, text } }));
+    setResults((x) => ({ ...x, [id]: { ok: !!r.ok, text, kind: 'connection' } }));
   });
   const uninstall = () => act('uninstall', async () => {
     if (!window.confirm('להסיר את החיבור של Grab לדפדפנים? לאחר מכן הסר את התוסף מדף ההרחבות בכל דפדפן.')) return;

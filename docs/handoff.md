@@ -1,4 +1,32 @@
-# Current unified candidate (2026-10-16)
+# Current candidate: 1.7.0-rc.2 (2026-10-16)
+
+The owner reported a YouTube link sent from the extension timing out while an old connection
+failure remained visible. RC2 fixes that handoff: a configured YouTube lookup first acquires the
+chosen profile's page-scoped cookies and user agent, then calls the existing YouTube extractor
+with the original URL. It does not wait for the blob/segmented player to expose a media URL, or
+send an anonymous extractor request. Short links acquire the first-party youtube.com session.
+Cookies stay behind a vault handle and are invalidated with the same profile. Errors retain their
+rate-limit/timeout classification. Generic embedded players and the mako→Edge rule are unchanged.
+
+Browser connection status now uses live instances, and an earlier failed test clears on a live
+connection; an old successful test clears on disconnect. Genuine setup/version problems remain.
+Extension **1.1.1** is required. After installing RC2, click Repair and reload the extension in the
+browser; copying updated files does not reload a running extension.
+
+Regression evidence before the fix: the focused real-discovery/service test returned exactly
+`discoveryTimeout` without calling the page extractor; a cached health result also kept a removed
+instance connected. Both failed before the fix and pass after it. The focused local coordinator,
+architecture and session tests pass, including a fake-clock two-YouTube-send queue/rest check.
+Full native-host/browser/UI checks run in CI because this local environment rejects Unix socket
+listeners. New UI screenshots cover the previous failure, live reconnect and later disconnect.
+
+Windows verification required for this change: page-session Native Messaging through the real
+extension, authenticated fixture download, package runtime, 1.6.7 upgrade and in-app update, plus
+the owner's actual YouTube link in the selected personal profile. A generated fixture does not
+establish compatibility with that specific live video. Install:
+[Hebrew RC2 instructions](INSTALL-1.7.0-rc.2-HE.md).
+
+## Prior candidate verification
 
 **1.7.0-rc.1**, branch `feature/browser-extension-integration`. This combines the browser extension,
 browser/profile selection, media-context fixes and audited main-owned download lifecycle. Source

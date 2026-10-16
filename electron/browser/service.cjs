@@ -12,6 +12,7 @@ const { discover, connectInstance, revealTab, BrowserError } = require('./discov
 const { detectBrowsers, browserName } = require('./browsers.cjs');
 const selection = require('./selection.cjs');
 const setup = require('./setup.cjs');
+const { siteKey } = require('../domain/site-policy.cjs');
 
 const { DEADLINE_DEFAULTS, DEADLINE_LIMITS } = selection;
 
@@ -160,7 +161,7 @@ class BrowserService extends EventEmitter {
         if (this.identity?.version && instances.some((i) => i.browser === id && i.extVersion !== this.identity.version)) problems.push('extension_outdated');
         return {
           id, name: browserName(id), detected: !!det, systemDefault: this.detected.systemDefault === id,
-          state: problems.length ? 'setup_problem' : instances.some((i) => i.browser === id) ? 'connected' : h.state, problems, failure: h.failure,
+          state: problems.length ? 'setup_problem' : instances.some((i) => i.browser === id) ? 'connected' : h.state === 'connected' ? 'unknown' : h.state, problems, failure: h.failure,
           instances: instances.filter((i) => i.browser === id).map((i) => ({ key: i.key, label: this.instanceLabel(i), extVersion: i.extVersion })),
         };
       }),
@@ -266,8 +267,12 @@ class BrowserService extends EventEmitter {
     catch { throw new BrowserError(signal?.aborted ? 'cancelled' : 'browserDisconnected'); }
     if (signal?.aborted) throw new BrowserError('cancelled');
     if (reply.available === false) throw new BrowserError('sessionExpired');
+    return this.rememberSession(instance, urls, reply.cookies || []);
+  }
+
+  rememberSession(instance, urls, snapshot) {
     const hosts = urls.map((u) => new URL(u).hostname);
-    const cookies = (reply.cookies || [])
+    const cookies = snapshot
       .filter((c) => hosts.some((h) => domainMatches(h, c.domain)))
       .map((c) => ({ name: c.name, value: c.value, domain: c.domain, path: c.path || '/', secure: !!c.secure, httpOnly: !!c.httpOnly, session: !!c.session, expires: c.session ? -1 : c.expirationDate || 0 }));
     // A successful empty snapshot is different from a failed cookie request. Its handle
@@ -276,6 +281,20 @@ class BrowserService extends EventEmitter {
     if (!this.cookieRefs.has(instance.key)) this.cookieRefs.set(instance.key, new Set());
     this.cookieRefs.get(instance.key).add(reference);
     return reference;
+  }
+
+  async pageSession(instance, url, signal) {
+    const jobId = protocol.newId('session');
+    // Short links and privacy embeds resolve through youtube.com. Read that first-party
+    // session before the extractor follows the redirect, not the short-link host's empty jar.
+    const cookieUrl = /(^|\.)(youtu\.be|youtube-nocookie\.com)$/i.test(new URL(url).hostname) ? 'https://www.youtube.com/' : url;
+    let reply;
+    try { reply = await this.hub.request(instance.key, 'page-session-request', { jobId, url: cookieUrl }, { timeoutMs: 8000, signal }); }
+    catch { throw new BrowserError(signal?.aborted ? 'cancelled' : 'browserDisconnected'); }
+    if (signal?.aborted) throw new BrowserError('cancelled');
+    if (reply.type !== 'cookies' || reply.jobId !== jobId || reply.available !== true) throw new BrowserError('sessionExpired');
+    return { cookieRef: this.rememberSession(instance, [cookieUrl], reply.cookies || []),
+      requestContext: { ...(reply.userAgent ? { userAgent: reply.userAgent } : {}), referer: cookieUrl } };
   }
 
   describeChoice(c) {
@@ -320,6 +339,29 @@ class BrowserService extends EventEmitter {
     };
 
     try {
+      // YouTube's blob/segmented player need not expose a standalone media URL. Preserve the
+      // selected profile, acquire its page cookies first, and let yt-dlp's YouTube extractor
+      // resolve the original page. Never fall back to an anonymous extractor or a player scan.
+      if (siteKey(url) === 'youtube' && !opts.choice) {
+        phase('connecting');
+        const instance = await connectInstance({ hub: this.hub, browser, getInstance: this.getInstanceFn(browser.id, explicitInstance), settings: cfg, deps: this.deps, signal: abort.signal });
+        if (this.identity?.version && instance.extVersion !== this.identity.version) throw new BrowserError('hostSetupError');
+        entry.instance = instance;
+        phase('validating', { instance });
+        const context = await this.pageSession(instance, url, abort.signal);
+        let result;
+        try {
+          result = await this.session.withSessionCookies(context.cookieRef, (cookieFile) => this.engine.analyze(url, {
+            cookieFile, requestContext: context.requestContext, signal: abort.signal, timeoutMs: cfg.probeMs,
+          }));
+          if (abort.signal.aborted) throw new BrowserError('cancelled');
+        } catch (error) { this.releaseSession(context.cookieRef); throw error; }
+        if (!result.ok) {
+          this.releaseSession(context.cookieRef);
+          return { ...result, ok: false, kind: result.httpStatus === 429 ? 'rateLimited' : result.kind || 'engineFailure', browser: { id: browser.id, name: browser.name } };
+        }
+        return { ...result, ...context, needsSession: true, sessionSource: 'browser', browser: { id: browser.id, name: browser.name }, instanceKey: instance.key };
+      }
       let pendingChoice = opts.choice && this.choices.get(opts.choice.token);
       if (opts.choice) {
         // A video choice belongs to one page, queue item and browser session, and is single-use.

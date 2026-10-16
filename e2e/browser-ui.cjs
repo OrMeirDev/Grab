@@ -23,10 +23,21 @@ browsers.detectBrowsers = async () => ({ systemDefault: 'chrome', browsers: [
 const setup = require('../electron/browser/setup.cjs');
 const registry = new Map();
 Object.assign(setup.windowsRegistry, { get: async (k) => registry.get(k) || null, set: async (k, v) => registry.set(k, v), remove: async (k) => registry.delete(k) });
+const { FakeBrowser } = require('../test-support/fake-browser.cjs');
+const { BrowserService } = require('../electron/browser/service.cjs');
+const realTest = BrowserService.prototype.test;
+// No external browser is launched by this UI fixture. The live transition below still uses
+// the real native host, hub, preload events and React component.
+BrowserService.prototype.test = async function (id) {
+  if (!this.hasConnected(id)) return { ok: false, kind: 'extensionNotConnected' };
+  return realTest.call(this, id);
+};
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 app.whenReady().then(async () => {
   require('../electron/main.cjs');
   const timeout = setTimeout(() => { console.error('FAIL browser UI timeout'); app.exit(1); }, 90000);
+  let browser;
+  let replies;
   try {
     let win;
     while (!(win = BrowserWindow.getAllWindows().find((w) => w.isVisible()))) await wait(30);
@@ -56,6 +67,32 @@ app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('.settings-scroll').scrollWidth <= document.querySelector('.settings-scroll').clientWidth + 1"), true, 'setup fits the smallest supported window');
     await shot('02c-settings-small');
     win.setContentSize(1320, 900);
+    await js("[...document.querySelectorAll('.browser-card')].find((x) => x.textContent.includes('Google Chrome')).querySelectorAll('button')[1].click()");
+    await until("[...document.querySelectorAll('.browser-card')].find((x) => x.textContent.includes('Google Chrome')).querySelector('.verdict.warn')");
+    await shot('07-connection-failed');
+    const integrationDir = path.join(process.env.LOCALAPPDATA, 'Grab', 'browser-integration');
+    browser = new FakeBrowser({ integrationDir, origin: setup.readExtensionIdentity(path.join(integrationDir, 'extension')).origin, browser: 'chrome' });
+    await browser.waitFor((m) => m.type === 'app-status' && m.online);
+    browser.hello({ extVersion: setup.readExtensionIdentity(path.join(integrationDir, 'extension')).version });
+    await browser.waitFor((m) => m.type === 'welcome');
+    let seen = 0;
+    replies = setInterval(() => {
+      for (const m of browser.received.slice(seen)) {
+        seen++;
+        if (m.type === 'ping') browser.write(require('../extension/lib/protocol.js').make('pong', {}, m.id));
+      }
+    }, 10);
+    await until("[...document.querySelectorAll('.browser-card')].find((x) => x.textContent.includes('Google Chrome')).querySelector('.pill-success')");
+    await until("![...document.querySelectorAll('.browser-card')].find((x) => x.textContent.includes('Google Chrome')).querySelector('.verdict.warn')");
+    await shot('08-connection-restored');
+    await js("[...document.querySelectorAll('.browser-card')].find((x) => x.textContent.includes('Google Chrome')).querySelectorAll('button')[1].click()");
+    await until("[...document.querySelectorAll('.browser-card')].find((x) => x.textContent.includes('Google Chrome')).querySelector('.verdict.ok')");
+    clearInterval(replies);
+    await browser.kill();
+    browser = null;
+    await until("![...document.querySelectorAll('.browser-card')].find((x) => x.textContent.includes('Google Chrome')).querySelector('.pill-success')");
+    await until("![...document.querySelectorAll('.browser-card')].find((x) => x.textContent.includes('Google Chrome')).querySelector('.verdict.ok')");
+    await shot('09-connection-disconnected');
     win.webContents.reload();
     await until("!!document.querySelector('textarea')");
     assert.equal((await js('window.grab.browserState()')).settings.defaultBrowser, 'chrome');
@@ -79,5 +116,5 @@ app.whenReady().then(async () => {
     clearTimeout(timeout);
     console.log('PASS browser UI: real setup files, guarded IPC, persisted selection, mako Edge rule, reload, queue and all screens');
     app.exit(0);
-  } catch (error) { console.error(error); app.exit(1); }
+  } catch (error) { clearInterval(replies); if (browser) await browser.kill(); console.error(error); app.exit(1); }
 });

@@ -67,6 +67,9 @@ test('frame parser rejects malformed JSON, continues, and stops for good on an o
 });
 
 test('protocol validation checks version, ids, direction, types and URL schemes', () => {
+  assert.equal(protocol.validate(protocol.make('page-session-request', { jobId: 'p1', url: 'https://www.youtube.com/watch?v=fixture123' }), 'app').ok, true);
+  assert.equal(protocol.validate(protocol.make('page-session-request', { jobId: 'p1', url: 'file:///private' }), 'app').ok, false);
+  assert.equal(protocol.validate(protocol.make('page-session-request', { jobId: 'p1', url: 'https://www.youtube.com/' }), 'ext').ok, false);
   const good = protocol.make('discover', { jobId: 'j1', url: 'https://example.test/p', deadlineMs: 60000 });
   assert.equal(protocol.validate(good, 'app').ok, true);
   assert.equal(protocol.validate(good, 'ext').error, 'wrong_direction');

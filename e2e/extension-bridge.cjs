@@ -86,6 +86,19 @@ test('real Chromium + real extension + real native host + hub', { skip, timeout:
   await sleep(800);
   await first.closeTab(loginTab);
 
+  await run('page session without a media scan: scoped cookies and browser UA, no new tab', async () => {
+    const before = (await first.pages()).map((p) => p.targetId).sort();
+    const jobId = 'page-context-proof';
+    const reply = await hub.request(key, 'page-session-request', { jobId, url: fixture.cdnOrigin + '/login' });
+    assert.equal(reply.available, true);
+    assert.equal(reply.jobId, jobId);
+    assert.match(reply.userAgent, /Mozilla/);
+    assert.ok(reply.cookies.some((c) => c.name === 'grabsid' && c.value === fixture.secret));
+    assert.deepEqual((await first.pages()).map((p) => p.targetId).sort(), before);
+    const unrelated = await hub.request(key, 'cookies-request', { jobId, urls: ['https://unrelated.example/'] });
+    assert.deepEqual(unrelated.cookies, [], 'a page session does not grant unrelated origins');
+  });
+
   await run('direct MP4 in a video element', async () => {
     const r = await discoverOn(key, fixture.url('/direct'));
     assert.ok(r.candidates.some((c) => c.url === fixture.url('/files/clip.mp4') && c.kind === 'file'), JSON.stringify(r.candidates));
