@@ -87,7 +87,7 @@ Edge and Brave runs were not possible here. CI ran the real extension in Chromiu
 
 | Check | Result (security branch) | main |
 | --- | --- | --- |
-| Host-only stays host-only | ✅ not sent to `cdn.`/parent/look-alike hosts | ✅ |
+| Host-only stays host-only | ⚠️ not sent to a sibling (`cdn.`), the parent or look-alike hosts — **but sent to subdomains of its own host** (F16; corrected 2026-10-16, the first version of this report did not test subdomains) | same |
 | Domain cookie not sent to unrelated domains | ✅ `.unrelated.test`, `.audit.test` (look-alike suffix) dropped by the desktop filter | yt-dlp didn't send them, but **main wrote them into the jar** |
 | Path restriction (`/media` vs `/account`, `/med` prefix trap) | ✅ dropped before the jar | written into the jar; not sent by yt-dlp |
 | Secure not over HTTP | ✅ dropped before the jar; over HTTPS the Secure cookie reached its own host only | written into the jar; not sent |
@@ -144,8 +144,11 @@ P2 optional metadata minimization · P3 docs/diagnostics/correctness. "Before" =
 | **F14** P3 | T06 | `logs/` directory created `0755` | local | `0755` | `0755` | File names visible to other local users on POSIX (contents are `0600`) | `mkdirSync(..., { mode: 0o700 })` | OBSERVED-L |
 | **F15** P3 | process | `windows-verify.yml` not run; no before/after screenshots for the new Settings checkbox; PR bundles seven responsibilities | — | — | — | AGENTS.md gates not met | Dispatch `windows-verify.yml` on the branch; `npm run e2e:screenshots` on Windows; consider splitting | OBSERVED-CI / PR #5 |
 
-No **P0** was observed: no cookie reached an out-of-scope host, no credential crossed a redirect, no session was
-reused across profiles, and nothing was sent without the session when one was required.
+| **F16** P1 | T04 | a **host-only** cookie (`example.test`, `FALSE` in the jar — exactly what Chrome reports) is sent by yt-dlp to `media.example.test` and `a.b.example.test` | subdomains of the cookie's host (never unrelated domains, siblings or the parent) | same | same | A browser would send it to the exact host only. yt-dlp uses Python's `http.cookiejar` default policy, which ignores Netscape host-only semantics (`DomainStrictNonDomain` is off) and has no CLI switch. The desktop filter cannot prevent it once a job's own scope includes the cookie's host | Needs a design decision (separate PR): e.g. give yt-dlp host-only cookies only for runs whose hosts equal the cookie host, or a yt-dlp cookie-policy change upstream. Not fixed by the F05 hotfix | OBSERVED-L: `tests/cookie-vault-jar.test.cjs` (last test fails on main, `02817d9` and the hotfix alike) |
+
+No **P0** was observed: no cookie reached an unrelated domain, no credential crossed a redirect to another site, no
+session was reused across profiles, and nothing was sent without the session when one was required. F16 is the
+exception to browser-exact scope: host-only cookies can reach subdomains of their own host.
 
 ## Classification of each observed disclosure
 

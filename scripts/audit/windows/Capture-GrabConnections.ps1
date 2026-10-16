@@ -20,7 +20,9 @@ param(
   [int]$Seconds = 300,
   [int]$IntervalMs = 250,
   [string]$OutDir = (Join-Path $env:USERPROFILE 'GrabAudit\capture'),
-  [switch]$IncludeBrowsers
+  [switch]$IncludeBrowsers,
+  # Ends the capture early (results are still written) as soon as this file exists.
+  [string]$StopFile = ''
 )
 $ErrorActionPreference = 'Stop'
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
@@ -53,7 +55,7 @@ $end = (Get-Date).AddSeconds($Seconds)
 $watched = Get-Watched
 $lastRefresh = Get-Date
 Write-Host "Capturing for $Seconds s -> $csv"
-while ((Get-Date) -lt $end) {
+while ((Get-Date) -lt $end -and -not ($StopFile -and (Test-Path $StopFile))) {
   if (((Get-Date) - $lastRefresh).TotalSeconds -ge 2) { $watched = Get-Watched; $lastRefresh = Get-Date }
   foreach ($c in Get-NetTCPConnection -ErrorAction SilentlyContinue) {
     if (-not $watched.ContainsKey([int]$c.OwningProcess)) { continue }

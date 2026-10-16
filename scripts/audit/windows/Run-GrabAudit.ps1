@@ -27,7 +27,9 @@ param(
   [string]$OutDir = (Join-Path $env:USERPROFILE 'GrabAudit'),
   [int]$Port = 8765,
   [int]$IdleSeconds = 300,
-  [switch]$ChromiumProxy
+  [switch]$ChromiumProxy,
+  # T00: checkouts to compare the installed app.asar with (for example main and the security branch)
+  [string[]]$Compare = @()
 )
 $ErrorActionPreference = 'Stop'
 $run = Join-Path $OutDir ("{0}-{1}" -f $Scenario, (Get-Date -Format 'yyyyMMdd-HHmmss'))
@@ -41,10 +43,16 @@ function Start-Endpoint {
   if ($Media) { $epArgs += @('--media', $Media) }
   return Start-Process node -ArgumentList $epArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $run 'endpoint.txt')
 }
+$stopFile = Join-Path $run 'capture.stop'
 function Start-Capture([int]$Seconds, [switch]$Browsers) {
-  $ps = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "$PSScriptRoot\Capture-GrabConnections.ps1", '-Seconds', $Seconds, '-OutDir', (Join-Path $run 'capture'))
+  $ps = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "$PSScriptRoot\Capture-GrabConnections.ps1", '-Seconds', $Seconds, '-OutDir', (Join-Path $run 'capture'), '-StopFile', $stopFile)
   if ($Browsers) { $ps += '-IncludeBrowsers' }
   return Start-Process powershell -ArgumentList $ps -PassThru -WindowStyle Minimized
+}
+# The capture writes its CSV and summary only when it ends: ask it to stop, then wait for it.
+function Stop-Capture($cap) {
+  New-Item -ItemType File -Force -Path $stopFile | Out-Null
+  Wait-Process -Id $cap.Id -Timeout 120 -ErrorAction SilentlyContinue
 }
 function Start-Grab {
   if (Get-Process Grab -ErrorAction SilentlyContinue) { throw 'Close Grab first (tray included), then run again.' }
@@ -55,7 +63,8 @@ function Start-Grab {
 switch ($Scenario) {
   'T00' {
     # Which build is installed? Compare with the two checkouts you want to test.
-    node "$audit\inspect-installed.cjs" --installed (Split-Path $GrabExe) --compare $Repo | Tee-Object (Join-Path $run 'installed.txt')
+    $cmp = @(); foreach ($c in ($(if ($Compare.Count) { $Compare } else { @($Repo) }))) { $cmp += @('--compare', $c) }
+    node "$audit\inspect-installed.cjs" --installed (Split-Path $GrabExe) @cmp | Tee-Object (Join-Path $run 'installed.txt')
     (Get-Item $GrabExe).VersionInfo | Format-List FileVersion, ProductVersion | Out-File -Append (Join-Path $run 'installed.txt')
     $r = Invoke-WebRequest -Method Head -Uri $testUrl -UseBasicParsing
     "test video: HTTP $($r.StatusCode) length=$($r.Headers['Content-Length']) type=$($r.Headers['Content-Type'])" | Tee-Object -Append (Join-Path $run 'installed.txt')
@@ -64,8 +73,11 @@ switch ($Scenario) {
     $ep = Start-Endpoint; $cap = Start-Capture -Seconds ($IdleSeconds + 20)
     Start-Sleep 2; $g = Start-Grab
     Write-Host "Do NOTHING in Grab for $IdleSeconds s."
-    Start-Sleep ($IdleSeconds + 25)
-    Stop-Process -Id $g.Id; Stop-Process -Id $ep.Id
+    Start-Sleep $IdleSeconds
+    Stop-Capture $cap
+    Write-Host 'Close Grab now (window and tray), then press Enter.'
+    Read-Host | Out-Null
+    Stop-Process -Id $ep.Id
   }
   'T02' {
     $cap = Start-Capture -Seconds 600; Start-Sleep 2; $g = Start-Grab
@@ -74,13 +86,13 @@ switch ($Scenario) {
     Read-Host | Out-Null
     $file = Get-ChildItem (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads\Grab') -Filter 'HSSMT*.mp4' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     "downloaded: $($file.FullName) size=$($file.Length) expected=53961552 match=$($file.Length -eq 53961552)" | Tee-Object (Join-Path $run 'result.txt')
-    Stop-Process -Id $cap.Id -ErrorAction SilentlyContinue
+    Stop-Capture $cap
   }
   'T03' {
     $cap = Start-Capture -Seconds 900 -Browsers; Start-Sleep 2
     Write-Host "Open $testUrl in Chrome, send it to Grab from the extension, wait for the download. Repeat in Edge and Brave. Press Enter when done."
     Read-Host | Out-Null
-    Stop-Process -Id $cap.Id -ErrorAction SilentlyContinue
+    Stop-Capture $cap
   }
   'T06' {
     if (Get-Process Grab -ErrorAction SilentlyContinue) { throw 'Close Grab first so all files are flushed.' }
@@ -89,9 +101,9 @@ switch ($Scenario) {
   'T07' {
     $ep = Start-Endpoint; Start-Sleep 1
     $ChromiumProxy = $true; $g = Start-Grab
-    Write-Host "Wait 30 s (background check), then click 'Check for updates' in Settings once, then press Enter."
+    Write-Host "Wait 30 s (background check), then click 'Check for updates' in Settings once, close Grab (window and tray), then press Enter."
     Read-Host | Out-Null
-    Stop-Process -Id $g.Id; Stop-Process -Id $ep.Id
+    Stop-Process -Id $ep.Id
     "updater id file present: $(Test-Path (Join-Path $env:APPDATA 'Grab\.updaterId'))" | Tee-Object (Join-Path $run 'result.txt')
   }
 }

@@ -67,6 +67,8 @@ but the policy is to keep captures local.
 | Background update opt-out | unit-tested; no runtime evidence | ✅ keep; verify packaged |
 | `tabs` permission removed | packaged manifest confirmed; browser behavior unverified (F13) | ✅ keep; verify in all three browsers |
 
+Correction (2026-10-16): host-only cookies reach **subdomains** of their host through yt-dlp on both revisions (audit F16); the first version of this comparison only tested siblings and the parent.
+
 **Net:** the branch reduces what Grab **stores**. It does not change what Grab **sends**, apart from optional
 update checks. The remaining over-the-wire minimizations (F02, F03, F04) and the at-rest cookie copy (F01) are
 pre-existing and are proposed as separate follow-ups.
