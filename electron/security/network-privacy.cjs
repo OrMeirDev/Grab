@@ -2,7 +2,7 @@
 const STAGING_ID = '00000000-0000-4000-8000-000000000000';
 
 function applicationUserAgent(value) {
-  return String(value || '').replace(/\s(?:Grab|Electron)\/\S+/g, '').trim();
+  return String(value || '').replace(/\s(?:Grab|Electron)\/\S+/gi, '').trim();
 }
 
 function configureApplicationPrivacy(app) {

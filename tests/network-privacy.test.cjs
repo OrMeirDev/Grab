@@ -8,6 +8,7 @@ test('application UA omits product versions while retaining the actual Chromium 
   configureApplicationPrivacy(app);
   assert.equal(app.userAgentFallback, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/152.0.0.0 Safari/537.36');
   assert.equal(applicationUserAgent(app.userAgentFallback), app.userAgentFallback);
+  assert.equal(applicationUserAgent('Chrome/152 grab/1.7.0 electron/44.7.2'), 'Chrome/152');
 });
 
 test('new sessions receive privacy configuration at creation, before a window can trigger dictionaries', () => {

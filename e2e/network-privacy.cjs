@@ -9,6 +9,7 @@ if (process.versions.electron) {
   const privacy = require('../electron/security/network-privacy.cjs');
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-network-e2e-'));
   app.setPath('userData', profile);
+  app.setName('grab'); // package.json name; the display product name is capitalized separately
   app.getVersion = () => '1.7.0';
   app.on('window-all-closed', () => {});
   privacy.configureApplicationPrivacy(app);
@@ -77,7 +78,7 @@ if (process.versions.electron) {
         for (const host of ['thumbnail.test', 'probe.test']) {
           const requests = seen.filter((r) => r.host === host);
           assert.ok(requests.length, host);
-          for (const r of requests) assert.doesNotMatch(r.ua || '', /(?:Grab|Electron)\//);
+          for (const r of requests) assert.doesNotMatch(r.ua || '', /(?:Grab|Electron)\//i);
         }
         const checks = seen.filter((r) => r.path?.startsWith('/update/'));
         assert.equal(checks.length, 2);
