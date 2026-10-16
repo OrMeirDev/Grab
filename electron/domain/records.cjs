@@ -17,6 +17,7 @@ function normalizeSettings(raw, defaults) {
     folder: str(s.folder, 1024) || defaults.folder,
     format: FORMATS.includes(s.format) ? s.format : defaults.format,
     quality: QUALITIES.includes(s.quality) ? s.quality : defaults.quality,
+    automaticUpdateChecks: typeof s.automaticUpdateChecks === 'boolean' ? s.automaticUpdateChecks : true,
     ...(s.browser && typeof s.browser === 'object' ? { browser: sanitizeBrowserSettings(s.browser) } : {}),
   };
 }
