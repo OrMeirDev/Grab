@@ -54,7 +54,7 @@ native hosts independent of app replacement during Windows updates.
 | ipc | `ipc/router.cjs`, `ipc/contracts.cjs` | Trusted frame + validated arguments → handler |
 | security | `security/window-policy.cjs` | No navigation/new windows/webviews; clipboard-only permissions |
 | application | `download-coordinator.cjs` | Commands → job state; snapshots; schedules; history completion; durable queue |
-| application | `discovery-service.cjs` | Link → lookup result (yt-dlp → hidden probe → user's browser), candidate and time budgets |
+| application | `discovery-service.cjs` | Link → lookup result (ordinary: yt-dlp → clean public probe; explicit browser mode: selected session first), candidate and time budgets |
 | application | `download-runner.cjs` | Plan → one attempt (allocated name, cookie jar, engine run) |
 | domain | `job.cjs`, `site-policy.cjs`, `candidate-policy.cjs`, `output-names.cjs`, `records.cjs`, `engine-errors.cjs` | Pure rules |
 | infrastructure | `process-runner.cjs`, `process-registry.cjs` | Deadlines, bounded output, tree stop, tracking |
@@ -84,8 +84,8 @@ and `paused` after a restart. Only the coordinator changes states.
 - A site hold holds only that site's jobs until "resume <site>". Two answers cause it: a rate limit
   (HTTP 429, kind `rateLimited`) ends the lookup or download at once, wherever it comes from (the
   link, the retry with the browser session, a source found in a page), with no browser and no
-  further request; a bot check ("confirm you're not a bot", kind `blocked`) first goes on through
-  the user's browser, and holds the site if the site still asks with the session.
+  further request; a bot check ("confirm you're not a bot", kind `blocked`) holds ordinary jobs without opening a
+  browser. In explicit browser mode it holds the site if the site still asks with that session.
 - One automatic retry per job: a page video is looked up inside the page again (fresh signed links);
   anything else is fetched again with fresh info. An expired session handle is not that retry:
   it always triggers a new page lookup, never a download without the session.

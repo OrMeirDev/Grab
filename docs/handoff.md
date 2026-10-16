@@ -1,4 +1,34 @@
-# Current candidate: 1.7.0-rc.2 (2026-10-16)
+# Current candidate: 1.7.0-rc.3 (2026-10-16)
+
+The owner clarified that ordinary pasted YouTube/public links must remain independent of browser
+setup. RC2 accidentally routed every configured YouTube lookup through the extension and let a
+previous authenticated lookup affect later jobs on the same site. RC3 removes both triggers.
+The default intake is **ordinary link**: extractor, then a bounded clean public-page scan when
+needed, with no signed-in browser/extension fallback. A private/bot/refused result stays explicit.
+The user can choose **extension and connected browser** before pasting, or send from the popup.
+Only those jobs consult the browser default; Mako retains the Edge-player exception. Explicit
+browser intent is recorded before lookup, so restart/cancellation never loses the session rule.
+
+The false connection test had a separate concrete cause: the real extension worker did not
+answer desktop `ping` messages. FakeBrowser did answer them, so earlier tests missed it. The
+worker now returns a correlated `pong`; both an actual-worker VM regression and a real Windows
+extension→host→BrowserService.test check cover this. Extension **1.1.2** requires Repair then
+Reload after installing RC3; ordinary downloads do not require this setup.
+
+Before-fix regressions reproduced extensionNotConnected on ordinary YouTube/short-link pastes
+and a missing pong from the shipped worker. Local session/HTTP, routing, fake-clock queue and
+architecture regressions pass. Real Electron UI tests exercise the ordinary default, explicit
+browser picker and a YouTube paste with a saved browser default and disconnected extension.
+
+Windows verification required: real-worker connection check, extension send/authenticated media,
+packaged host, direct public downloads with no connected extension, and the complete installed
+app upgrade/pause/merge/quit/update suite. Personal Brave/Chrome/Edge profiles, the actual live
+YouTube video and Schooler/Mako accounts remain manual checks. Install:
+[Hebrew RC3 instructions](INSTALL-1.7.0-rc.3-HE.md).
+
+## Prior candidate: 1.7.0-rc.2
+
+# RC2 changes (2026-10-16)
 
 The owner reported a YouTube link sent from the extension timing out while an old connection
 failure remained visible. RC2 fixes that handoff: a configured YouTube lookup first acquires the

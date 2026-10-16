@@ -64,14 +64,14 @@ jobs:
         run: |
           $installer = Get-Item release/Grab-Setup-*.exe
           "$((Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant())  $($installer.Name)" | Set-Content release/SHA256SUMS.txt
-          Copy-Item docs/INSTALL-1.7.0-rc.2-HE.md release/
+          Copy-Item docs/INSTALL-1.7.0-rc.3-HE.md release/
       - name: Retain test installer
         if: runner.os == 'Windows' && success()
         uses: actions/upload-artifact@v4
         with:
-          name: Grab-1.7.0-rc.2-Windows
+          name: Grab-1.7.0-rc.3-Windows
           path: |
             release/Grab-Setup-*.exe
             release/SHA256SUMS.txt
-            release/INSTALL-1.7.0-rc.2-HE.md
+            release/INSTALL-1.7.0-rc.3-HE.md
           retention-days: 7

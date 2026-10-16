@@ -21,7 +21,7 @@ To test an installed build instead of development mode:
 npm run dist -- --publish never
 ```
 
-Run the resulting `release/Grab-Setup-1.7.0-rc.2.exe`. Building this test installer does not publish a release. The normal GitHub latest-release download does not automatically contain changes from this feature branch.
+Run the resulting `release/Grab-Setup-1.7.0-rc.3.exe`. Building this test installer does not publish a release. The normal GitHub latest-release download does not automatically contain changes from this feature branch.
 
 ## One-time browser setup
 
@@ -46,7 +46,7 @@ The application can prepare the files and native registration. Loading/enabling 
 
 ## Choosing the browser
 
-The effective choice is: **per-download choice → saved site rule → saved default → initial installed-browser suggestion**. A missing selected browser/profile causes an explicit error; GRAB does not silently move the job to another session.
+In the explicitly chosen browser-assisted mode, the effective choice is: **per-download choice → saved site rule → saved default → initial installed-browser suggestion**. A missing selected browser/profile causes an explicit error; GRAB does not silently move the job to another session.
 
 - A new configuration includes `mako.co.il → Edge`, including actual subdomains. It does not select Edge for a different website whose URL merely contains that text.
 - Edit/remove the rule in Settings. It does not force Edge for other sites.
@@ -58,7 +58,7 @@ The effective choice is: **per-download choice → saved site rule → saved def
 
 ## Both workflows
 
-**Paste a URL:** paste the original page URL in GRAB. Direct/public extractor downloads keep their fast path. A browser-assisted job uses the selected extension session, shows discovery/validation phases, and can be cancelled. If the player needs a click, use **פתח את הנגן**, start playback in the selected browser, and leave the job running within its deadline.
+**Paste a URL:** **הורדה רגילה מקישור** is the default. YouTube/public links use the direct extractor with no extension or browser dependency. Failed ordinary lookups do not silently switch to the signed-in browser. Choose **בעזרת התוסף והדפדפן** for an account-dependent or complex embedded page; only this mode uses the browser picker/default. Mako retains its Edge-player exception. A browser-assisted job uses the selected extension session, shows discovery/validation phases, and can be cancelled. If the player needs a click, use **פתח את הנגן**, start playback in the selected browser, and leave the job running within its deadline.
 
 **Send to GRAB:** while GRAB is running, open a video page in a configured browser, open the extension popup, and click **שלח ל־Grab**. If multiple candidates exist, choose the intended video. Acceptance means the request joined the queue; completion is reported only after an actual output file passes verification. The sending session is preserved even when GRAB's default is a different browser.
 
@@ -138,6 +138,6 @@ Automated Chromium fixtures do not prove access to personal mako sessions or act
 
 ## Unified release candidate
 
-Version 1.7.0-rc.2 combines the audit branch, the media request-context fixes and the browser extension. The main-process DownloadCoordinator owns both paste and Send-to-GRAB jobs; private media URLs, headers and cookie handles never enter renderer snapshots or queue.json. Browser/profile choices survive restart. Cookie acquisition errors fail before the extractor is called; each disconnected extension profile loses only its own vault handles. The pinned engines, process-tree shutdown, verified output and upgrade checks remain enabled.
+Version 1.7.0-rc.3 combines the audit branch, the media request-context fixes and the browser extension. The main-process DownloadCoordinator owns both paste and Send-to-GRAB jobs; private media URLs, headers and cookie handles never enter renderer snapshots or queue.json. Browser/profile choices survive restart. Cookie acquisition errors fail before the extractor is called; each disconnected extension profile loses only its own vault handles. The pinned engines, process-tree shutdown, verified output and upgrade checks remain enabled.
 
-See [Hebrew installation and personal-profile checks](INSTALL-1.7.0-rc.2-HE.md). The installer and SHA256SUMS are artifacts of the Browser integration workflow; Windows verify separately exercises installation over 1.6.7 and the installed app's update flow. Test results must refer to the actual unified commit, not an older branch's green run.
+See [Hebrew installation and personal-profile checks](INSTALL-1.7.0-rc.3-HE.md). The installer and SHA256SUMS are artifacts of the Browser integration workflow; Windows verify separately exercises installation over 1.6.7 and the installed app's update flow. Test results must refer to the actual unified commit, not an older branch's green run.

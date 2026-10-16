@@ -41,7 +41,7 @@ function fixture(t) {
   svc.health = { installed: true, results: [{ browser: 'chrome', detected: true, registered: true, problems: [], state: 'connected' }] };
   const discovery = createDiscoveryService({ engine, browserSession: session, getBrowserService: () => svc });
   t.after(() => svc.dropInstanceSession(instance.key));
-  return { svc, hub, calls, discovery, instance };
+  return { svc, hub, calls, discovery, instance, engine };
 }
 
 test('YouTube extension lookup uses its page extractor after scoped session acquisition, without scanning the player', async (t) => {
@@ -67,9 +67,9 @@ test('cached health does not keep a disconnected browser connected', (t) => {
   assert.notEqual(f.svc.state().browsers.find((x) => x.id === 'chrome').state, 'connected');
 });
 
-test('automatic YouTube selection uses the configured session before the first network request', async (t) => {
+test('explicit default-browser YouTube selection acquires its session before the first network request', async (t) => {
   const f = fixture(t);
-  const out = await f.discovery.analyze('https://www.youtube.com/watch?v=fixture123');
+  const out = await f.discovery.analyze('https://www.youtube.com/watch?v=fixture123', { requireSession: true });
   assert.equal(out.ok, true, JSON.stringify(out));
   assert.deepEqual(f.calls.map((x) => x.type), ['page-session-request', 'extractor']);
   assert.match(f.calls[1].cookies, /SID\tPAGE-SESSION/);
@@ -86,9 +86,46 @@ test('a refused page snapshot prevents every extractor request', async (t) => {
 test('short YouTube links acquire the YouTube session while preserving the original extractor URL', async (t) => {
   const f = fixture(t);
   const url = 'https://youtu.be/fixture123';
-  const out = await f.discovery.analyze(url);
+  const out = await f.discovery.analyze(url, { browser: 'chrome' });
   assert.equal(out.ok, true, JSON.stringify(out));
   assert.equal(f.calls[0].url, 'https://www.youtube.com/');
   assert.equal(f.calls[1].url, url);
   assert.match(f.calls[1].cookies, /SID\tPAGE-SESSION/);
 });
+
+for (const url of ['https://www.youtube.com/watch?v=fixture123', 'https://youtu.be/fixture123', 'https://vimeo.com/123', 'https://public.example/clip.mp4']) {
+  test(`ordinary paste is direct even with an installed extension and saved browser: ${new URL(url).hostname}`, async (t) => {
+    const f = fixture(t);
+    f.hub.live = [];
+    const out = await f.discovery.analyze(url);
+    assert.equal(out.ok, true, JSON.stringify(out));
+    assert.deepEqual(f.calls.map((x) => x.type), ['extractor']);
+    assert.equal(f.calls[0].cookieFile, undefined);
+    assert.equal(out.needsSession, undefined);
+  });
+}
+
+test('using the browser once does not force the next ordinary paste on the same site through it', async (t) => {
+  const f = fixture(t);
+  const url = 'https://www.youtube.com/watch?v=fixture123';
+  assert.equal((await f.discovery.analyze(url, { browser: 'chrome' })).ok, true);
+  f.calls.length = 0;
+  f.hub.live = [];
+  assert.equal((await f.discovery.analyze(url)).ok, true);
+  assert.deepEqual(f.calls.map((x) => x.type), ['extractor']);
+});
+
+for (const kind of ['private', 'forbidden', 'blocked', 'notfound', 'rateLimited']) {
+  test(`ordinary lookup failure stays in ordinary mode (${kind}), without an extension fallback`, async (t) => {
+    const f = fixture(t);
+    let requests = 0;
+    f.engine.analyze = async () => { requests++; return { ok: false, kind }; };
+    // Public-page scanning is allowed; it must not touch the user's signed-in browser.
+    const discovery = createDiscoveryService({ engine: f.engine, browserSession: session, getBrowserService: () => f.svc,
+      hiddenProbe: { findMedia: async () => ({ candidates: [] }) } });
+    const out = await discovery.analyze('https://public.example/watch');
+    assert.equal(out.kind, kind === 'notfound' ? 'notfoundPage' : kind);
+    assert.equal(requests, 1);
+    assert.deepEqual(f.calls, []);
+  });
+}

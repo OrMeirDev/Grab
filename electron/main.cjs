@@ -209,8 +209,8 @@ const browserId = t.oneOf('edge', 'chrome', 'brave');
 router.handle('downloads:snapshot', [], () => coordinator.snapshot());
 router.handle('downloads:add', [
   t.array(t.object({ url: t.url(), label: t.optional(t.string({ max: 2000 })) }), { max: 500 }),
-  t.optional(t.object({ nameEdited: t.optional(t.bool()), browser: t.optional(browserId) })),
-], (_e, links, opts = {}) => coordinator.add(links.map((l) => ({ url: l.url, label: l.label || '' })), { nameEdited: !!opts.nameEdited, browser: opts.browser }));
+  t.optional(t.object({ nameEdited: t.optional(t.bool()), useBrowser: t.optional(t.bool()), browser: t.optional(browserId) })),
+], (_e, links, opts = {}) => coordinator.add(links.map((l) => ({ url: l.url, label: l.label || '' })), { nameEdited: !!opts.nameEdited, useBrowser: !!opts.useBrowser, browser: opts.browser }));
 router.handle('downloads:rename', [id, t.string({ max: 2000 })], (_e, jobId, name) => coordinator.rename(jobId, name));
 router.handle('downloads:start', [id], (_e, jobId) => coordinator.downloadOne(jobId));
 router.handle('downloads:startAll', [], () => coordinator.downloadAll());

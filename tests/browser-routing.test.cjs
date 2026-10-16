@@ -85,7 +85,7 @@ test('a directly readable video from another site does not require a browser con
   assert.equal((await handlers.get('engine:analyze')({ sender }, 'https://lesson.example/episode')).ok, true);
 });
 
-test('a configured extension owns fallback even if its selected browser is initially closed', async () => {
+test('explicit browser mode uses the configured extension first even if its browser is initially closed', async () => {
   const calls = [];
   const service = {
     resolve: () => ({ browserId: 'chrome', source: 'global', available: true }),
@@ -95,8 +95,8 @@ test('a configured extension owns fallback even if its selected browser is initi
   const handlers = mainHandlers({ analyze: async () => { calls.push('extractor'); return { ok: false, kind: 'private' }; } },
     { findMedia: async () => assert.fail('must not fall back to CDP') },
     { findMedia: async () => assert.fail('must not use a clean anonymous browser') }, undefined, service);
-  assert.equal((await handlers.get('engine:analyze')({ sender }, 'https://lesson.example/episode', { id: 501 })).title, 'Extension video');
-  assert.deepEqual(calls, ['extractor', 'extension']);
+  assert.equal((await handlers.get('engine:analyze')({ sender }, 'https://lesson.example/episode', { id: 501, requireSession: true })).title, 'Extension video');
+  assert.deepEqual(calls, ['extension']);
 });
 
 test('a late successful lookup cannot undo cancellation', async () => {

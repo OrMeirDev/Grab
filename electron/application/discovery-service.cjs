@@ -2,7 +2,6 @@
 // extension (when configured), otherwise the existing browser's CDP adapter. Session-required
 // jobs acquire their context before any extractor request; no anonymous fallback is allowed.
 const { budget } = require('../domain/candidate-policy.cjs');
-const { siteKey } = require('../domain/site-policy.cjs');
 
 const LOOKUP_BUDGET_MS = 6 * 60 * 1000;
 const PROBE_MS = 45000;
@@ -10,8 +9,6 @@ const cancelled = () => ({ ok: false, kind: 'cancelled', error: 'cancelled' });
 
 function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession, getBrowserService = () => null,
   now = () => Date.now(), record = () => {}, lookupBudgetMs = LOOKUP_BUDGET_MS }) {
-  const signedInSites = new Set();
-
   async function analyze(url, options = {}) {
     const started = now();
     const controller = new AbortController();
@@ -46,26 +43,28 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
     const check = () => { signal.throwIfAborted(); if (now() >= deadline) throw Object.assign(new Error('The lookup took too long'), { kind: 'discoveryTimeout' }); };
     const probe = (source, context = {}) => { check(); return engine.analyze(source, { ...context, signal, timeoutMs: Math.max(1, Math.min(PROBE_MS, deadline - now())) }); };
     check();
-    const host = new URL(url).host;
+    // An ordinary paste is independent of installed extensions and browser defaults. Browser
+    // context is opt-in per job (including extension sends/restored sessions); Mako is the
+    // established Edge-player exception. Never remember this decision for unrelated jobs.
+    const requireSession = !!options.requireSession || !!options.browser || !!options.instance || !!options.ref;
+    const mako = !!browserSession.isMakoPage?.(url);
+    const browserAssisted = requireSession || mako;
     const svc = getBrowserService();
-    const selected = svc?.resolve(url, { browser: options.browser });
+    const selected = browserAssisted ? svc?.resolve(url, { browser: options.browser }) : null;
     const configured = !!(selected?.browserId && (svc.isConfigured ? svc.isConfigured(selected.browserId) : svc.isSetUp(selected.browserId)));
-    const edgeFirst = selected ? selected.source === 'site-rule' : !!browserSession.isMakoPage?.(url);
+    const edgeFirst = mako || selected?.source === 'site-rule';
     const forcePage = !!options.forcePage || edgeFirst;
-    const requireSession = !!options.requireSession || signedInSites.has(host) || !!options.browser || !!options.instance || !!options.ref;
     const extensionLookup = async () => {
       onPhase('browser', selected.name);
       const r = await svc.analyze(url, { ...options, itemId: options.itemId, refresh: !!options.forcePage });
       check();
-      if (r.ok) signedInSites.add(host);
       return r;
     };
-    if (configured && (siteKey(url) === 'youtube' || requireSession || forcePage || options.browser || options.instance || options.ref || options.choice)) return extensionLookup();
+    if (configured && browserAssisted) return extensionLookup();
     const first = forcePage ? { ok: false, kind: 'notfound', error: 'Unsupported URL' }
       : requireSession ? { ok: false, kind: 'private', error: 'The site needs your browser session' } : await probe(url);
     check();
     if (first.ok || !['notfound', 'notmedia', 'private', 'blocked', 'forbidden', 'other'].includes(first.kind) || first.httpStatus === 429) return first;
-    if (configured) return extensionLookup();
 
     if (!requireSession && !edgeFirst && ['notfound', 'notmedia'].includes(first.kind)) {
       onPhase('page');
@@ -80,6 +79,7 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
       if (hidden.protected) return { ok: false, kind: 'protected', error: 'DRM' };
     }
     check();
+    if (!browserAssisted) return { ...first, kind: ['notfound', 'notmedia'].includes(first.kind) ? 'notfoundPage' : first.kind };
     const requestedBrowser = selected?.browserId || options.browser;
     const browser = browserSession.browserForPage && (requestedBrowser || browserSession.isMakoPage?.(url))
       ? browserSession.browserForPage(url, requestedBrowser) : browserSession.defaultBrowser();
@@ -116,7 +116,7 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
       page = await pageprobe.findMedia(url, { refresh: true, connect, signal });
       r = await candidates(page, 'browser');
     }
-    if (r?.ok) { signedInSites.add(host); return r; }
+    if (r?.ok) return r;
     browserSession.forgetCookies?.(page.cookieRef);
     if (r?.kind === 'rateLimited' || r?.httpStatus === 429) return r;
     if (page.protected) return { ok: false, kind: 'protected', error: 'DRM' };

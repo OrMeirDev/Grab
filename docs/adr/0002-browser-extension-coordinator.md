@@ -21,12 +21,18 @@ that instance disconnects. Persisted jobs retain the chosen browser/profile and 
 routing ids; they reacquire context after restart. Media URLs, headers, choice tokens and cookie
 handles stay private to main. Only verified files can produce a completed status.
 
-For YouTube, the adapter acquires a page-scoped session before calling the original page's
+For an explicitly browser-assisted YouTube job, the adapter acquires a page-scoped session before calling the original page's
 extractor. This bounded Native Messaging request reads cookies only for that first-party URL and
 returns the browser user agent; it does not navigate, start playback or wait for media candidates.
 Short links use the canonical youtube.com cookie scope while retaining the original extractor URL.
 Generic embedded players retain their existing media-discovery path. Connection presentation
 follows live instances; past test results cannot override a reconnect or disconnect.
+
+Ordinary pasted links default to the direct extractor and bounded clean public-page scan. They
+do not consult the saved browser choice or require an installed extension, even after a previous
+job used that site with a session. Browser use is explicit per job (or restored from a known
+session-bound job); Mako remains the Edge-player exception. The extension answers desktop ping
+with a correlated pong, so Check connection exercises the same real port used by Send.
 
 The native host uses a versioned private copy of the already-shipped Electron runtime, named
 GrabBrowserHost.exe. This avoids locking the app executable/DLLs or matching the installer's

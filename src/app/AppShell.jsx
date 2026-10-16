@@ -31,7 +31,7 @@ export default function AppShell() {
   const [page, setPage] = useState('downloads');
   const [sitesOpen, setSitesOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
-  const [browserPick, setBrowserPick] = useState('');
+  const [browserPick, setBrowserPick] = useState('direct');
 
   useEffect(() => {
     if (!api) { setNotice('התצוגה הזו רצה בדפדפן. כדי להוריד, פתח את Grab כאפליקציה.'); return; }
@@ -42,7 +42,7 @@ export default function AppShell() {
     if (!api || !draft.parsed.length) return;
     const links = draft.parsed;
     draft.clear();
-    const skipped = await downloads.addLinks(links, browserPick ? { browser: browserPick } : undefined);
+    const skipped = await downloads.addLinks(links, browserPick === 'direct' ? undefined : { useBrowser: true, ...(browserPick !== 'auto' ? { browser: browserPick } : {}) });
     if (skipped) setNotice(`${skipped} קישורים כבר היו בתור ודילגתי עליהם`);
   };
   const requeue = (h) => { downloads.requeue(h); setPage('downloads'); };

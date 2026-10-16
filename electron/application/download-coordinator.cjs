@@ -142,14 +142,15 @@ class DownloadCoordinator {
 
   // New links -> new jobs. A link already in the queue, or repeated in the same paste, is skipped.
   // nameEdited: the label is a name the user chose (re-download from history keeps it).
-  add(links, { nameEdited = false, browser, instance, ref, sourceId, autoQueue = false } = {}) {
+  add(links, { nameEdited = false, useBrowser = false, browser, instance, ref, sourceId, autoQueue = false } = {}) {
     const seen = new Set(this.jobs.filter((j) => !sourceId || !['done', 'error'].includes(j.status)).map((j) => sourceId ? j.sourceId : sameLinkKey(j.url)));
     let added = 0;
     for (const { url, label = '' } of links) {
       const key = sourceId || sameLinkKey(url);
       if (seen.has(key)) continue;
       seen.add(key);
-      this.jobs.push({ id: this.d.newId(), url, label, name: label, nameEdited, status: 'waiting', progress: 0, siteKey: siteKey(url), browserPick: browser || null, instancePick: instance || null, browserRef: ref || null, sourceId: sourceId || null, needsSession: !!(ref || instance), sessionSource: ref || instance ? 'browser' : null, autoQueue });
+      const session = !!(useBrowser || browser || ref || instance);
+      this.jobs.push({ id: this.d.newId(), url, label, name: label, nameEdited, status: 'waiting', progress: 0, siteKey: siteKey(url), browserPick: browser || null, instancePick: instance || null, browserRef: ref || null, sourceId: sourceId || null, needsSession: session, sessionSource: session ? 'browser' : null, autoQueue });
       added++;
     }
     if (added) { this.changed(); this.pumpLookups(); }

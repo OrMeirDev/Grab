@@ -396,6 +396,48 @@ test('extension intake belongs to main: browser/profile survive restore, sends d
   assert.equal(t.history.length, 1);
 });
 
+test('ordinary YouTube pastes use real direct routing and finish in sequence without any browser', async () => {
+  const { createDiscoveryService } = require('../electron/application/discovery-service.cjs');
+  const requests = [];
+  const discovery = createDiscoveryService({
+    browserSession: { isMakoPage: () => false },
+    getBrowserService: () => ({ resolve: () => assert.fail('a browser default must not affect direct downloads') }),
+    engine: { analyze: async (url, opts) => { requests.push({ url, cookieFile: opts.cookieFile }); return { ok: true, title: 'Public', site: 'Youtube' }; } },
+  });
+  const t = setup({ lookups: Object.fromEntries([1, 2].map((n) => [YT(n), (opts) => discovery.analyze(YT(n), opts)])) });
+  await readyJobs(t, [YT(1), YT(2)]);
+  assert.equal(t.discovers.every((d) => d.requireSession === false), true);
+  t.c.downloadAll();
+  await settle();
+  t.starts[0].finish();
+  await settle();
+  await t.clock.advance(4999);
+  assert.equal(t.starts.length, 1);
+  await t.clock.advance(1);
+  assert.equal(t.starts.length, 2);
+  assert.equal(t.starts.every((s) => !s.plan.cookieRef && !s.plan.browserPick), true);
+  t.starts[1].finish();
+  await settle();
+  assert.deepEqual(t.status(), ['done', 'done']);
+  assert.deepEqual(requests.map((r) => r.url), [YT(1), YT(2)]);
+  assert.equal(requests.every((r) => r.cookieFile === undefined), true);
+});
+
+test('explicit default-browser mode requires its session immediately and preserves that choice on restore', async () => {
+  const saved = {};
+  const url = 'https://schooler.example/lesson';
+  const t = setup({ store: { load: async () => saved.list || [], save: async (list) => { saved.list = structuredClone(list); } },
+    lookups: { [url]: () => new Promise(() => {}) } });
+  t.c.add([{ url }], { useBrowser: true });
+  await settle();
+  assert.equal(t.discovers[0].requireSession, true);
+  assert.equal(t.discovers[0].browser, null, 'the adapter resolves the chosen default');
+  await t.c.flush();
+  assert.equal(restore(saved.list[0]).needsSession, true);
+  assert.equal(restore(saved.list[0]).sessionSource, 'browser');
+  await t.c.shutdown();
+});
+
 test('two YouTube extension sends keep page sessions, and the second starts only after the YouTube rest', async () => {
   const page = (n) => ({ ok: true, title: 'YouTube ' + n, site: 'Youtube', cookieRef: 'session-' + n,
     needsSession: true, sessionSource: 'browser', browser: { id: 'chrome', name: 'Chrome' }, instanceKey: 'chrome:personal' });

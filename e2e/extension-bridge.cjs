@@ -41,7 +41,7 @@ test('real Chromium + real extension + real native host + hub', { skip, timeout:
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grab e2e '));
   const registry = {
     // The test Chromium reads the "Chromium" registry key; Chrome/Edge/Brave keys are never touched here.
-    get: (k) => setup.windowsRegistry.get(k),
+    get: (k) => setup.windowsRegistry.get(k.replace('Google\\Chrome', 'Chromium')),
     set: (k, v) => setup.windowsRegistry.set(k.replace('Google\\Chrome', 'Chromium'), v),
     remove: (k) => setup.windowsRegistry.remove(k.replace('Google\\Chrome', 'Chromium')),
   };
@@ -80,6 +80,17 @@ test('real Chromium + real extension + real native host + hub', { skip, timeout:
   const instance = await until(() => hub.instances()[0], 30000, 'extension connection after GRAB started');
   assert.equal(instance.browser, 'chrome');
   const key = instance.key;
+
+  await run('desktop Check connection succeeds through the actual extension worker, not a fake pong', async () => {
+    const svc = new BrowserService({ sourceRoot: root, integrationDir: dir, appVersion: 'e2e', registry,
+      engine, session, getSettings: () => ({ browser: { defaultBrowser: 'chrome' } }), deps: { isRunning: async () => true } });
+    svc.hub = hub;
+    svc.detected = { browsers: [{ id: 'chrome', exe: first.exe }], systemDefault: 'chrome' };
+    const result = await svc.test('chrome');
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.instance.key, key);
+    assert.equal(svc.state().browsers.find((b) => b.id === 'chrome').state, 'connected');
+  });
 
   // The "signed-in" session: visit /login on the CDN host in the browser.
   const loginTab = await first.newTab(fixture.cdnOrigin + '/login');

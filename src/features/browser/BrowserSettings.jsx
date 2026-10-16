@@ -161,8 +161,8 @@ export default function BrowserSettings() {
 
       <div className="setting">
         <div>
-          <div className="setting-title">דפדפן ברירת מחדל להורדות מבוססות דפדפן</div>
-          <div className="row-meta">בשימוש כשאין כלל לאתר ולא נבחר דפדפן להורדה. כרגע: {effective?.name || 'לא זוהה דפדפן'} ({SOURCE_TEXT[state.effectiveDefault.source] || '—'})</div>
+          <div className="setting-title">דפדפן ברירת מחדל להורדות בעזרת התוסף</div>
+          <div className="row-meta">משמש כשבוחרים הורדה בעזרת התוסף והדפדפן, למשל באתר עם חשבון מחובר. קישורים רגילים יורדים ישירות. כרגע: {effective?.name || 'לא זוהה דפדפן'} ({SOURCE_TEXT[state.effectiveDefault.source] || '—'})</div>
         </div>
         <GlassSelect className="plain-select" value={s.defaultBrowser || ''} onChange={(e) => save({ defaultBrowser: e.target.value || null })}>
           <option value="">המלצה אוטומטית</option>

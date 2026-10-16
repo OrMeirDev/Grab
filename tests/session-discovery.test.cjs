@@ -161,9 +161,10 @@ const withoutSession = (site, from) => membersRequests(site, from).filter((l) =>
 async function firstRun({ site, saved, dir, link, interrupt }) {
   const state = { mode: 'available' };
   const one = grab({ site, saved, dir, browserState: state });
-  one.c.add([{ url: link }]);
+  one.c.add([{ url: link }], { useBrowser: true });
   await settled(one.c, ['ready', 'error']);
   assert.equal(one.c.jobs[0].status, 'ready', JSON.stringify(one.c.jobs[0].error));
+  assert.deepEqual(withoutSession(site, 0), [], 'explicit browser mode uses the session from the very first request');
   if (interrupt) {
     one.calls.hold = true;
     one.c.downloadOne(one.c.jobs[0].id);
@@ -231,7 +232,7 @@ for (const mode of ['closed', 'denied', 'unsupported']) {
 test('browser disconnect, then download/resume: looked up again through the browser, never without the session', () => withSite(async (site, dir) => {
   const state = { mode: 'available' };
   const g = grab({ site, saved: {}, dir, browserState: state });
-  g.c.add([{ url: site.base + '/members/clip.mp4' }]);
+  g.c.add([{ url: site.base + '/members/clip.mp4' }], { useBrowser: true });
   await settled(g.c, ['ready', 'error']);
   assert.equal(g.c.jobs[0].status, 'ready');
   const from = site.log.length;

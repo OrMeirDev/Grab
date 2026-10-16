@@ -15,7 +15,8 @@ const engine = require('../electron/engine.cjs');
 engine.version = async () => '2026.08.19';
 engine.reconcileEngine = async () => {};
 engine.extractors = async () => [{ name: 'Youtube' }, { name: 'Vimeo' }];
-engine.analyze = async () => ({ ok: true, title: 'סרטון בדיקה', site: 'Generic', duration: 30 });
+const engineCalls = [];
+engine.analyze = async (url, opts) => { engineCalls.push({ url, cookieFile: opts?.cookieFile }); return { ok: true, title: 'סרטון בדיקה', site: 'Generic', duration: 30 }; };
 const browsers = require('../electron/browser/browsers.cjs');
 browsers.detectBrowsers = async () => ({ systemDefault: 'chrome', browsers: [
   { id: 'chrome', name: 'Google Chrome', exe: process.execPath }, { id: 'edge', name: 'Microsoft Edge', exe: process.execPath },
@@ -47,6 +48,8 @@ app.whenReady().then(async () => {
     const click = (text) => js(`(() => { const b = [...document.querySelectorAll('button')].find((x) => x.textContent.includes(${JSON.stringify(text)})); if (!b) throw new Error('button absent'); b.click(); })()`);
     const shot = async (name) => { await wait(250); fs.writeFileSync(path.join(output, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
     await until("!!document.querySelector('textarea') && document.body.innerText.includes('המנוע מוכן')");
+    assert.ok((await js("document.querySelector('[aria-label=\"דרך ההורדה\"]').innerText")).includes('הורדה רגילה מקישור'));
+    assert.equal(await js("!!document.querySelector('[aria-label=\"דפדפן מחובר\"]')"), false);
     await shot('01-downloads');
     await click('הגדרות');
     await until("!!document.querySelector('.browser-settings') && document.querySelectorAll('.browser-card').length === 3");
@@ -96,11 +99,24 @@ app.whenReady().then(async () => {
     win.webContents.reload();
     await until("!!document.querySelector('textarea')");
     assert.equal((await js('window.grab.browserState()')).settings.defaultBrowser, 'chrome');
+    await js("document.querySelector('[aria-label=\"דרך ההורדה\"]').click()");
+    await until("!!document.querySelector('[role=option]')");
+    await js("[...document.querySelectorAll('[role=option]')].find((x) => x.textContent.includes('בעזרת התוסף')).click()");
+    await until("!!document.querySelector('[aria-label=\"דפדפן מחובר\"]')");
+    await shot('10-explicit-browser-mode');
+    await wait(180);
+    await js("document.querySelector('[aria-label=\"דרך ההורדה\"]').click()");
+    await until("!!document.querySelector('[role=option]')");
+    await js("[...document.querySelectorAll('[role=option]')].find((x) => x.textContent.includes('הורדה רגילה')).click()");
+    await until("!document.querySelector('[aria-label=\"דפדפן מחובר\"]')");
     await js("document.querySelector('textarea').focus()");
-    await win.webContents.insertText('https://public.example/video');
+    const youtube = 'https://www.youtube.com/watch?v=fixture123';
+    await win.webContents.insertText(youtube);
     await until("!![...document.querySelectorAll('button')].find((b) => b.textContent.includes('זהה סרטונים') && !b.disabled)");
     await click('זהה סרטונים');
     await until("document.querySelectorAll('.queue-item.is-ready').length === 1");
+    assert.equal(engineCalls.at(-1).url, youtube, 'ordinary YouTube paste bypasses the disconnected extension and saved Chrome default');
+    assert.equal(engineCalls.at(-1).cookieFile, undefined);
     await shot('03-ready');
     for (const [label, filename] of [['היסטוריה', '04-history'], ['ספרייה', '05-library']]) {
       await click(label);

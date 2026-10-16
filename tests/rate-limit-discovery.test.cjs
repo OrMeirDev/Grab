@@ -177,19 +177,19 @@ test('429 on the lookup: the site is held at once; no browser, no hidden browser
   assert.deepEqual(held(c), []);
 }));
 
-test('429 on the retry with the browser session\'s cookies: held at once; no source in the page is tried', () => withSite({
-  '/c/lesson': ['bot', 'page:/c/media.mp4', '429'],
+test('429 on the extractor with the explicitly chosen browser session: held at once; no source in the page is tried', () => withSite({
+  '/c/lesson': ['page:/c/media.mp4', '429'],
   '/c/media.mp4': ['media'],
 }, async (site) => {
   const { c, calls } = grab(site);
   const link = site.url('/c/lesson');
-  c.add([{ url: link }]);
+  c.add([{ url: link }], { useBrowser: true });
   await until(() => held(c).includes('127.0.0.1'), 'the hold');
   await quiet();
   assert.equal(job(c, link).status, 'waiting');
-  assert.equal(calls.page, 1, 'the bot check went to the browser');
-  assert.deepEqual(calls.engine.map((e) => e.withCookies), [false, true], 'the plain lookup, then the retry with the session');
-  assert.equal(site.requests('/c/lesson'), 3, 'lookup, the browser\'s visit, the retry that got 429');
+  assert.equal(calls.page, 1, 'the chosen browser acquired the session');
+  assert.deepEqual(calls.engine.map((e) => e.withCookies), [true], 'only the authenticated extractor is used');
+  assert.equal(site.requests('/c/lesson'), 2, 'the browser\'s visit, then the extractor that got 429');
   assert.equal(site.requests('/c/media.mp4'), 0, 'no source was tried after the 429');
 }));
 
@@ -210,13 +210,13 @@ test('429 on a source the hidden browser found: held at once; the user\'s browse
   assert.equal(site.requests('/f/page'), 2, 'the plain lookup and the hidden browser\'s visit, nothing after the 429');
 }));
 
-test('bot check with the browser available and a player in the page: found through the browser (unchanged)', () => withSite({
-  '/d/lesson': ['bot', 'page:/d/media.mp4', 'bot'],
+test('bot check in explicit browser mode with a player: found through that session', () => withSite({
+  '/d/lesson': ['page:/d/media.mp4', 'bot'],
   '/d/media.mp4': ['media'],
 }, async (site) => {
   const { c, calls } = grab(site);
   const link = site.url('/d/lesson');
-  c.add([{ url: link }]);
+  c.add([{ url: link }], { useBrowser: true });
   await until(() => ['ready', 'error'].includes(job(c, link).status), 'the lookup');
   assert.equal(job(c, link).status, 'ready', JSON.stringify(job(c, link).error));
   assert.equal(job(c, link).mediaUrl, site.url('/d/media.mp4'));
@@ -225,17 +225,31 @@ test('bot check with the browser available and a player in the page: found throu
   assert.deepEqual(held(c), []);
 }));
 
-test('bot check with the browser available and no video source in the page: the site is held, not reported as "no video"', () => withSite({
-  '/e/lesson': ['bot', 'empty', 'bot'],
+test('bot check in explicit browser mode without a video: the site is held, not reported as "no video"', () => withSite({
+  '/e/lesson': ['empty', 'bot'],
 }, async (site) => {
   const { c, calls } = grab(site);
   const link = site.url('/e/lesson');
-  c.add([{ url: link }]);
+  c.add([{ url: link }], { useBrowser: true });
   await until(() => held(c).includes('127.0.0.1') || job(c, link).status === 'error', 'the lookup to end');
   await quiet();
   assert.equal(job(c, link).status, 'waiting', JSON.stringify(job(c, link).error));
   assert.equal(job(c, link).error, null);
   assert.deepEqual(held(c), ['127.0.0.1']);
   assert.equal(calls.page, 1, 'the browser was tried');
-  assert.equal(site.requests('/e/lesson'), 3, 'lookup, the browser\'s visit, the retry with the session; nothing after');
+  assert.equal(site.requests('/e/lesson'), 2, 'browser visit and authenticated extractor; nothing after');
+}));
+
+test('a bot check in ordinary mode holds the site without connecting to a browser', () => withSite({
+  '/public/lesson': ['bot'],
+}, async (site) => {
+  const { c, calls } = grab(site);
+  const link = site.url('/public/lesson');
+  c.add([{ url: link }]);
+  await until(() => held(c).includes('127.0.0.1'), 'the hold');
+  await quiet();
+  assert.equal(site.requests('/public/lesson'), 1);
+  assert.equal(calls.connect, 0);
+  assert.equal(calls.hidden, 0);
+  assert.equal(calls.page, 0);
 }));

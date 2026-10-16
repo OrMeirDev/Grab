@@ -129,6 +129,7 @@ function onNative(m) {
       backoff = 1000;
       setConn({ state: 'connected', welcomed: true, error: '', errorKind: '' });
       break;
+    case 'ping': post(P.make('pong', {}, m.id)); break;
     case 'error':
       if (m.code === 'protocol_version') setConn({ state: 'incompatible', errorKind: 'protocol_version', error: m.message || '' });
       else if (m.code === 'host_rejected') setConn({ state: 'rejected', errorKind: 'origin_forbidden', error: m.message || '' });

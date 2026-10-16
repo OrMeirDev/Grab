@@ -35,7 +35,7 @@ export default function BrowserConnectionGuide({ onClose, pageUrl, onSettings })
           <li>ב־Grab, פתח הגדרות ← דפדפן והרחבה ולחץ התקנה ליד {name}.</li>
           <li>בדפדפן פתח את דף ההרחבות, הפעל Developer mode ובחר Load unpacked.</li>
           <li>בחר את תיקיית ההרחבה שמוצגת ב־Grab, ואז לחץ בדוק חיבור.</li>
-          <li>השאר את הפרופיל שבו אתה מחובר לאתר פתוח, והדבק ב־Grab את כתובת העמוד.</li>
+          <li>השאר את הפרופיל שבו אתה מחובר פתוח. ב־Grab בחר „בעזרת התוסף והדפדפן” והדבק את כתובת העמוד, או שלח אותו מתוך התוסף.</li>
         </ol>
         <div className="guide-foot">
           <button className="btn-primary" onClick={onSettings}>פתח הגדרות דפדפן</button>

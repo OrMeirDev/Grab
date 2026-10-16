@@ -226,7 +226,7 @@ test('analyze tries beyond four candidates and forwards the cookie jar and playe
     assert.deepEqual(options.requestContext, context);
     return { ok: calls === 6, title: 'Lesson' };
   } }, { findMedia: async () => ({ title: 'Lesson', cookieRef, candidates: Array.from({ length: 5 }, (_, i) => ({ url: manifest + '&n=' + i, kind: 'stream', requestContext: context })) }) });
-  const result = await analyze(pageUrl);
+  const result = await analyze(pageUrl, { requireSession: true });
   assert.equal(result.ok, true);
   assert.equal(calls, 6);
   assert.equal(result.cookieRef, cookieRef);
@@ -260,10 +260,11 @@ test('a tab with only an old blob is rescanned in a background tab, without relo
   const analyze = discovery({ analyze: async (url) => ({ ok: url === manifest, kind: 'notfound' }) }, {
     findMedia: async (url, option) => {
       options.push(option);
-      return option.refresh ? { candidates: [{ url: manifest, kind: 'stream' }] } : { reusedTab: true, candidates: [] };
+      const cookieRef = browser.rememberCookies([]);
+      return option.refresh ? { cookieRef, candidates: [{ url: manifest, kind: 'stream' }] } : { cookieRef, reusedTab: true, candidates: [] };
     },
   });
-  assert.equal((await analyze(pageUrl)).ok, true);
+  assert.equal((await analyze(pageUrl, { requireSession: true })).ok, true);
   assert.deepEqual(options.map((o) => o.refresh), [false, true]);
 });
 
@@ -297,22 +298,27 @@ test('payment, captcha and tracking frames are not tried as players; video embed
 test('when the default browser can\'t be reached, the error says which browser and how to turn it on', async () => {
   const analyze = discovery({ analyze: async () => ({ ok: false, kind: 'notfound' }) },
     { findMedia: async () => { throw Object.assign(new Error('closed'), { kind: 'browserSession' }); } });
-  const result = await analyze(pageUrl);
-  assert.equal(result.kind, 'notfoundPage');
+  const result = await analyze(pageUrl, { requireSession: true });
+  assert.equal(result.kind, 'sessionRequired');
   assert.equal(typeof result.browser.name, 'string');
   assert.equal(result.browser.supported, true);
 });
 
-test('once the signed-in browser was needed on a site, more links from it skip the hidden browser', async () => {
+test('explicit session links skip the hidden browser; an ordinary link on the same site stays ordinary', async () => {
   let hidden = 0;
+  let pages = 0;
   const cookieRef = browser.rememberCookies([{ domain: '.courses.example', path: '/', name: 'session', value: 'fixture', session: true }]);
   const analyze = discovery({ analyze: async (url) => (url === manifest ? { ok: true, title: 'Lesson' } : { ok: false, kind: 'notfound' }) },
-    { findMedia: async () => ({ cookieRef, candidates: [{ url: manifest, kind: 'stream' }] }) },
+    { findMedia: async () => { pages++; return { cookieRef, candidates: [{ url: manifest, kind: 'stream' }] }; } },
     { findMedia: async () => { hidden++; return { candidates: [] }; } });
   for (const lesson of [pageUrl, pageUrl + '?lesson=2', pageUrl + '?lesson=3']) {
-    assert.equal((await analyze(lesson)).ok, true);
+    assert.equal((await analyze(lesson, { requireSession: true })).ok, true);
   }
+  assert.equal(hidden, 0);
+  assert.equal(pages, 3);
+  assert.equal((await analyze(pageUrl + '?public=1')).kind, 'notfoundPage');
   assert.equal(hidden, 1);
+  assert.equal(pages, 3, 'ordinary paste did not use the authenticated browser');
 });
 
 test('without browser remote debugging, a page with no video reports notfoundPage', async () => {
@@ -321,21 +327,20 @@ test('without browser remote debugging, a page with no video reports notfoundPag
   assert.equal((await analyze(pageUrl)).kind, 'notfoundPage');
 });
 
-test('authentication errors retry the original extractor with active-session cookies', async () => {
+test('explicit session mode calls the original extractor with active-session cookies from the first request', async () => {
   const cookieRef = browser.rememberCookies([{ domain: '.courses.example', path: '/', name: 'session', value: 'secret', session: true }]);
   let calls = 0;
   const analyze = discovery({ analyze: async (url, options) => {
     calls++;
     assert.equal(url, pageUrl);
-    if (calls === 1) return { ok: false, kind: 'private' };
     assert.match(fs.readFileSync(options.cookieFile, 'utf8'), /session\tsecret/);
     assert.equal(options.requestContext.userAgent, 'Active Chrome UA');
     return { ok: true, title: 'Authenticated lesson' };
   } }, { findMedia: async () => ({ cookieRef, candidates: [], requestContext: { userAgent: 'Active Chrome UA' } }) });
-  const result = await analyze(pageUrl);
+  const result = await analyze(pageUrl, { requireSession: true });
   assert.equal(result.ok, true);
   assert.equal(result.cookieRef, cookieRef);
-  assert.equal(calls, 2);
+  assert.equal(calls, 1);
 });
 
 test('app shutdown removes cookie jars even while a download is pending', async () => {

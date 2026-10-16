@@ -7,6 +7,7 @@ const vm = require('node:vm');
 const { createRequire } = require('node:module');
 const { normalizeContext, contextFromHeaders, RequestContexts, mediaExpiry, redactMediaSecrets } = require('../electron/request-context.cjs');
 const { mainHandlers, sender } = require('../test-support/main-handlers.cjs');
+const browser = require('../electron/browser-session.cjs');
 const entry = path.join(__dirname, '../electron/engine.cjs');
 const sandbox = { module: { exports: {} }, require: createRequire(entry), process, __dirname: path.dirname(entry) };
 vm.runInNewContext(fs.readFileSync(entry, 'utf8') + '\nmodule.exports.args = { sessionArgs, downloadArgs, cleanError };', sandbox);
@@ -84,9 +85,9 @@ test('403 from an old tab gets one fresh authorized lookup and preserves fresh c
     return { ok: true, infoFile: 'fresh.json' };
   } }, { findMedia: async (_url, options) => {
     calls.push(options.refresh);
-    return { reusedTab: !options.refresh, candidates: [{ url: `https://cdn.example/${options.refresh ? 'fresh' : 'old'}.m3u8`, requestContext: options.refresh ? context : {} }] };
+    return { cookieRef: browser.rememberCookies([]), reusedTab: !options.refresh, candidates: [{ url: `https://cdn.example/${options.refresh ? 'fresh' : 'old'}.m3u8`, requestContext: options.refresh ? context : {} }] };
   } });
-  const result = await handlers.get('engine:analyze')({ sender }, page);
+  const result = await handlers.get('engine:analyze')({ sender }, page, { requireSession: true });
   assert.equal(result.ok, true);
   assert.deepEqual(result.requestContext, context);
   assert.deepEqual(calls, [false, true]);
@@ -96,9 +97,9 @@ test('a repeated 403 stays forbidden and lookup refresh is bounded', async () =>
   let probes = 0;
   const handlers = mainHandlers({ analyze: async (url) => url === 'https://lesson.example/episode'
     ? { ok: false, kind: 'notfound' } : { ok: false, kind: 'forbidden', httpStatus: 403, error: 'Server denied playback' } }, {
-    findMedia: async () => { probes++; return { reusedTab: true, candidates: [{ url: 'https://cdn.example/master.m3u8' }] }; },
+    findMedia: async () => { probes++; return { cookieRef: browser.rememberCookies([]), reusedTab: true, candidates: [{ url: 'https://cdn.example/master.m3u8' }] }; },
   });
-  const result = await handlers.get('engine:analyze')({ sender }, 'https://lesson.example/episode');
+  const result = await handlers.get('engine:analyze')({ sender }, 'https://lesson.example/episode', { requireSession: true });
   assert.equal(result.kind, 'forbidden');
   assert.equal(result.httpStatus, 403);
   assert.equal(probes, 2);

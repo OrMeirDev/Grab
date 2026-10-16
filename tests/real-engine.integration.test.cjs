@@ -122,7 +122,7 @@ test('real yt-dlp + real discovery + real Chromium: after a restart, a members-o
     // A. Embedded player: found in one run (Grab learns it needs the session), Grab restarts.
     const savedA = {};
     const one = run(savedA, chromeInfo);
-    one.add([{ url: site.base + '/members/watch' }]);
+    one.add([{ url: site.base + '/members/watch' }], { useBrowser: true });
     await until(() => ['ready', 'error'].includes(one.jobs[0]?.status));
     assert.equal(one.jobs[0].status, 'ready', JSON.stringify(one.jobs[0].error));
     assert.equal(one.jobs[0].sessionSource, 'browser');

@@ -1,6 +1,6 @@
 {
   "name": "grab",
-  "version": "1.7.0-rc.2",
+  "version": "1.7.0-rc.3",
   "description": "Grab - video downloader",
   "author": "Or meir Tzarfati",
   "main": "electron/main.cjs",

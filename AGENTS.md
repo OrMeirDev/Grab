@@ -13,6 +13,10 @@ Decisions: [docs/adr/](docs/adr/). Current state and open work: [docs/handoff.md
 - Use the user's **active browser session**. Never add an in-app sign-in page, a fresh browser
   profile or a permission bypass. Never navigate, play or close a tab Grab didn't open; close only
   background tabs Grab created.
+- Ordinary pasted links (YouTube and other public platforms) download directly without a browser
+  or extension dependency. The saved browser default applies only when the user chooses browser-
+  assisted lookup, sends from the extension, or restores a job already requiring that session.
+  Mako keeps its Edge-player exception. Installing an extension must not change ordinary routing.
 
 ## Where things go
 
