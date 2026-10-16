@@ -2,9 +2,9 @@
 // video, how long it took, how many sources were checked or rejected, which engine version ran,
 // how a download ended. Kept in memory and in <userData>/logs/diagnostics.log (rotated at 1 MB).
 //
-// Never recorded: cookies, cookie files, request headers, signed query strings or fragments.
-// Every link is reduced to scheme://host/path before it is stored.
-const { redactMediaSecrets } = require('../domain/media-request-context.cjs');
+// Never recorded: cookies, cookie files, request headers, signed query strings, fragments,
+// or URL paths (which can contain personal identifiers and signed path credentials).
+// Diagnostics record only scheme://host[:port] for HTTP(S) URLs.
 const fs = require('fs');
 const path = require('path');
 
@@ -12,12 +12,13 @@ const MAX_BYTES = 1024 * 1024;
 const MAX_MEMORY = 500;
 const SECRET_KEYS = /cookie|token|sig|signature|auth|key|secret|password|session|policy|expires|jwt|credential/i;
 
-// https://cdn.example/v.m3u8?token=abc#t=1 -> https://cdn.example/v.m3u8 ; anything else -> null
+// https://cdn.example/user/id/v.m3u8?token=abc -> https://cdn.example
+// A URL path is not safe diagnostic metadata: it may itself be a user ID or signed secret.
 function redactUrl(value) {
   try {
     const u = new URL(value);
     if (!/^https?:$/.test(u.protocol)) return null;
-    return redactMediaSecrets(`${u.protocol}//${u.host}${u.pathname}`);
+    return u.origin; // drops credentials, path, query, and fragment
   } catch { return null; }
 }
 
