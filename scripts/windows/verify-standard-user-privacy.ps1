@@ -26,7 +26,9 @@ $ErrorActionPreference = 'Stop'
 $who = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($who)
 if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'This must be a real standard-user token' }
-$env:TEMP = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Temp'
+# A headless first logon need not initialize shell Known Folders. The test owns
+# an explicit writable temp root while retaining the real standard-user token.
+$env:TEMP = Join-Path $FixtureRoot 'standard-user-temp'
 $env:TMP = $env:TEMP
 New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
 Remove-Item Env:GRAB_TEST_YTDLP_DIR -ErrorAction SilentlyContinue
@@ -40,6 +42,13 @@ exit $LASTEXITCODE
   New-LocalUser -Name $testUser -Password $securePassword -Description 'Disposable Grab CI privacy test' | Out-Null
   $created = $true
   Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $testUser
+  $standardTemp = Join-Path $testRoot 'standard-user-temp'
+  New-Item -ItemType Directory -Path $standardTemp | Out-Null
+  $testSid = (Get-LocalUser -Name $testUser).SID
+  $tempAcl = Get-Acl -LiteralPath $standardTemp
+  $tempRule = [Security.AccessControl.FileSystemAccessRule]::new($testSid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+  $tempAcl.AddAccessRule($tempRule)
+  Set-Acl -LiteralPath $standardTemp -AclObject $tempAcl
   $credential = [Management.Automation.PSCredential]::new("$env:COMPUTERNAME\$testUser", $securePassword)
   Start-Service seclogon
   $shellExe = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'

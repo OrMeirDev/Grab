@@ -365,8 +365,10 @@ function download(opts, onProgress, { runImpl = run, verifyImpl = verifyOutput }
   let verifier = null;
   prunePrivateInfo();
   const input = privateInfo.get(opts.infoFile)?.text;
-  const job = runImpl(downloadArgs({ ...opts, privateInput: !!input }), {
-    input,
+  const args = downloadArgs({ ...opts, privateInput: !!input });
+  const infoIndex = args.indexOf('--load-info-json');
+  const job = runImpl(args, {
+    input: infoIndex >= 0 && args[infoIndex + 1] === '-' ? input : undefined,
     requestUrls: [opts.mediaUrl || opts.url],
     kind: 'download', idleTimeoutMs: opts.idleMs,
     onLine: (line) => {

@@ -82,6 +82,14 @@ test('lookup secrets stay off disk and argv; rotated and anonymous cookies survi
     const args = f.calls().at(-1);
     assert.equal(args[args.indexOf('--load-info-json') + 1], '-');
     assert.ok(!JSON.stringify(args).includes('secret'));
+    let fallbackArgs, fallbackInput;
+    await f.engine.download({ url: 'https://fixture.example/watch', outputBase: path.join(f.dir, 'stale'),
+      format: 'mp4', infoFile: info.infoFile, infoAt: info.infoAt, infoExpiresAt: Date.now() - 1 }, () => {}, {
+      runImpl: (a, options) => { fallbackArgs = a; fallbackInput = options.input;
+        return { stop() {}, done: Promise.resolve({ code: 1, err: 'fixture' }) }; },
+    }).done;
+    assert.ok(!fallbackArgs.includes('--load-info-json'));
+    assert.equal(fallbackInput, undefined, 'a fresh extraction must not receive unrelated cached secrets on stdin');
     f.engine.releaseInfo(info.infoFile);
     assert.equal(fs.existsSync(info.infoFile), false);
   } finally { if (info?.infoFile) f.engine.releaseInfo(info.infoFile); f.cleanup(); }
