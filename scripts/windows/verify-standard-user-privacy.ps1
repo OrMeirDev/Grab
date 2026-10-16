@@ -11,7 +11,7 @@ try {
   Copy-Item -Recurse electron/infrastructure (Join-Path $testRoot 'electron/infrastructure')
   Copy-Item -Recurse electron/domain (Join-Path $testRoot 'electron/domain')
   New-Item -ItemType Directory -Path (Join-Path $testRoot 'tests') | Out-Null
-  foreach ($testFile in @('private-info-dir.test.cjs', 'cookie-vault-jar.test.cjs', 'privacy-settings.test.cjs')) {
+  foreach ($testFile in @('private-info-dir.test.cjs', 'cookie-vault-jar.test.cjs', 'privacy-settings.test.cjs', 'vault-metadata.test.cjs')) {
     Copy-Item (Join-Path 'tests' $testFile) (Join-Path $testRoot ('tests/' + $testFile))
   }
   $canary = Join-Path $testRoot 'protected-peer'
@@ -35,7 +35,7 @@ Remove-Item Env:GRAB_TEST_YTDLP_DIR -ErrorAction SilentlyContinue
 Set-Location $FixtureRoot
 & $NodeExe -e "try { require('fs').readFileSync(process.argv[1]); process.exit(10); } catch(e) { if (!['EACCES','EPERM'].includes(e.code)) throw e; console.log('PASS: standard user cannot read synthetic peer data'); }" (Join-Path $FixtureRoot 'protected-peer/canary.txt')
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-& $NodeExe --test --test-timeout=120000 tests/private-info-dir.test.cjs tests/cookie-vault-jar.test.cjs tests/privacy-settings.test.cjs
+& $NodeExe --test --test-timeout=120000 tests/private-info-dir.test.cjs tests/cookie-vault-jar.test.cjs tests/privacy-settings.test.cjs tests/vault-metadata.test.cjs
 exit $LASTEXITCODE
 '@ | Set-Content -LiteralPath $entry -Encoding utf8
   $securePassword = ConvertTo-SecureString $testPassword -AsPlainText -Force

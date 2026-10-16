@@ -8,7 +8,7 @@ These changes are not in the published 1.7.0 installer.
 
 | Finding | Implementation | Verification still required |
 | --- | --- | --- |
-| F01 session values in metadata | Disk cache contains randomly named markers only, without URLs, URL hashes or metadata; full metadata is bounded in memory and reused over stdin. Rotated/anonymous cookies retain exact scope. | Installed Windows account/Mako scenarios |
+| F01 session values in metadata | Disk cache contains randomly named markers only, without URLs, URL hashes or metadata; full metadata is bounded in the shared CookieVault and reused over stdin. Session disconnect/expiry invalidates its opaque metadata handles. Rotated/anonymous cookies retain exact scope. | Installed Windows account/Mako scenarios |
 | F02 stable updater identifier | Common non-device staging header through the updater's public API; internal updater logging disabled. | Packaged updater capture |
 | F03 optional application UA tokens | Remove only Grab/Electron product tokens from application sessions; captured browser UA stays unchanged. | Real Electron capture and installed Windows |
 | F04 dictionary traffic | Disable languages and spellchecker on default and every hidden-probe session. | Linux Electron proxy capture and Windows confirmation |

@@ -95,6 +95,28 @@ test('lookup secrets stay off disk and argv; rotated and anonymous cookies survi
   } finally { if (info?.infoFile) f.engine.releaseInfo(info.infoFile); f.cleanup(); }
 });
 
+test('forgetting a browser session invalidates its extractor metadata before another download', { skip }, async () => {
+  const { rememberCookies, withSessionCookies, forgetCookies } = require('../electron/browser-session.cjs');
+  const f = fakeEngine(`console.log(JSON.stringify({ title: 'Private', ext: 'mp4', url: 'https://fixture.example/video.mp4', cookies: 'session=synthetic-private' }));`);
+  const reference = rememberCookies([], { source: 'browser' });
+  let info;
+  try {
+    info = await withSessionCookies(reference, () => f.engine.analyze('https://fixture.example/watch'));
+    assert.equal(info.ok, true);
+    assert.ok(info.infoFile);
+    forgetCookies(reference);
+    let args, input;
+    await f.engine.download({ url: 'https://fixture.example/watch', outputBase: path.join(f.dir, 'fresh'),
+      format: 'mp4', infoFile: info.infoFile, infoAt: info.infoAt }, () => {}, {
+      runImpl: (a, options) => { args = a; input = options.input;
+        return { stop() {}, done: Promise.resolve({ code: 1, err: 'fixture' }) }; },
+    }).done;
+    assert.ok(!args.includes('--load-info-json'));
+    assert.equal(input, undefined);
+    assert.equal(fs.existsSync(info.infoFile), false);
+  } finally { forgetCookies(reference); if (info?.infoFile) f.engine.releaseInfo(info.infoFile); f.cleanup(); }
+});
+
 test('a sanitized cache without its private context is never used as a complete lookup', { skip }, async () => {
   const engine = require('../electron/engine.cjs');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-orphan-info-'));

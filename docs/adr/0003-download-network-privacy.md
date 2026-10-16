@@ -26,8 +26,10 @@ diagnostics or persisted state. HMAC protects context integrity, not other proce
 
 The disk cache contains only randomly named lifecycle markers, with no metadata, URL hashes, signed URLs,
 cookie/authorization fields or private cookie records. A marker is never considered complete without
-its live memory entry. Full info is piped to `--load-info-json -` only
-when reused. A 32 MiB budget, four-hour timer, job release and startup cleanup bound retention. Cache
+its live memory entry. Full info lives exclusively in the shared CookieVault; the engine holds opaque
+handles. Async-local session binding also covers empty cookie snapshots and concurrent browser profiles.
+Forgetting/disconnecting a session or expiring its snapshot invalidates its metadata. Full info is piped
+to `--load-info-json -` only when reused. A 32 MiB / 256-entry budget, four-hour timer, job release and startup cleanup bound retention. Cache
 capacity failure falls back to a fresh extraction, as a cache write failure already did.
 
 Observed playback headers are preserved for the original media origin. Newly encountered cross-origin

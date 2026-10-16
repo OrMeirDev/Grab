@@ -26,7 +26,7 @@ jobs:
         with:
           node-version: 24
       - name: Exact ACL setup and cookie-vault lifecycle without downloaded engines
-        run: node --test --test-timeout=120000 tests/private-info-dir.test.cjs tests/cookie-vault-jar.test.cjs tests/privacy-settings.test.cjs
+        run: node --test --test-timeout=120000 tests/private-info-dir.test.cjs tests/cookie-vault-jar.test.cjs tests/privacy-settings.test.cjs tests/vault-metadata.test.cjs
       - name: Actual standard user and cross-user access denial
         shell: pwsh
         run: ./scripts/windows/verify-standard-user-privacy.ps1

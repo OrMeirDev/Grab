@@ -11,6 +11,7 @@ const { errorKind, cleanError } = require('./domain/engine-errors.cjs');
 const { normalizeContext, mediaExpiry } = require('./domain/media-request-context.cjs');
 const { safeName } = require('./domain/output-names.cjs');
 const { ensurePrivateDir } = require('./infrastructure/private-info-dir.cjs');
+const { sharedCookieVault: privateVault } = require('./infrastructure/cookie-vault.cjs');
 
 const IS_WIN = process.platform === 'win32';
 const EXE = IS_WIN ? '.exe' : '';
@@ -193,20 +194,18 @@ async function updateEngine() {
 // Random disk markers retain the existing job lifecycle; legacy cache files are scavenged.
 const INFO_DIR = path.join(os.tmpdir(), 'grab-info');
 const INFO_MAX_AGE_MS = 4 * 60 * 60 * 1000;
-const PRIVATE_INFO_MAX_BYTES = 32 * 1024 * 1024;
 const privateInfo = new Map();
-let privateInfoBytes = 0;
 
 function releaseInfo(infoFile) {
   const entry = privateInfo.get(infoFile);
-  if (entry) { privateInfoBytes -= entry.bytes; clearTimeout(entry.timer); }
+  if (entry) { privateVault.forgetMetadata(entry.reference); clearTimeout(entry.timer); }
   privateInfo.delete(infoFile);
   if (isInfoFile(infoFile)) { try { fs.rmSync(infoFile, { force: true }); } catch { /* startup cleans leftovers */ } }
 }
 
 function prunePrivateInfo() {
   for (const [file, entry] of privateInfo) {
-    if (Date.now() - entry.at >= INFO_MAX_AGE_MS || !fs.existsSync(file)) releaseInfo(file);
+    if (!privateVault.hasMetadata(entry.reference) || !fs.existsSync(file)) releaseInfo(file);
   }
 }
 
@@ -215,7 +214,7 @@ function prunePrivateInfo() {
 function cleanInfoCache() {
   for (const entry of privateInfo.values()) clearTimeout(entry.timer);
   privateInfo.clear();
-  privateInfoBytes = 0;
+  privateVault.clearMetadata();
   try {
     for (const f of fs.readdirSync(INFO_DIR)) fs.rmSync(path.join(INFO_DIR, f), { force: true });
   } catch { /* nothing cached yet */ }
@@ -260,20 +259,19 @@ async function analyze(url, { title: pageTitle, signal, timeoutMs, ...context } 
     const j = JSON.parse(out);
     if (!hasMediaFormats(j)) return { ok: false, kind: 'notmedia', error: 'The response contains no recognized video or audio format' };
     let infoFile = null;
+    let reference = null;
     try {
       prunePrivateInfo();
       if (!ensurePrivateDir(INFO_DIR)) throw new Error('Signed metadata cache is not private');
-      const bytes = Buffer.byteLength(out);
-      if (privateInfoBytes + bytes > PRIVATE_INFO_MAX_BYTES) throw new Error('Private metadata memory budget reached');
+      reference = privateVault.rememberMetadata(out);
       infoFile = path.join(INFO_DIR, `${crypto.randomBytes(20).toString('hex')}-${crypto.randomUUID()}.json`);
       // The disk file is only a lifecycle marker. No extractor output, signed URLs,
       // browser cookies or lookup-time cookies are ever persisted here.
       fs.writeFileSync(infoFile, '{"__grab_private_context":true}', { mode: 0o600, flag: 'wx' });
       const timer = setTimeout(() => releaseInfo(infoFile), INFO_MAX_AGE_MS);
       timer.unref?.();
-      privateInfo.set(infoFile, { text: out, bytes, at: Date.now(), timer });
-      privateInfoBytes += bytes;
-    } catch { infoFile = null; }
+      privateInfo.set(infoFile, { reference, timer });
+    } catch { if (reference) privateVault.forgetMetadata(reference); infoFile = null; }
     return {
       ok: true,
       infoFile,
@@ -364,7 +362,7 @@ function download(opts, onProgress, { runImpl = run, verifyImpl = verifyOutput }
   let stopped = false;
   let verifier = null;
   prunePrivateInfo();
-  const input = privateInfo.get(opts.infoFile)?.text;
+  const input = privateVault.readMetadata(privateInfo.get(opts.infoFile)?.reference);
   const args = downloadArgs({ ...opts, privateInput: !!input });
   const infoIndex = args.indexOf('--load-info-json');
   const job = runImpl(args, {
