@@ -113,7 +113,8 @@ class Diagnostics {
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
       try { if (fs.statSync(this.file).size > MAX_BYTES) fs.renameSync(this.file, this.file + '.1'); } catch { /* first entry */ }
-      fs.appendFileSync(this.file, JSON.stringify(entry) + '\n');
+      fs.appendFileSync(this.file, JSON.stringify(entry) + '\n', { mode: 0o600 });
+      if (process.platform !== 'win32') fs.chmodSync(this.file, 0o600);
     } catch { /* diagnostics never break the app */ }
     return entry;
   }
