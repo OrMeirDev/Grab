@@ -20,9 +20,18 @@ documentation. There is no UI redesign or engine upgrade.
 [Release process](releasing.md), [release notes](releases/1.7.0.md),
 [Windows installation](INSTALL-WINDOWS-HE.md), [extension setup](browser-extension.md).
 The Release workflow requires successful CI, Browser integration and Windows verify push runs
-for the exact same current main SHA. It downloads the tested Windows bundle, checks its source
+for the exact same release source SHA on main. It downloads the tested Windows bundle, checks its source
 commit/tree, every SHA-256, updater SHA-512 and engine lock, then publishes the complete draft
 as the latest stable release. The proof artifact records the check URLs and asset digests.
+Publication-only repairs may resume the tested immutable tag after proving that no shipped input
+changed and passing fresh main CI. Source and publication SHAs are recorded separately; see the
+release guide for the narrow allowed path list.
+
+Stable installer source `b001f7271485585bbdf396f2457bbb3619512b16` passed
+[CI 50](https://github.com/OrMeirDev/Grab/actions/runs/38892306734),
+[Browser integration 16](https://github.com/OrMeirDev/Grab/actions/runs/38892306892) and
+[Windows verify 29](https://github.com/OrMeirDev/Grab/actions/runs/38892306711), including 29/29
+installed-app/upgrade checks. Its eight-file bundle and updater digests were verified after download.
 
 The established RC4 baseline passed CI 47, Browser integration 13 (18 extension checks, 5 actual
 Brave checks, 3 real media checks, packaged runtime), and Windows verify 28 (29/29 upgrade and
