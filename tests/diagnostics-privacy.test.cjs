@@ -19,7 +19,7 @@ test('diagnostic files never contain sensitive URL paths or tokens', () => {
     const d = new Diagnostics({ dir });
     d.record('lookup', { url: 'https://media.example/private/account-123?token=secret', error: 'Error at https://media.example/hdntl=signed-token/index.m3u8?auth=secret' });
     const raw = fs.readFileSync(path.join(dir, 'diagnostics.log'), 'utf8');
-    assert.match(raw, /https:\\/\\/media\\.example/);
+    assert.ok(raw.includes('https://media.example'));
     for (const secret of ['account-123','signed-token','auth=','token=secret','/private/']) assert.equal(raw.includes(secret), false, secret);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
