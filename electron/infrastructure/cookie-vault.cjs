@@ -60,8 +60,8 @@ class CookieVault {
       throw expired();
     }
     const lines = snapshot.cookies.filter((c) => c && typeof c.domain === 'string' && ![c.domain, c.path, c.name, c.value].some((v) => /[\t\r\n]/.test(v || ''))).map((c) => [
-      (c.httpOnly ? '#HttpOnly_' : '') + c.domain,
-      c.domain.startsWith('.') ? 'TRUE' : 'FALSE', c.path || '/',
+      (c.httpOnly ? '#HttpOnly_' : '') + (c.hostOnly === true ? c.domain.replace(/^\\./, '') : c.hostOnly === false && !c.domain.startsWith('.') ? '.' + c.domain : c.domain),
+      c.hostOnly === false || (c.hostOnly === undefined && c.domain.startsWith('.')) ? 'TRUE' : 'FALSE', c.path || '/',
       c.secure ? 'TRUE' : 'FALSE', c.session || c.expires < 0 ? 0 : Math.floor(c.expires || 0), c.name, c.value,
     ].join('\t'));
     if (!lines.length) return work(undefined);
