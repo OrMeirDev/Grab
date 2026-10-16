@@ -86,6 +86,38 @@ jobs:
       - name: Verified release bundle, checksums and updater metadata
         if: runner.os == 'Windows'
         run: node scripts/release/bundle.cjs
+      - name: Current UI screenshots from a synthetic profile
+        if: runner.os == 'Windows' && github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          $env:APPDATA = Join-Path $env:RUNNER_TEMP 'grab-ui-fixture'
+          New-Item -ItemType Directory -Force $env:APPDATA | Out-Null
+          npm run e2e:screenshots
+      - name: Checkout the exact PR base for before screenshots
+        if: runner.os == 'Windows' && github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: ui-baseline
+          persist-credentials: false
+      - name: Baseline UI screenshots using the same pinned engines and synthetic profile
+        if: runner.os == 'Windows' && github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          $env:APPDATA = Join-Path $env:RUNNER_TEMP 'grab-ui-fixture'
+          New-Item -ItemType Junction -Path "$pwd\ui-baseline\bin" -Target "$pwd\bin" | Out-Null
+          Set-Location ui-baseline
+          npm ci --no-audit --no-fund
+          npm run e2e:screenshots
+      - name: Retain before and after UI evidence
+        if: runner.os == 'Windows' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grab-privacy-ui-before-after
+          path: |
+            e2e/output/screenshots/
+            ui-baseline/e2e/output/screenshots/
+          if-no-files-found: warn
       - name: Retain test installer
         if: runner.os == 'Windows' && success()
         uses: actions/upload-artifact@v4
