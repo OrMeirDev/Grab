@@ -555,7 +555,6 @@ async function scenarioUpdateWhileDownloading() {
     // not on its command line when it loads the lookup's saved information).
     const attempt = await until(async () => { const a = (await list('yt-dlp.exe')).filter((p) => p.cmd.includes('update.%(ext)s')); return a.length ? a : null; }, 60000, 100);
     const flowing = await until(async () => { const r = (await rows()).find((x) => x.name === 'update'); return r?.state === 'downloading' && /[1-9]\d*(\.\d+)?%/.test(r.text) ? r : null; }, 60000);
-    const servedBefore = fixtureLog().filter((l) => l.url.endsWith('/update.mp4')).length;
     await shot('13-update-ready-while-downloading');
     // Now that bytes are flowing, the attempt's launcher and its child both exist: hold them all.
     const engineNow = await list('yt-dlp.exe');
@@ -615,8 +614,13 @@ async function scenarioUpdateWhileDownloading() {
         attemptLastSeenAlive: lastSeenAlive, samplesWithBoth: overlap.length, samples: samples.length, saved, partials,
         timeline: events.filter((e) => t(e.t) >= clickedAt.getTime() - 2000).map((e) => `${e.t} ${e.ev} ${e.name} ${e.pid}`) });
 
-    // The version the installer started: nothing is downloaded by itself.
-    const requestedAfterInstall = fixtureLog().filter((l) => l.url.endsWith('/update.mp4')).length - servedBefore;
+    // The fixture flushes its request log every 200 ms. Counting from a snapshot taken while
+    // the old attempt is running can count that attempt's delayed log entry as a new request.
+    // Use each request's receipt time and the old attempt's exact final exit time instead.
+    // Keep the whole stopped interval (including the installer), so an automatic restart
+    // cannot be hidden by choosing a baseline after the new app has already opened.
+    const requestsSinceStop = () => fixtureLog().filter((l) => l.url.endsWith('/update.mp4') && l.at >= lastAttemptStop);
+    const requestsAfterInstall = requestsSinceStop();
     // Close it the usual way and open it again where this script can see its window.
     try { execFileSync('taskkill', ['/IM', 'Grab.exe'], { stdio: 'ignore' }); } catch { /* not running */ }
     for (let i = 0; i < 150 && processes().grab; i++) await wait(200);
@@ -630,11 +634,12 @@ async function scenarioUpdateWhileDownloading() {
     await wait(3000);
     const restored = (await rows()).find((x) => x.name === 'update');
     const running = await engineCommands();
-    const requestedBeforeResume = fixtureLog().filter((l) => l.url.endsWith('/update.mp4')).length - servedBefore;
+    const requestsBeforeResume = requestsSinceStop();
     await shot('14-after-update-restored-paused');
     record('W-07g', 'after the update, the interrupted download is restored paused and nothing started by itself',
-      !!relaunched && restored?.state === 'paused' && requestedAfterInstall === 0 && requestedBeforeResume === 0 && !running.some((c) => c.includes('update.%(ext)s')),
-      { startedByInstaller: (relaunched || []).map((p) => p.cmd.slice(0, 200)), restored, requestsForTheFile: { whileInstallerStartedAppRan: requestedAfterInstall, untilResume: requestedBeforeResume }, ytdlpRunning: running });
+      !!relaunched && Number.isFinite(lastAttemptStop) && restored?.state === 'paused' && requestsAfterInstall.length === 0 && requestsBeforeResume.length === 0 && !running.some((c) => c.includes('update.%(ext)s')),
+      { startedByInstaller: (relaunched || []).map((p) => p.cmd.slice(0, 200)), restored, lastAttemptStop: allExited ? new Date(lastAttemptStop).toISOString() : null,
+        requestsForTheFile: { whileInstallerStartedAppRan: requestsAfterInstall.length, untilResume: requestsBeforeResume.length }, requestsAfterStop: requestsBeforeResume, ytdlpRunning: running });
 
     const watch = await watchProcesses();
     await clickTitle('המשך');
