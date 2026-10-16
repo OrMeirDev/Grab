@@ -38,6 +38,9 @@ test('packaged browser service loads; resources install a native host that uses 
   const protocol = packedRequire('./extension/lib/protocol.js');
   const { encodeFrame, FrameParser } = packedRequire('./native-host/framing.cjs');
   assert.equal(typeof BrowserService, 'function', 'all runtime module dependencies were packaged');
+  const plugin = path.join(resources, 'engine-plugins', 'grab', 'yt_dlp_plugins', 'postprocessor', 'grab_privacy.py');
+  assert.ok(fs.existsSync(plugin), 'the mandatory privacy policy is shipped outside app.asar for yt-dlp');
+  assert.match(fs.readFileSync(plugin, 'utf8'), /class GrabPrivacyPP/);
   const identity = setup.readExtensionIdentity(path.join(resources, 'extension'));
   for (const f of ['background.js', 'lib/collector.js', 'popup/popup.html', 'icons/icon128.png']) {
     assert.ok(fs.existsSync(path.join(resources, 'extension', f)), f);

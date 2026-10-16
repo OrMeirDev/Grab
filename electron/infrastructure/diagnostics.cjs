@@ -7,6 +7,7 @@
 // Diagnostics record only scheme://host[:port] for HTTP(S) URLs.
 const fs = require('fs');
 const path = require('path');
+const { ensurePrivateDir } = require('./private-info-dir.cjs');
 
 const MAX_BYTES = 1024 * 1024;
 const MAX_MEMORY = 500;
@@ -111,7 +112,12 @@ class Diagnostics {
     if (this.entries.length > MAX_MEMORY) this.entries.shift();
     if (!this.file) return entry;
     try {
-      fs.mkdirSync(path.dirname(this.file), { recursive: true });
+      if (!ensurePrivateDir(path.dirname(this.file))) return entry;
+      if (process.platform !== 'win32') {
+        for (const file of [this.file, this.file + '.1']) {
+          try { fs.chmodSync(file, 0o600); } catch { /* first entry */ }
+        }
+      }
       try { if (fs.statSync(this.file).size > MAX_BYTES) fs.renameSync(this.file, this.file + '.1'); } catch { /* first entry */ }
       fs.appendFileSync(this.file, JSON.stringify(entry) + '\n', { mode: 0o600 });
       if (process.platform !== 'win32') fs.chmodSync(this.file, 0o600);

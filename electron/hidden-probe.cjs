@@ -12,8 +12,7 @@ const { collectorScript, isNotPlayer } = require('./media-collector.cjs');
 const { classify, unconfirmedPlayerSources, rankMedia, playerEmbeds, isLicenseRequest, isMediaType } = require('./domain/candidate-policy.cjs');
 const { contextFromHeaders } = require('./request-context.cjs');
 const browserSession = require('./browser-session.cjs');
-
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+const { configureSessionPrivacy } = require('./security/network-privacy.cjs');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const header = (headers, name) => {
@@ -24,6 +23,7 @@ const header = (headers, name) => {
 async function findMedia(pageUrl, { timeoutMs = 20000, signal } = {}) {
   signal?.throwIfAborted();
   const ses = session.fromPartition(`grab-probe-${Date.now()}-${Math.random()}`, { cache: false });
+  configureSessionPrivacy(ses);
   ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
   ses.setPermissionCheckHandler(() => false);
   ses.on('will-download', (e) => e.preventDefault());

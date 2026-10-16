@@ -41,6 +41,14 @@ jobs:
           echo "1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6  $RUNNER_TEMP/ytdlp/yt-dlp" | sha256sum -c -
           chmod +x "$RUNNER_TEMP/ytdlp/yt-dlp"
           echo "GRAB_TEST_YTDLP_DIR=$RUNNER_TEMP/ytdlp" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/ytdlp" >> "$GITHUB_PATH"
+      - name: Pinned Windows engines for privacy and cookie integration tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          npm run fetch-bin
+          "GRAB_TEST_YTDLP_DIR=$pwd\bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "$pwd\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       # FFmpeg for tests/merge-pause.integration.test.cjs (pause during a real merge).
       - name: ffmpeg for the merge integration test
         if: runner.os == 'Linux'

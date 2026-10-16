@@ -83,6 +83,9 @@ function runProcess(exe, args, options = {}) {
     result.err = (result.err + d).slice(-o.maxStderr);
     feed('err', d);
   });
+  // Private metadata goes through a pipe rather than argv or a temporary file.
+  child.stdin.on('error', () => {}); // an early exit may close the pipe during a write
+  child.stdin.end(o.input);
 
   const onAbort = () => stop('aborted');
   if (o.signal) {

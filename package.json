@@ -63,6 +63,7 @@
       },
       "THIRD_PARTY_NOTICES.md",
       "native-tools.lock.json",
+      { "from": "engine-plugins", "to": "engine-plugins" },
       {
         "from": "extension",
         "to": "extension"

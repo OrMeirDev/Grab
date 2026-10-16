@@ -1,7 +1,7 @@
 // Composition root of the main process: creates the window, builds the services and exposes them
 // to the renderer through guarded IPC channels (each one checks the sender and its arguments; see
 // ipc/router.cjs and ipc/contracts.cjs). Business logic lives in the modules required below.
-const { app, BrowserWindow, ipcMain, dialog, shell, screen, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, screen, Menu, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const engine = require('./engine.cjs');
@@ -22,6 +22,9 @@ const { JsonStore } = require('./infrastructure/json-store.cjs');
 const { FORMATS, QUALITIES } = require('./domain/records.cjs');
 const { Diagnostics } = require('./infrastructure/diagnostics.cjs');
 const { BrowserService } = require('./browser/service.cjs');
+const { configureApplicationPrivacy, configureSessionPrivacy, configureUpdaterPrivacy } = require('./security/network-privacy.cjs');
+configureApplicationPrivacy(app);
+configureUpdaterPrivacy(autoUpdater);
 
 const DEV_URL = process.env.VITE_DEV ? 'http://localhost:5173' : null;
 const INDEX_FILE = path.join(__dirname, '..', 'dist', 'index.html');
@@ -65,7 +68,7 @@ const coordinator = new DownloadCoordinator({
   releaseContext: (job, { finished }) => {
     if (job.cookieRef) browserSession.forgetCookies(job.cookieRef);
     if (job.cookieRef) browserService?.releaseSession(job.cookieRef);
-    if (job.infoFile && engine.isInfoFile(job.infoFile)) fs.rm(job.infoFile, { force: true }, () => {});
+    if (job.infoFile) engine.releaseInfo(job.infoFile);
     if (finished && job.id) allocator.release(job.id);
   },
   store: new JsonStore(path.join(app.getPath('userData'), 'queue.json'), { fallback: [] }),
@@ -332,6 +335,7 @@ if (!app.requestSingleInstanceLock()) app.exit(0);
 app.on('second-instance', focusMain);
 
 app.whenReady().then(async () => {
+  configureSessionPrivacy(session.defaultSession);
   engine.setUserBinDir(path.join(app.getPath('userData'), 'bin'));
   engine.configure({ allowSystemTools: !app.isPackaged });
   await engine.reconcileEngine();

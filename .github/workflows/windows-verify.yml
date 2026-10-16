@@ -11,10 +11,22 @@ name: Windows verify
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'electron/**'
+      - 'engine-plugins/**'
+      - 'extension/**'
+      - 'src/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/windows-verify.yml'
   push:
     branches: [main]
     paths:
       - 'electron/**'
+      - 'engine-plugins/**'
       - 'src/**'
       - 'scripts/**'
       - 'tests/**'

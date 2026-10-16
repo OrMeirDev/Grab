@@ -10,6 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const { ensurePrivateDir } = require('./private-info-dir.cjs');
 
 const TTL_MS = 4 * 60 * 60 * 1000;
 const PREFIX = 'grab-cookies-';
@@ -66,6 +67,10 @@ class CookieVault {
     ].join('\t'));
     if (!lines.length) return work(undefined);
     const dir = fs.mkdtempSync(path.join(this.tmpDir, PREFIX));
+    if (!ensurePrivateDir(dir)) {
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* empty directory */ }
+      throw expired('The temporary session directory could not be protected');
+    }
     try { fs.chmodSync(dir, 0o700); } catch { /* Windows: the per-user temp folder's permissions apply */ }
     this.activeDirs.add(dir);
     const file = path.join(dir, 'cookies.txt');

@@ -43,6 +43,12 @@ jobs:
       - name: Real media engine verification
         if: runner.os == 'Windows'
         run: npm run test:media
+      - name: Real Windows privacy boundary and metadata round-trip
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:GRAB_TEST_YTDLP_DIR = "$pwd\bin"
+          node --test tests/privacy-engine.integration.test.cjs tests/cookie-vault-jar.test.cjs
       - name: Install throwaway Chromium
         if: runner.os == 'Windows'
         run: npx playwright install chromium

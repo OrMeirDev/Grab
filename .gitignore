@@ -6,3 +6,4 @@ bin/
 .claude/
 *.log
 e2e/output/
+__pycache__/

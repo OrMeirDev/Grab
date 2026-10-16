@@ -1,5 +1,12 @@
 # Grab 1.7.0 — current state (2026-10-16)
 
+## Unreleased privacy hardening
+
+The hardening branch builds on PR #6 and the privacy changes from PR #5. See
+[the findings/status matrix](hardening-status.md) and [ADR 0003](adr/0003-download-network-privacy.md).
+Its required extension version is 1.1.4. This work is separate from the published stable installer;
+final-head CI, installed Windows checks and real-account compatibility remain release gates.
+
 The owner confirmed RC4 works well on the desktop and authorized merging all integrated work,
 retiring unused branches and publishing the full 1.7.0 release. Stable 1.7.0 retains the approved
 RC4 application and extension 1.1.3; this preparation changes versioning, release automation and

@@ -71,3 +71,21 @@ test('JSON state files use restrictive permissions on POSIX', async () => {
     }
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('diagnostics restrict existing directories and rotated logs and refuse a symlink directory', () => {
+  const { Diagnostics } = require('../electron/infrastructure/diagnostics.cjs');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-log-migration-'));
+  try {
+    const dir = path.join(root, 'logs'); fs.mkdirSync(dir, { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, 'diagnostics.log.1'), 'old', { mode: 0o644 });
+    new Diagnostics({ dir }).record('start', {});
+    if (process.platform !== 'win32') {
+      assert.equal(fs.statSync(dir).mode & 0o077, 0);
+      assert.equal(fs.statSync(path.join(dir, 'diagnostics.log.1')).mode & 0o077, 0);
+      const link = path.join(root, 'link'); fs.symlinkSync(dir, link);
+      const before = fs.readFileSync(path.join(dir, 'diagnostics.log'), 'utf8');
+      new Diagnostics({ dir: link }).record('start', {});
+      assert.equal(fs.readFileSync(path.join(dir, 'diagnostics.log'), 'utf8'), before);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
