@@ -5,7 +5,7 @@
    release; tool upgrades have their own reviewed change.
 2. Review the PR and merge into main. CI, Browser integration and Windows verify run on main.
 3. Completion of Windows verify triggers Release. Publication requires all three successful
-   push runs for the exact same current main SHA; a PR run or an older successful run is rejected.
+   push runs for the exact same release source SHA; a PR run or an unrelated successful run is rejected.
 4. Release downloads the Windows bundle from that Browser integration run. It validates the
    source SHA/tree, pinned tools, extension version, exact file list, every SHA-256 and updater
    SHA-512/size before creating the version tag at that commit.
@@ -16,6 +16,14 @@
 The bundle contains the NSIS installer, blockmap, latest.yml, SHA256SUMS.txt, release-manifest.json,
 Hebrew guide, engine lock and third-party notices. release-proof.json records the checks and
 asset digests. The app uses the published latest.yml for ordinary updates.
+
+An interrupted draft can be resumed after a publication-only repair. The existing tag, installer
+and all three successful source checks are retained. Only scripts/release, the release workflow,
+its regression test, this guide and the handoff may differ on main; any application, package/lock, engine,
+installer, extension or installation-guide change rejects recovery. The repair must additionally
+pass fresh main CI. A push touching the release tooling retries an existing draft; it cannot
+publish a new untested application. Drafts are read by authenticated release ID, not the endpoint
+that returns published tags. release-proof.json records source and publication SHAs separately.
 
 The workflow needs only its built-in contents-write/actions-read GITHUB_TOKEN. It does not need a
 personal token, system Node/Python on users' PCs, store publication or new signing credentials.

@@ -7,7 +7,7 @@ const crypto = require('node:crypto');
 const yaml = require('js-yaml');
 const { execFileSync } = require('node:child_process');
 const { prepareBundle, verifyBundle } = require('../scripts/release/bundle.cjs');
-const { checkedRun, checkAssets } = require('../scripts/release/publish.cjs');
+const { checkedRun, checkAssets, checkPublicationOnlyChanges, findRelease } = require('../scripts/release/publish.cjs');
 const sourceSha = 'a'.repeat(40), sourceTree = 'b'.repeat(40);
 function fixture(t, changeFeed = (feed) => feed) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-release-test-'));
@@ -67,6 +67,18 @@ test('GitHub uploaded assets must have the exact file set, bytes and digest befo
   checkAssets(remote, assets);
   for (const change of [{ size: 1 }, { digest: 'sha256:wrong' }, { state: 'new' }]) assert.throws(() => checkAssets({ assets: [{ ...remote.assets[0], ...change }] }, assets));
   assert.throws(() => checkAssets({ assets: [] }, assets));
+});
+test('an authenticated draft is found through the list instead of the published-tag endpoint', () => {
+  const draft = { id: 123, tag_name: 'v1.7.0', draft: true, assets: [] };
+  const api = (endpoint) => { assert.equal(endpoint, 'releases?per_page=100'); return [draft]; };
+  assert.equal(findRelease(api, 'v1.7.0'), draft);
+  assert.equal(findRelease(api, 'v1.8.0'), undefined);
+});
+test('resuming the tested installer permits publication repairs and rejects every shipped input change', () => {
+  checkPublicationOnlyChanges(['scripts/release/publish.cjs', '.github/workflows/release.yml', 'tests/release.test.cjs', 'docs/releasing.md', 'docs/handoff.md']);
+  for (const file of ['package.json', 'package-lock.json', 'native-tools.lock.json', 'electron/main.cjs', 'src/app/AppShell.jsx', 'extension/manifest.json', 'native-host/host.cjs', 'build/installer.nsh', 'docs/INSTALL-WINDOWS-HE.md']) {
+    assert.throws(() => checkPublicationOnlyChanges(['scripts/release/publish.cjs', file]));
+  }
 });
 test('branch cleanup deletes integrated work and preserves unmerged work in an isolated Git repository', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-branch-cleanup-'));
