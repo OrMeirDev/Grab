@@ -38,3 +38,35 @@ Grab can minimize optional telemetry and local retention. It cannot make ordinar
 ## Limitations
 
 This code review does not validate live Windows packet contents or network fingerprints. Any further privacy claim requires instrumented runtime tests. The extension's broad host permissions and automatic update checks are known trade-offs; changing them needs a separate functionality review.
+
+## Current code-level cookie boundary
+
+The extension requests browser cookies for specific media URLs and redirects. The desktop
+independently checks the returned cookies against scheme, hostname, path boundaries and expiry
+before constructing the temporary yt-dlp jar. A `hostOnly` flag is not promoted to domain-wide
+scope. Cookies still authenticate the user to the content provider when the provider requires
+them; that fact cannot be concealed by changing application logs.
+
+## Local Windows runtime verification
+
+Run only on a test account and a video owned or licensed for testing. Keep all raw captures
+and authenticated data on the test machine; do not put them into CI artifacts or public PRs.
+
+1. Install the exact commit from the security branch in a disposable Windows VM/profile.
+2. Use Windows Resource Monitor or a local packet-capture utility with process attribution,
+   and record the application, yt-dlp, FFmpeg, Chromium and updater process connections.
+3. With no download active, record DNS queries and destination hosts for five minutes, including
+   application startup and update-check traffic.
+4. Download one public video using a pasted URL, with no browser integration. Record destinations,
+   request counts and the presence/absence of cookies and authentication headers.
+5. Using Chrome, Edge and Brave separately, download an owned authenticated test video through
+   the extension. Verify session cookies reach only authorized endpoints, and are removed after
+   cancellation and completion.
+6. Repeat with an owned HLS video with redirects and a separate media CDN; compare the
+   receiving server's sanitized logs with the browser playback baseline.
+7. Verify non-admin Windows ACLs on cache directories, temporary cookie files and log files.
+8. Compare the result against the pre-hardening build using the same URLs, account, machine
+   and time window. Report exact observed data and compatibility failures without sharing secrets.
+
+**Stop/go:** no release or merge until the installed-Windows checks above and all GitHub
+checks on the exact branch head pass. Network traffic cannot be made invisible to its receiver.
