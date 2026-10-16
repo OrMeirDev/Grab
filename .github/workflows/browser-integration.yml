@@ -91,6 +91,7 @@ jobs:
         shell: pwsh
         run: |
           $env:APPDATA = Join-Path $env:RUNNER_TEMP 'grab-ui-fixture'
+          $env:MAIN_TOO = '1'
           New-Item -ItemType Directory -Force $env:APPDATA | Out-Null
           npm run e2e:screenshots
       - name: Checkout the exact PR base for before screenshots
@@ -105,6 +106,7 @@ jobs:
         shell: pwsh
         run: |
           $env:APPDATA = Join-Path $env:RUNNER_TEMP 'grab-ui-fixture'
+          $env:MAIN_TOO = '1'
           New-Item -ItemType Junction -Path "$pwd\ui-baseline\bin" -Target "$pwd\bin" | Out-Null
           Set-Location ui-baseline
           npm ci --no-audit --no-fund
