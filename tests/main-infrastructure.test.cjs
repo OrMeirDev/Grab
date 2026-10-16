@@ -136,8 +136,8 @@ test('settings and history repositories validate what they store', async () => {
   try {
     fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ folder: '/d', format: 'exe', quality: '720', extra: 1 }));
     const settings = new SettingsRepository(dir, { folder: '/default', format: 'mp4', quality: 'best' });
-    assert.deepEqual(await settings.get(), { folder: '/d', format: 'mp4', quality: '720' });
-    assert.deepEqual(await settings.update({ format: 'mp3' }), { folder: '/d', format: 'mp3', quality: '720' });
+    assert.deepEqual(await settings.get(), { folder: '/d', format: 'mp4', quality: '720', automaticUpdateChecks: true });
+    assert.deepEqual(await settings.update({ format: 'mp3' }), { folder: '/d', format: 'mp3', quality: '720', automaticUpdateChecks: true });
 
     fs.writeFileSync(path.join(dir, 'history.json'), JSON.stringify([{ name: 'old', url: 'https://a.example/1', file: '/d/old.mp4', site: 'YouTube', format: 'mp4', completedAt: '2026-01-01T00:00:00.000Z' }, 'junk']));
     const history = new HistoryRepository(dir);
