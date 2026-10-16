@@ -70,3 +70,10 @@ and authenticated data on the test machine; do not put them into CI artifacts or
 
 **Stop/go:** no release or merge until the installed-Windows checks above and all GitHub
 checks on the exact branch head pass. Network traffic cannot be made invisible to its receiver.
+
+## Latest implementation additions
+
+- Browser manifest no longer requests the redundant `tabs` permission; its existing HTTP(S) host access still allows the documented media discovery and active-tab flow. Validate extension reload on all three browsers.
+- Cookie snapshots preserve the extension's `hostOnly` metadata when producing Netscape jars. Desktop validation also checks host, path, scheme and expiration.
+- Background application update checks can be disabled explicitly from Settings. The default remains **on** for security, manual update checks remain available, and downloaded update files still require user action.
+- These controls do not modify network protocol fingerprints or bypass a service's access restrictions. They reduce unnecessary local permissions or background connections, not server-visible authenticated requests.
