@@ -10,6 +10,7 @@ const { ProcessRegistry } = require('./infrastructure/process-registry.cjs');
 const { errorKind, cleanError } = require('./domain/engine-errors.cjs');
 const { normalizeContext, mediaExpiry } = require('./domain/media-request-context.cjs');
 const { safeName } = require('./domain/output-names.cjs');
+const { ensurePrivateDir } = require('./infrastructure/private-info-dir.cjs');
 
 const IS_WIN = process.platform === 'win32';
 const EXE = IS_WIN ? '.exe' : '';
@@ -232,7 +233,7 @@ async function analyze(url, { title: pageTitle, signal, timeoutMs, ...context } 
     if (!hasMediaFormats(j)) return { ok: false, kind: 'notmedia', error: 'The response contains no recognized video or audio format' };
     let infoFile = null;
     try {
-      fs.mkdirSync(INFO_DIR, { recursive: true, mode: 0o700 });
+      if (!ensurePrivateDir(INFO_DIR)) throw new Error('Signed metadata cache is not private');
       infoFile = path.join(INFO_DIR, `${crypto.createHash('sha1').update(url).digest('hex')}-${crypto.randomUUID()}.json`);
       fs.writeFileSync(infoFile, out, { mode: 0o600 });
     } catch { infoFile = null; }
