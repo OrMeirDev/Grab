@@ -144,5 +144,5 @@ test('queue.json keeps no signed or secret-bearing link: pasted links with token
     assert.equal(toDurable({ id: 'b', url: secret, status: 'ready' }), null, secret);
   }
   const failed = toDurable({ id: 'c', url: 'https://site.example/l', status: 'error', error: { stage: 'download', kind: 'other', message: 'HTTP Error 403 for https://cdn.example/v.mp4?token=abc' } });
-  assert.equal(failed.error.message, 'HTTP Error 403 for https://cdn.example/v.mp4');
+  assert.equal(failed.error.message, 'HTTP Error 403 for https://cdn.example');
 });
