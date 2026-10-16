@@ -242,7 +242,7 @@ router.handle('settings:set', [t.object({
   folder: t.optional(t.string({ min: 1, max: 1024 })),
   format: t.optional(t.oneOf(...FORMATS)),
   quality: t.optional(t.oneOf(...QUALITIES)),
-  automaticUpdateChecks: t.optional(t.boolean()),
+  automaticUpdateChecks: t.optional(t.bool()),
 })], async (_e, patch) => {
   if (patch.folder && !approvedFolders.has(patch.folder) && patch.folder !== (await settingsRepo.get()).folder) {
     throw new Error('settings:set: the folder must be chosen in the folder dialog');
