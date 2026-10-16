@@ -16,7 +16,9 @@ class FakeBrowser {
     this.exited = new Promise((resolve) => { this.onExit = resolve; });
     this.stderr = '';
     this.child = spawn(process.execPath, [hostScript, origin], {
-      env: { ...process.env, GRAB_INTEGRATION_DIR: integrationDir, GRAB_BROWSER: browser },
+      // The same fixture is also used by the real Electron UI check. Its native host must
+      // run as Node, just like the installed launchers, instead of starting another GUI.
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', GRAB_INTEGRATION_DIR: integrationDir, GRAB_BROWSER: browser },
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
