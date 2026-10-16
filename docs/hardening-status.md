@@ -8,7 +8,7 @@ These changes are not in the published 1.7.0 installer.
 
 | Finding | Implementation | Verification still required |
 | --- | --- | --- |
-| F01 session values in metadata | Disk cache excludes cookies, authorization and private cookie records; full metadata is bounded in memory and reused over stdin. Rotated/anonymous cookies retain exact scope. | Installed Windows account/Mako scenarios |
+| F01 session values in metadata | Disk cache contains randomly named markers only, without URLs, URL hashes or metadata; full metadata is bounded in memory and reused over stdin. Rotated/anonymous cookies retain exact scope. | Installed Windows account/Mako scenarios |
 | F02 stable updater identifier | Common non-device staging header through the updater's public API; internal updater logging disabled. | Packaged updater capture |
 | F03 optional application UA tokens | Remove only Grab/Electron product tokens from application sessions; captured browser UA stays unchanged. | Real Electron capture and installed Windows |
 | F04 dictionary traffic | Disable languages and spellchecker on default and every hidden-probe session. | Linux Electron proxy capture and Windows confirmation |
@@ -16,7 +16,7 @@ These changes are not in the published 1.7.0 installer.
 | F06 cross-origin playback headers | Preserve known media-origin context; unknown targets get origin-only Referer and no replayed Origin; remove cross-origin redirect authorization. | Mako and authorized real-account compatibility |
 | F07 account attribution on extension sends | Keep the approved session-preserving behavior. This is required product behavior, not anonymity. | Personal-profile check |
 | F08–F11 storage/scope improvements | Retained; temporary/cache/log directories also receive restrictive Windows ACLs. | Standard-user Windows ACL proof |
-| F12 browser identity timeouts | One bounded retry only for an actual ancestry-query timeout; unknown never becomes a guessed browser. | Windows extension/Brave checks |
+| F12 browser identity timeouts | Isolated reliability fix being prepared separately; privacy must never substitute a guessed browser. | Windows extension/Brave checks |
 | F13 extension stale detection | Bump unpacked extension to 1.1.4 because its permission set changed. Repair + Reload remain required. | Reload Chrome/Edge/Brave |
 | F14 logs directory permissions | Owner-only directory; restrict existing rotated logs on POSIX; do not follow directory symlinks. | Windows ACL checks |
 | F15 incomplete validation | Add standalone Windows privacy tests and Windows verify on relevant PRs. | All checks on final commit; installed personal-profile tests and Settings screenshots |

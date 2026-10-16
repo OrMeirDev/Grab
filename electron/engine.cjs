@@ -189,8 +189,8 @@ async function updateEngine() {
   }
 }
 
-// The lookup result is saved so the download can reuse it instead of asking the site again.
-// Stream links inside it expire (YouTube: ~6h), so it's only trusted for INFO_MAX_AGE_MS.
+// Lookup results stay in memory so a download can reuse them without persisting secrets.
+// Random disk markers retain the existing job lifecycle; legacy cache files are scavenged.
 const INFO_DIR = path.join(os.tmpdir(), 'grab-info');
 const INFO_MAX_AGE_MS = 4 * 60 * 60 * 1000;
 const PRIVATE_INFO_MAX_BYTES = 32 * 1024 * 1024;
@@ -210,14 +210,8 @@ function prunePrivateInfo() {
   }
 }
 
-function diskMetadata(info) {
-  // Rotated and anonymous lookup-time cookies also stay in memory. They must still
-  // be available to the download, so stripping them without retaining them is unsafe.
-  return JSON.stringify(info, (key, value) => /^(cookies?|authorization|proxy-authorization|grab_cookie_records|grab_cookie_signature)$/i.test(key) ? undefined : value);
-}
-
-// Start-up: lookup files of an earlier run are never used again (a restored job looks up afresh),
-// and they hold signed media addresses, so all of them go.
+// Start-up: old markers have no live context; older Grab versions also left signed metadata.
+// A restored job looks up afresh, so none of those files may be reused.
 function cleanInfoCache() {
   for (const entry of privateInfo.values()) clearTimeout(entry.timer);
   privateInfo.clear();
@@ -269,19 +263,16 @@ async function analyze(url, { title: pageTitle, signal, timeoutMs, ...context } 
     try {
       prunePrivateInfo();
       if (!ensurePrivateDir(INFO_DIR)) throw new Error('Signed metadata cache is not private');
-      const clean = diskMetadata(j);
-      const sensitive = clean !== JSON.stringify(j);
       const bytes = Buffer.byteLength(out);
-      if (sensitive && privateInfoBytes + bytes > PRIVATE_INFO_MAX_BYTES) throw new Error('Private metadata memory budget reached');
-      infoFile = path.join(INFO_DIR, `${crypto.createHash('sha1').update(url).digest('hex')}-${crypto.randomUUID()}.json`);
-      const disk = sensitive ? JSON.stringify({ ...JSON.parse(clean), __grab_private_context: true }) : clean;
-      fs.writeFileSync(infoFile, disk, { mode: 0o600, flag: 'wx' });
-      if (sensitive) {
-        const timer = setTimeout(() => releaseInfo(infoFile), INFO_MAX_AGE_MS);
-        timer.unref?.();
-        privateInfo.set(infoFile, { text: out, bytes, at: Date.now(), timer });
-        privateInfoBytes += bytes;
-      }
+      if (privateInfoBytes + bytes > PRIVATE_INFO_MAX_BYTES) throw new Error('Private metadata memory budget reached');
+      infoFile = path.join(INFO_DIR, `${crypto.randomBytes(20).toString('hex')}-${crypto.randomUUID()}.json`);
+      // The disk file is only a lifecycle marker. No extractor output, signed URLs,
+      // browser cookies or lookup-time cookies are ever persisted here.
+      fs.writeFileSync(infoFile, '{"__grab_private_context":true}', { mode: 0o600, flag: 'wx' });
+      const timer = setTimeout(() => releaseInfo(infoFile), INFO_MAX_AGE_MS);
+      timer.unref?.();
+      privateInfo.set(infoFile, { text: out, bytes, at: Date.now(), timer });
+      privateInfoBytes += bytes;
     } catch { infoFile = null; }
     return {
       ok: true,

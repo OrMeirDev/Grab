@@ -19,11 +19,14 @@ async function fixture(t) {
   const seen = [];
   const server = http.createServer((req, res) => {
     const url = new URL(req.url);
-    seen.push({ host: url.hostname, path: url.pathname, cookie: req.headers.cookie || '', referer: req.headers.referer || '', origin: req.headers.origin || '', ua: req.headers['user-agent'] });
+    seen.push({ host: url.hostname, path: url.pathname, cookie: req.headers.cookie || '', referer: req.headers.referer || '', origin: req.headers.origin || '', ua: req.headers['user-agent'], authorization: req.headers.authorization || '' });
     if (url.pathname === '/redirect.mp4') {
       res.writeHead(302, { Location: 'http://sub.example.test/final.mp4' }); res.end();
     } else if (url.pathname === '/cross.mp4') {
       res.writeHead(302, { Location: 'http://unrelated.test/final.mp4' }); res.end();
+    } else if (url.pathname === '/master.m3u8') {
+      const playlist = '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:1.0,\nhttp://sub.example.test/segment.mp4\n#EXT-X-ENDLIST\n';
+      res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' }); res.end(playlist);
     } else {
       res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': MEDIA.length,
         ...(url.pathname === '/rotate.mp4' ? { 'Set-Cookie': 'ROTATED=lookup-only; Path=/' } : {}) });
@@ -139,4 +142,38 @@ test('a tampered private cookie record is rejected before any request', { skip, 
   const result = await f.run(['--load-info-json', '-', '-f', 'b', '-o', path.join(f.dir, 'tampered.mp4')], { input: JSON.stringify(info) });
   assert.notEqual(result.code, 0);
   assert.equal(f.seen.length, before);
+});
+
+test('F16: native HLS fragments use their own cookie scope', { skip, timeout: 60000 }, async (t) => {
+  const f = await fixture(t);
+  await f.vault.withJar(f.vault.remember([hostCookie, domainCookie]), async (file) => {
+    const result = await f.run(['--cookies', file, '--hls-prefer-native', '-f', 'b', '-o', path.join(f.dir, 'hls.mp4'), '--', 'http://example.test/master.m3u8']);
+    assert.equal(result.code, 0, result.stderr);
+  });
+  const segments = f.seen.filter((r) => r.host === 'sub.example.test' && r.path === '/segment.mp4');
+  assert.ok(segments.length);
+  for (const r of segments) { assert.doesNotMatch(r.cookie, /HOST=/); assert.match(r.cookie, /DOMAIN=/); }
+});
+
+test('redirected authorization does not reach a different origin', { skip, timeout: 60000 }, async (t) => {
+  const f = await fixture(t);
+  const result = await f.run(['--add-headers', 'Authorization:Bearer fixture-secret', '-J', '--skip-download', '--', 'http://example.test/cross.mp4']);
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(f.seen.some((r) => r.host === 'example.test' && r.authorization === 'Bearer fixture-secret'));
+  const other = f.seen.filter((r) => r.host === 'unrelated.test');
+  assert.ok(other.length);
+  for (const r of other) assert.equal(r.authorization, '');
+});
+
+test('contextual external network downloads stop before sending the media request', { skip, timeout: 60000 }, async (t) => {
+  const f = await fixture(t);
+  const lookup = await f.run(['-J', '--skip-download', '--', 'http://example.test/rotate.mp4']);
+  assert.equal(lookup.code, 0, lookup.stderr);
+  const info = JSON.parse(lookup.stdout);
+  delete info.webpage_url; // prevent the normal re-extraction fallback obscuring this boundary
+  const before = f.seen.length;
+  const result = await f.run(['--downloader', 'ffmpeg', '--load-info-json', '-', '-f', 'b', '-o', path.join(f.dir, 'external.mp4')], { input: JSON.stringify(info) });
+  assert.notEqual(result.code, 0);
+  assert.equal(f.seen.length, before);
+  assert.equal(fs.existsSync(path.join(f.dir, 'external.mp4')), false);
 });

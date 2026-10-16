@@ -57,8 +57,9 @@ def _harden_jar(jar):
 class _ScopeHeaders(urllib.request.BaseHandler):
     handler_order = 499
 
-    def __init__(self, allowed_origins):
+    def __init__(self, allowed_origins, authorization_origins):
         self.allowed_origins = allowed_origins
+        self.authorization_origins = authorization_origins
 
     def http_request(self, request):
         target = _origin(request.full_url)
@@ -77,6 +78,13 @@ class _ScopeHeaders(urllib.request.BaseHandler):
                         headers[key] = urllib.parse.urlunsplit(parts._replace(fragment=''))
                 elif name == 'origin' and target not in self.allowed_origins and target != _origin(value):
                     del headers[key]
+                elif name == 'authorization':
+                    # Extractors can create API-specific credentials. Bind each to the
+                    # first origin that uses it; globally supplied credentials start
+                    # scoped to the media origins supplied by the application.
+                    origins = self.authorization_origins.setdefault(value, {target})
+                    if target not in origins:
+                        del headers[key]
         return request
 
     https_request = http_request
@@ -92,6 +100,10 @@ class GrabPrivacyPP(PostProcessor):
             if not isinstance(origins, list) or any(_origin(value) != value for value in origins):
                 raise ValueError('invalid header origins')
             self.allowed_origins = frozenset(origins)
+            self.authorization_origins = {}
+            for name, value in downloader.params.get('http_headers', {}).items():
+                if name.lower() == 'authorization' and value:
+                    self.authorization_origins[value] = self.allowed_origins
             key = os.environ.get('GRAB_CONTEXT_KEY', '')
             if len(key) != 64:
                 raise ValueError('private context key unavailable')
@@ -112,7 +124,7 @@ class GrabPrivacyPP(PostProcessor):
             def create_strict_instance(*args, **kwargs):
                 _harden_jar(kwargs['cookiejar'])
                 opener = create_instance(*args, **kwargs)
-                opener.add_handler(_ScopeHeaders(self.allowed_origins))
+                opener.add_handler(_ScopeHeaders(self.allowed_origins, self.authorization_origins))
                 return opener
 
             handler._create_instance = create_strict_instance

@@ -7,6 +7,9 @@ function applicationUserAgent(value) {
 
 function configureApplicationPrivacy(app) {
   app.userAgentFallback = applicationUserAgent(app.userAgentFallback);
+  // Session construction can schedule dictionary work before the first window.
+  // Apply the policy at creation, in addition to the explicit default/probe calls.
+  app.on?.('session-created', configureSessionPrivacy);
 }
 
 function configureSessionPrivacy(ses) {

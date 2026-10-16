@@ -10,6 +10,16 @@ test('application UA omits product versions while retaining the actual Chromium 
   assert.equal(applicationUserAgent(app.userAgentFallback), app.userAgentFallback);
 });
 
+test('new sessions receive privacy configuration at creation, before a window can trigger dictionaries', () => {
+  let event, configure;
+  configureApplicationPrivacy({ userAgentFallback: 'Chrome/152 Electron/44', on: (name, handler) => { event = name; configure = handler; } });
+  assert.equal(event, 'session-created');
+  const calls = [];
+  configure({ setSpellCheckerLanguages: (v) => calls.push(v), setSpellCheckerEnabled: (v) => calls.push(v),
+    getUserAgent: () => 'Chrome/152 Electron/44', setUserAgent: (v) => calls.push(v) });
+  assert.deepEqual(calls, [[], false, 'Chrome/152']);
+});
+
 test('every application session disables dictionary downloads as well as spelling', () => {
   const calls = [];
   const session = { setSpellCheckerLanguages: (v) => calls.push(['languages', v]),

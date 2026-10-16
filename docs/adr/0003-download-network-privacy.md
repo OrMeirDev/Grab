@@ -24,8 +24,9 @@ so authenticated metadata round trips cannot widen anonymous/rotated cookies or 
 cookie records. The signing key and complete info JSON stay in process memory; neither is put in argv,
 diagnostics or persisted state. HMAC protects context integrity, not other processes running as this user.
 
-Disk metadata omits all cookie/authorization fields and private cookie records. A marked sanitized file is
-never considered complete without its live memory entry. Full info is piped to `--load-info-json -` only
+The disk cache contains only randomly named lifecycle markers, with no metadata, URL hashes, signed URLs,
+cookie/authorization fields or private cookie records. A marker is never considered complete without
+its live memory entry. Full info is piped to `--load-info-json -` only
 when reused. A 32 MiB budget, four-hour timer, job release and startup cleanup bound retention. Cache
 capacity failure falls back to a fresh extraction, as a cache write failure already did.
 
