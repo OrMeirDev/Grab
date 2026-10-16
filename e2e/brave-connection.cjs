@@ -51,6 +51,7 @@ test('real Brave: legacy failure, repair, concurrent Chrome and automatic authen
   });
   const brave = await new Chromium({ exe: braveExe, extensionDir: installed.extensionDir }).start(); browsers.push(brave);
   const popup = await brave.newTab(`chrome-extension://${installed.extensionId}/popup/popup.html`);
+  await until(() => brave.evaluate(popup, "typeof chrome !== 'undefined' && !!chrome.runtime?.id").catch(() => false), 10000, 'Brave extension popup context');
   const message = (payload) => brave.evaluate(popup, `chrome.runtime.sendMessage(${JSON.stringify(payload)})`);
   await t.test('old Brave-only registration produces host_missing and no live instance', async () => {
     const status = await until(async () => { const s = await message({ type: 'popup:status' }); return s?.conn?.errorKind === 'host_missing' ? s : null; }, 30000, 'legacy host_missing');
@@ -106,6 +107,7 @@ test('real Brave: legacy failure, repair, concurrent Chrome and automatic authen
     try {
       const tabs = await brave.pages(); const target = tabs.find((p) => p.targetId === page); assert.ok(target);
       const tabId = await brave.evaluate(popup, `(async () => (await chrome.tabs.query({})).find((t) => t.url === ${JSON.stringify(fixture.url('/hls'))}).id)()`);
+      await until(async () => (await message({ type: 'popup:scan', tabId }))?.candidates?.length, 15000, 'Brave popup media candidates');
       fixture.clearRequests();
       const ack = await message({ type: 'popup:send', tabId });
       assert.equal(ack.result.status, 'accepted', JSON.stringify(ack));
