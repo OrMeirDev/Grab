@@ -55,3 +55,19 @@ test('free-text URL redaction removes embedded path identifiers', () => {
   const { stripLinksInText } = require('../electron/domain/secrets.cjs');
   assert.equal(stripLinksInText('403 https://media.example/user-123/hdntl=abc/master.m3u8?signature=x'), '403 https://media.example');
 });
+
+test('JSON state files use restrictive permissions on POSIX', async () => {
+  const { JsonStore } = require('../electron/infrastructure/json-store.cjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-private-store-'));
+  const file = path.join(dir, 'state.json');
+  try {
+    const store = new JsonStore(file, { fallback: {} });
+    await store.save({ a: 1 });
+    await store.save({ a: 2 });
+    if (process.platform !== 'win32') {
+      for (const target of [file, file + '.bak']) {
+        assert.equal(fs.statSync(target).mode & 0o077, 0, target + ' must not be accessible to group or other users');
+      }
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
