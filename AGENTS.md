@@ -14,9 +14,11 @@ Decisions: [docs/adr/](docs/adr/). Current state and open work: [docs/handoff.md
   profile or a permission bypass. Never navigate, play or close a tab Grab didn't open; close only
   background tabs Grab created.
 - Ordinary pasted links (YouTube and other public platforms) download directly without a browser
-  or extension dependency. The saved browser default applies only when the user chooses browser-
-  assisted lookup, sends from the extension, or restores a job already requiring that session.
-  Mako keeps its Edge-player exception. Installing an extension must not change ordinary routing.
+  or extension dependency. Routing is automatic by intake: paste uses the ordinary route; Send from the extension
+  preserves the sending browser/profile and queues the download automatically. Do not add a
+  manual route/browser dropdown beside the paste field. The saved default applies only to jobs
+  requiring a session without a sending browser. Mako keeps its Edge-player exception.
+  Installing an extension must not change ordinary routing.
 
 ## Where things go
 

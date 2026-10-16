@@ -42,7 +42,8 @@ platform/grabApi (window.grab) ◀─ preload      ▼
 ADR: [0002](adr/0002-browser-extension-coordinator.md). The MV3 worker observes media in a chosen
 existing browser profile. Native Messaging reaches BrowserHub through an authenticated per-user
 pipe. BrowserService receives/discovers sources and provides private context to discovery-service;
-Send to GRAB enters DownloadCoordinator directly. The renderer receives only snapshots and emits
+Send to GRAB enters DownloadCoordinator directly and queues automatically in the sending session.
+Pastes use the ordinary extractor path without a route dropdown; Mako keeps its Edge exception. The renderer receives only snapshots and emits
 validated job-id commands, including cancel, reveal and choose. Private runtime copies keep active
 native hosts independent of app replacement during Windows updates.
 
@@ -54,7 +55,7 @@ native hosts independent of app replacement during Windows updates.
 | ipc | `ipc/router.cjs`, `ipc/contracts.cjs` | Trusted frame + validated arguments → handler |
 | security | `security/window-policy.cjs` | No navigation/new windows/webviews; clipboard-only permissions |
 | application | `download-coordinator.cjs` | Commands → job state; snapshots; schedules; history completion; durable queue |
-| application | `discovery-service.cjs` | Link → lookup result (ordinary: yt-dlp → clean public probe; explicit browser mode: selected session first), candidate and time budgets |
+| application | `discovery-service.cjs` | Link → lookup result (ordinary: yt-dlp → clean public probe; extension/session job: selected session first), candidate and time budgets |
 | application | `download-runner.cjs` | Plan → one attempt (allocated name, cookie jar, engine run) |
 | domain | `job.cjs`, `site-policy.cjs`, `candidate-policy.cjs`, `output-names.cjs`, `records.cjs`, `engine-errors.cjs` | Pure rules |
 | infrastructure | `process-runner.cjs`, `process-registry.cjs` | Deadlines, bounded output, tree stop, tracking |
@@ -85,7 +86,7 @@ and `paused` after a restart. Only the coordinator changes states.
   (HTTP 429, kind `rateLimited`) ends the lookup or download at once, wherever it comes from (the
   link, the retry with the browser session, a source found in a page), with no browser and no
   further request; a bot check ("confirm you're not a bot", kind `blocked`) holds ordinary jobs without opening a
-  browser. In explicit browser mode it holds the site if the site still asks with that session.
+  browser. For an extension/session job it holds the site if the site still asks with that session.
 - One automatic retry per job: a page video is looked up inside the page again (fresh signed links);
   anything else is fetched again with fresh info. An expired session handle is not that retry:
   it always triggers a new page lookup, never a download without the session.

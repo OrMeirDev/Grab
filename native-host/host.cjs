@@ -4,7 +4,8 @@
 // go to stderr, which the browser writes to its own log.
 //
 // It is started as: <runtime> host.cjs <origin> [--parent-window=N]
-// with GRAB_BROWSER=edge|chrome|brave set by the per-browser launcher script. When the app is not
+// with GRAB_BROWSER=edge|chromium set by the launcher. Shared Chromium registration resolves
+// Chrome/Brave from the actual parent process chain. When the app is not
 // running it keeps retrying (bounded backoff) while the browser keeps the port open, so the app
 // can start after the browser and still get connected without any user action.
 const net = require('net');
@@ -12,10 +13,10 @@ const path = require('path');
 const { encodeFrame, FrameParser, MAX_FRAME_BYTES } = require('./framing.cjs');
 const { pipePath, readToken, proof, proofMatches } = require('./ipc-paths.cjs');
 
-const HOST_VERSION = 2;
+const HOST_VERSION = 3;
 const integrationDir = process.env.GRAB_INTEGRATION_DIR || path.resolve(__dirname, '..');
 const origin = process.argv.slice(2).find((a) => /^[a-z-]+-extension:\/\//.test(a)) || '';
-const browserKind = ['edge', 'chrome', 'brave'].includes(process.env.GRAB_BROWSER) ? process.env.GRAB_BROWSER : 'unknown';
+let browserKind = 'unknown';
 const log = (...a) => process.stderr.write('[grab-host] ' + a.join(' ') + '\n');
 
 let socket = null;
@@ -24,6 +25,7 @@ let closing = false;
 let retryTimer = null;
 let attempt = 0;
 const queue = []; // browser -> app messages waiting for the pipe (bounded)
+const identityAbort = new AbortController();
 
 const toBrowser = (message) => {
   try { process.stdout.write(encodeFrame(message, MAX_FRAME_BYTES)); } catch (e) { log('stdout write failed', e.message); }
@@ -102,6 +104,7 @@ process.stdout.on('error', () => shutdown());
 function shutdown() {
   if (closing) return;
   closing = true;
+  identityAbort.abort();
   clearTimeout(retryTimer);
   try { socket?.destroy(); } catch { /* already closed */ }
   setTimeout(() => process.exit(0), 20);
@@ -109,4 +112,8 @@ function shutdown() {
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-connect();
+require('./browser-kind.cjs').browserKind({ signal: identityAbort.signal }).then((kind) => {
+  if (closing) return;
+  browserKind = kind;
+  connect();
+});

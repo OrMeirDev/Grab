@@ -314,8 +314,6 @@ h2 { font-size: 22px; font-weight: 600; display: flex; align-items: center; gap:
 }
 
 /* ---- browser selection and extension setup ---- */
-.browser-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 14px; font-size: 14px; color: var(--muted); }
-.browser-row .plain-select { min-width: 120px; padding: 6px 10px; font-size: 14px; }
 .choice-row { display: inline-flex; gap: 6px; flex-wrap: wrap; margin-inline-start: 6px; }
 .pill-muted { background: #f0f0f5; color: #4a4d5c; }
 .browser-card .pill { padding: 3px 12px; font-size: 13px; }

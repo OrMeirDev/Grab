@@ -48,7 +48,7 @@ app.whenReady().then(async () => {
     const click = (text) => js(`(() => { const b = [...document.querySelectorAll('button')].find((x) => x.textContent.includes(${JSON.stringify(text)})); if (!b) throw new Error('button absent'); b.click(); })()`);
     const shot = async (name) => { await wait(250); fs.writeFileSync(path.join(output, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
     await until("!!document.querySelector('textarea') && document.body.innerText.includes('המנוע מוכן')");
-    assert.ok((await js("document.querySelector('[aria-label=\"דרך ההורדה\"]').innerText")).includes('הורדה רגילה מקישור'));
+    assert.equal(await js("!!document.querySelector('[aria-label=\"דרך ההורדה\"]')"), false, 'paste uses the ordinary route without a manual selector');
     assert.equal(await js("!!document.querySelector('[aria-label=\"דפדפן מחובר\"]')"), false);
     await shot('01-downloads');
     await click('הגדרות');
@@ -99,16 +99,7 @@ app.whenReady().then(async () => {
     win.webContents.reload();
     await until("!!document.querySelector('textarea')");
     assert.equal((await js('window.grab.browserState()')).settings.defaultBrowser, 'chrome');
-    await js("document.querySelector('[aria-label=\"דרך ההורדה\"]').click()");
-    await until("!!document.querySelector('[role=option]')");
-    await js("[...document.querySelectorAll('[role=option]')].find((x) => x.textContent.includes('בעזרת התוסף')).click()");
-    await until("!!document.querySelector('[aria-label=\"דפדפן מחובר\"]')");
-    await shot('10-explicit-browser-mode');
-    await wait(180);
-    await js("document.querySelector('[aria-label=\"דרך ההורדה\"]').click()");
-    await until("!!document.querySelector('[role=option]')");
-    await js("[...document.querySelectorAll('[role=option]')].find((x) => x.textContent.includes('הורדה רגילה')).click()");
-    await until("!document.querySelector('[aria-label=\"דפדפן מחובר\"]')");
+    assert.equal(await js("!!document.querySelector('[aria-label=\"דרך ההורדה\"]')"), false);
     await js("document.querySelector('textarea').focus()");
     const youtube = 'https://www.youtube.com/watch?v=fixture123';
     await win.webContents.insertText(youtube);

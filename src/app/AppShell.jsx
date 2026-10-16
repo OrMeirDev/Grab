@@ -16,7 +16,6 @@ import LibraryPage from '../features/library/LibraryPage.jsx';
 import SettingsPage from '../features/settings/SettingsPage.jsx';
 import SupportedSitesDialog from '../features/sites/SupportedSitesDialog.jsx';
 import BrowserSettings from '../features/browser/BrowserSettings.jsx';
-import BrowserPicker from '../features/browser/BrowserPicker.jsx';
 import BrowserConnectionGuide from '../features/browser/BrowserConnectionGuide.jsx';
 
 // Composes the screens and owns only navigation, dialogs and the notice line.
@@ -31,7 +30,6 @@ export default function AppShell() {
   const [page, setPage] = useState('downloads');
   const [sitesOpen, setSitesOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
-  const [browserPick, setBrowserPick] = useState('direct');
 
   useEffect(() => {
     if (!api) { setNotice('התצוגה הזו רצה בדפדפן. כדי להוריד, פתח את Grab כאפליקציה.'); return; }
@@ -42,7 +40,7 @@ export default function AppShell() {
     if (!api || !draft.parsed.length) return;
     const links = draft.parsed;
     draft.clear();
-    const skipped = await downloads.addLinks(links, browserPick === 'direct' ? undefined : { useBrowser: true, ...(browserPick !== 'auto' ? { browser: browserPick } : {}) });
+    const skipped = await downloads.addLinks(links);
     if (skipped) setNotice(`${skipped} קישורים כבר היו בתור ודילגתי עליהם`);
   };
   const requeue = (h) => { downloads.requeue(h); setPage('downloads'); };
@@ -70,7 +68,6 @@ export default function AppShell() {
             draft={draft} downloads={downloads} sites={sites.sites} settings={settings} onSettings={saveSettings}
             notice={notice} onDismissNotice={() => setNotice('')} onIdentify={identify}
             onShowSites={() => setSitesOpen(true)} onSignInGuide={openGuide} onBrowserSettings={() => setPage('settings')}
-            browserPicker={<BrowserPicker url={draft.parsed[0]?.url || ''} value={browserPick} onChange={setBrowserPick} />}
           />
         )}
       </main>

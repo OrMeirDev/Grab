@@ -30,14 +30,14 @@ test('the extension ID comes from the manifest key and matches the one the host 
   assert.equal(setup.extensionIdFromKey('AAAA'), setup.extensionIdFromKey('AAAA'));
 });
 
-test('install registers each chosen browser at its own key, with an explicit origin and a launcher that exists', async (t) => {
+test('install registers chosen browsers at supported lookup keys, with an explicit origin and a launcher that exists', async (t) => {
   const dir = tmpDir();
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const registry = memoryRegistry();
   const result = await setup.install({ sourceRoot: root, integrationDir: dir, browsers: ['edge', 'brave'], runtime: process.execPath, appVersion: '1.2.3', registry });
   assert.deepEqual(result.browsers, ['edge', 'brave']);
   assert.deepEqual([...registry.keys.keys()].sort(), [
-    'HKCU\\Software\\BraveSoftware\\Brave-Browser\\NativeMessagingHosts\\com.grab.downloader.browser',
+    'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.grab.downloader.browser',
     'HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\com.grab.downloader.browser',
   ]);
   for (const manifestPath of registry.keys.values()) {
@@ -55,6 +55,29 @@ test('install registers each chosen browser at its own key, with an explicit ori
   assert.ok(fs.existsSync(path.join(dir, 'extension', 'icons', 'icon128.png')));
   assert.ok(fs.existsSync(path.join(dir, 'native-host', 'host.cjs')));
   assert.equal(path.dirname(result.extensionDir), dir);
+});
+
+test('Brave uses the Chrome lookup key without claiming Chrome was configured; adding Chrome preserves both identities', async (t) => {
+  const dir = tmpDir();
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const registry = memoryRegistry();
+  const args = { sourceRoot: root, integrationDir: dir, registry, runtime: process.execPath, appVersion: '1' };
+  const legacy = 'HKCU\\Software\\BraveSoftware\\Brave-Browser\\NativeMessagingHosts\\' + setup.HOST_NAME;
+  registry.keys.set(legacy, 'old.json');
+  await setup.install({ ...args, browsers: ['brave'] });
+  assert.equal(registry.keys.has(legacy), false, 'repair removes the unused old registration');
+  assert.deepEqual(setup.readInstall(dir).browsers, ['brave']);
+  const manifest = JSON.parse(fs.readFileSync(registry.keys.get(setup.REGISTRY_KEYS.chrome(setup.HOST_NAME)), 'utf8'));
+  assert.match(fs.readFileSync(manifest.path, 'utf8'), /GRAB_BROWSER=chromium/);
+  let health = await setup.health({ ...args, detected: [{ id: 'chrome' }, { id: 'brave' }] });
+  assert.equal(health.results.find((b) => b.browser === 'brave').registered, true);
+  assert.equal(health.results.find((b) => b.browser === 'chrome').registered, false);
+  await setup.install({ ...args, browsers: ['chrome'] });
+  health = await setup.health({ ...args, detected: [{ id: 'chrome' }, { id: 'brave' }] });
+  for (const kind of ['brave', 'chrome']) assert.equal(health.results.find((b) => b.browser === kind).registered, true);
+  assert.equal(registry.keys.size, 1, 'both registrations share a caller-aware launcher');
+  assert.deepEqual((await setup.uninstall(args)).removed.sort(), ['brave', 'chrome']);
+  assert.equal(registry.keys.size, 0);
 });
 
 test('install is idempotent, repairs a damaged install and removes stale extension files', async (t) => {
@@ -79,7 +102,7 @@ test('uninstall removes only Grab-owned registrations and folders', async (t) =>
   const registry = memoryRegistry();
   registry.keys.set('HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.someone.else', 'C:\\other.json');
   await setup.install({ sourceRoot: root, integrationDir: dir, runtime: process.execPath, registry });
-  assert.equal(registry.keys.size, 4);
+  assert.equal(registry.keys.size, 3, 'Chrome and Brave share a registration; unrelated hosts are retained');
   const { removed } = await setup.uninstall({ integrationDir: dir, registry });
   assert.deepEqual(removed.sort(), ['brave', 'chrome', 'edge']);
   assert.deepEqual([...registry.keys.keys()], ['HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\com.someone.else']);

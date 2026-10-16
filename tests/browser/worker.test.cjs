@@ -17,7 +17,7 @@ test('the actual worker answers a desktop connection check with a correlated pon
     navigator: { userAgent: 'Browser UA' },
     setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
     chrome: {
-      runtime: { getManifest: () => ({ version: '1.1.2' }), onMessage: event(), onStartup: event(), onInstalled: event(),
+      runtime: { getManifest: () => ({ version: '1.1.3' }), onMessage: event(), onStartup: event(), onInstalled: event(),
         connectNative: () => ({ postMessage: (m) => sent.push(m), onMessage: { addListener: (fn) => { receive = fn; } }, onDisconnect: event() }) },
       storage: { local: storage, session: storage },
       alarms: { create() {}, onAlarm: event() }, tabs: { onRemoved: event() },

@@ -21,7 +21,7 @@ To test an installed build instead of development mode:
 npm run dist -- --publish never
 ```
 
-Run the resulting `release/Grab-Setup-1.7.0-rc.3.exe`. Building this test installer does not publish a release. The normal GitHub latest-release download does not automatically contain changes from this feature branch.
+Run the resulting `release/Grab-Setup-1.7.0-rc.4.exe`. Building this test installer does not publish a release. The normal GitHub latest-release download does not automatically contain changes from this feature branch.
 
 ## One-time browser setup
 
@@ -46,11 +46,11 @@ The application can prepare the files and native registration. Loading/enabling 
 
 ## Choosing the browser
 
-In the explicitly chosen browser-assisted mode, the effective choice is: **per-download choice → saved site rule → saved default → initial installed-browser suggestion**. A missing selected browser/profile causes an explicit error; GRAB does not silently move the job to another session.
+The route follows the intake automatically: ordinary paste or extension Send, without a dropdown beside the paste field. Extension Send uses the sending browser/profile. For a session-bound job without a sending browser, the effective choice is: **saved site rule → saved default → initial installed-browser suggestion**. A missing selected browser/profile causes an explicit error; GRAB does not silently move the job to another session.
 
 - A new configuration includes `mako.co.il → Edge`, including actual subdomains. It does not select Edge for a different website whose URL merely contains that text.
 - Edit/remove the rule in Settings. It does not force Edge for other sites.
-- Select the general default in Settings, or override it beside the paste field before adding a download.
+- Select the general default in Settings for jobs that require a session without a sending browser. It does not affect ordinary pasted links.
 - If multiple profiles connect, select the intended one and give it a useful alias. Profile labels are aliases, not verified Windows profile-folder names.
 - Open a remembered disconnected profile yourself if needed. GRAB will not substitute another signed-in profile.
 
@@ -58,15 +58,15 @@ In the explicitly chosen browser-assisted mode, the effective choice is: **per-d
 
 ## Both workflows
 
-**Paste a URL:** **הורדה רגילה מקישור** is the default. YouTube/public links use the direct extractor with no extension or browser dependency. Failed ordinary lookups do not silently switch to the signed-in browser. Choose **בעזרת התוסף והדפדפן** for an account-dependent or complex embedded page; only this mode uses the browser picker/default. Mako retains its Edge-player exception. A browser-assisted job uses the selected extension session, shows discovery/validation phases, and can be cancelled. If the player needs a click, use **פתח את הנגן**, start playback in the selected browser, and leave the job running within its deadline.
+**Paste a URL:** paste directly into Grab; no route/browser selection is needed. YouTube/public links use the direct extractor with no extension or browser dependency. Failed ordinary lookups do not silently switch to the signed-in browser. For an account-dependent or complex embedded page, send it from the extension. Mako retains its Edge-player exception. A browser-assisted job uses the selected extension session, shows discovery/validation phases, and can be cancelled. If the player needs a click, use **פתח את הנגן**, start playback in the selected browser, and leave the job running within its deadline.
 
-**Send to GRAB:** while GRAB is running, open a video page in a configured browser, open the extension popup, and click **שלח ל־Grab**. If multiple candidates exist, choose the intended video. Acceptance means the request joined the queue; completion is reported only after an actual output file passes verification. The sending session is preserved even when GRAB's default is a different browser.
+**Send to GRAB:** while GRAB is running, open a video page in a configured browser, open the extension popup, and click **שלח ל־Grab**. If multiple candidates exist, choose the intended video. The download queues and starts automatically after discovery, without choosing a route in Grab. Acceptance means the request joined the queue; completion is reported only after an actual output file passes verification. The sending session is preserved even when GRAB's default is a different browser.
 
 Existing user tabs are not reloaded or closed. Fresh re-probes use job-owned temporary tabs. A signed source that expires/refuses access receives at most one fresh discovery in the same session, bypassing the existing cached candidate. Rate limiting is passed back to queue backoff rather than treated as session expiry.
 
 ## Repair, remove, and development commands
 
-**תיקון** updates the stable extension folder and native registration. Reload the extension in the browser afterwards when its code/version changed, then test the connection. Registered browsers follow a moved/upgraded GRAB runtime during startup repair.
+**תיקון** updates the stable extension folder and native registration. Reload the extension in the browser afterwards when its code/version changed, then test the connection. Registered browsers follow a moved/upgraded GRAB runtime during startup repair. RC4 requires extension **1.1.3**. In Brave, open `brave://extensions` and Reload after Repair. Chrome and Brave share the supported Windows native-host key; the host identifies the actual launching browser from its parent processes. Repair migrates the old unused BraveSoftware key.
 
 For a development checkout, the following Windows commands use the same setup implementation:
 
@@ -119,6 +119,8 @@ npm run test:package
 
 `e2e:extension` loads the real unpacked extension in throwaway unbranded Chromium, exercises the real Native Messaging host and desktop hub, and downloads generated session/header-bound HLS through BrowserService and yt-dlp into a verified MP4. It covers playback-required, existing tabs, redirects, multiple profiles, cancellation, browser startup and worker/host restart. It never uses personal browsing profiles. The required-test flag makes missing prerequisites a failure instead of a misleading skip.
 
+The workflow also downloads hash-pinned portable Brave into a disposable runner and runs `e2e/brave-connection.cjs`. This must reproduce the old ignored-key failure, repair it, identify real Brave separately from concurrent Chromium, answer Check connection and automatically download authenticated generated HLS sent from Brave while Chrome is the saved default. It never changes a personal profile or ships the test browser.
+
 The package check inspects the actual `app.asar` and unpacked assets, installs from those resources, and starts the host using `Grab.exe` with no system Node/Python on PATH.
 
 The **Browser integration** GitHub Actions workflow runs Linux/Windows checks, real Windows Chromium/engine tests, and package verification; it produces a test-installer artifact and does not publish a release. Treat only a completed successful workflow as verification evidence.
@@ -131,13 +133,13 @@ The **Browser integration** GitHub Actions workflow runs Linux/Windows checks, r
 - [ ] Repeat with an existing tab; verify that it remains open and is not reloaded.
 - [ ] If prompted for playback, use the queue action and verify it opens the correct live player.
 - [ ] Cancel discovery and a download; verify that the row settles and other tabs stay intact.
-- [ ] Connect actual Chrome/Brave profiles and exercise each explicit browser selection.
+- [ ] Connect actual Chrome/Brave profiles and send from each extension; verify its own session is used even if the saved default differs.
 - [ ] Close/reopen GRAB and the browsers; verify saved preferences, connection recovery, and the installed build.
 
-Automated Chromium fixtures do not prove access to personal mako sessions or actual branded-browser setup. Those checks remain manual until performed on that Windows PC.
+Automated fixtures do not prove access to personal mako sessions or the owner's actual installed profiles. Those checks remain manual until performed on that Windows PC.
 
 ## Unified release candidate
 
-Version 1.7.0-rc.3 combines the audit branch, the media request-context fixes and the browser extension. The main-process DownloadCoordinator owns both paste and Send-to-GRAB jobs; private media URLs, headers and cookie handles never enter renderer snapshots or queue.json. Browser/profile choices survive restart. Cookie acquisition errors fail before the extractor is called; each disconnected extension profile loses only its own vault handles. The pinned engines, process-tree shutdown, verified output and upgrade checks remain enabled.
+Version 1.7.0-rc.4 combines the audit branch, the media request-context fixes and the browser extension. The main-process DownloadCoordinator owns both paste and Send-to-GRAB jobs; private media URLs, headers and cookie handles never enter renderer snapshots or queue.json. Browser/profile choices survive restart. Cookie acquisition errors fail before the extractor is called; each disconnected extension profile loses only its own vault handles. The pinned engines, process-tree shutdown, verified output and upgrade checks remain enabled.
 
-See [Hebrew installation and personal-profile checks](INSTALL-1.7.0-rc.3-HE.md). The installer and SHA256SUMS are artifacts of the Browser integration workflow; Windows verify separately exercises installation over 1.6.7 and the installed app's update flow. Test results must refer to the actual unified commit, not an older branch's green run.
+See [Hebrew installation and personal-profile checks](INSTALL-1.7.0-rc.4-HE.md). The installer and SHA256SUMS are artifacts of the Browser integration workflow; Windows verify separately exercises installation over 1.6.7 and the installed app's update flow. Test results must refer to the actual unified commit, not an older branch's green run.

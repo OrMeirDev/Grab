@@ -12,7 +12,7 @@ import useQueueReorder from './useQueueReorder.js';
 
 // The main screen: paste links, identify them, download. Composition only; the queue's owner
 // (downloads) and the link draft come from the shell.
-export default function DownloadsPage({ draft, downloads, sites, settings, onSettings, notice, onDismissNotice, onIdentify, onShowSites, onSignInGuide, onBrowserSettings, browserPicker }) {
+export default function DownloadsPage({ draft, downloads, sites, settings, onSettings, notice, onDismissNotice, onIdentify, onShowSites, onSignInGuide, onBrowserSettings }) {
   const drag = useQueueReorder(downloads.move);
   const actions = { ...downloads.actions, signInGuide: onSignInGuide, openBrowserSettings: onBrowserSettings };
   return (
@@ -39,7 +39,6 @@ export default function DownloadsPage({ draft, downloads, sites, settings, onSet
       <section className="card paste-card">
         <label className="card-label">הקישורים שלך</label>
         <LinkInput value={draft.text} onChange={draft.setText} onAppend={draft.append} />
-        {browserPicker}
         <IntakeActions sites={sites} linkCount={draft.parsed.length} onShowSites={onShowSites} onIdentify={onIdentify} />
       </section>
 

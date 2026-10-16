@@ -16,15 +16,18 @@ const { execFile } = require('child_process');
 const protocol = require('../../extension/lib/protocol.js');
 
 const HOST_NAME = protocol.HOST_NAME;
-const INTEGRATION_VERSION = 3;
-const HOST_FILES = ['host.cjs', 'framing.cjs', 'ipc-paths.cjs'];
+const INTEGRATION_VERSION = 4;
+const HOST_FILES = ['host.cjs', 'framing.cjs', 'ipc-paths.cjs', 'browser-kind.cjs'];
 
 const REGISTRY_KEYS = {
   edge: (name) => `HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\${name}`,
   chrome: (name) => `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${name}`,
-  brave: (name) => `HKCU\\Software\\BraveSoftware\\Brave-Browser\\NativeMessagingHosts\\${name}`,
+  // Brave inherits Chromium's Windows host lookup and falls back to the Chrome key.
+  // Both launchers identify the actual caller instead of trusting this shared registry label.
+  brave: (name) => `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${name}`,
 };
 const BROWSER_IDS = Object.keys(REGISTRY_KEYS);
+const legacyBraveKey = (name) => `HKCU\\Software\\BraveSoftware\\Brave-Browser\\NativeMessagingHosts\\${name}`;
 
 const defaultIntegrationDir = (env = process.env) => path.join(env.LOCALAPPDATA || path.join(require('os').homedir(), 'AppData', 'Local'), 'Grab', 'browser-integration');
 
@@ -169,7 +172,7 @@ async function install({ sourceRoot, integrationDir = defaultIntegrationDir(), b
   const registered = [];
   for (const browser of requested) {
     const launcher = path.join(hostDir, `grab-host-${browser}.cmd`);
-    fs.writeFileSync(launcher, launcherText({ runtime: hostRuntime, hostScript: path.join(hostDir, 'host.cjs'), browser, integrationDir }));
+    fs.writeFileSync(launcher, launcherText({ runtime: hostRuntime, hostScript: path.join(hostDir, 'host.cjs'), browser: browser === 'edge' ? 'edge' : 'chromium', integrationDir }));
     const manifestDir = path.join(integrationDir, 'manifests', browser);
     fs.mkdirSync(manifestDir, { recursive: true });
     const manifest = path.join(manifestDir, `${hostName}.json`);
@@ -183,6 +186,7 @@ async function install({ sourceRoot, integrationDir = defaultIntegrationDir(), b
     await registry.set(REGISTRY_KEYS[browser](hostName), manifest);
     registered.push(browser);
   }
+  await registry.remove?.(legacyBraveKey(hostName));
   const record = { appVersion, integrationVersion: INTEGRATION_VERSION, runtime, hostRuntime, extensionId: identity.id, extensionVersion: identity.version, browsers: registered, hostName, at: new Date().toISOString() };
   fs.writeFileSync(installFile(integrationDir), JSON.stringify(record, null, 2));
   return { ...record, extensionDir: path.join(integrationDir, 'extension'), origin: identity.origin };
@@ -190,11 +194,15 @@ async function install({ sourceRoot, integrationDir = defaultIntegrationDir(), b
 
 // Removes only Grab's registration, host, manifests and (optionally) the unpacked extension folder.
 async function uninstall({ integrationDir = defaultIntegrationDir(), registry = windowsRegistry, hostName = HOST_NAME, removeExtension = true, beforeRemove = async () => {} } = {}) {
+  const previous = readInstall(integrationDir);
   const removed = [];
+  const keys = new Set([legacyBraveKey(hostName)]);
   for (const browser of BROWSER_IDS) {
     const key = REGISTRY_KEYS[browser](hostName);
-    if (await registry.get(key)) { await registry.remove(key); removed.push(browser); }
+    keys.add(key);
+    if ((!previous || previous.browsers?.includes(browser)) && await registry.get(key)) removed.push(browser);
   }
+  for (const key of keys) if (await registry.get(key)) await registry.remove(key);
   await beforeRemove(); // registrations are gone before any live host is stopped (no reconnect race)
   for (const part of ['native-host', 'manifests', 'runtimes', ...(removeExtension ? ['extension'] : [])]) fs.rmSync(path.join(integrationDir, part), { recursive: true, force: true });
   fs.rmSync(installFile(integrationDir), { force: true });

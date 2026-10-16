@@ -1,4 +1,32 @@
-# Current candidate: 1.7.0-rc.3 (2026-10-16)
+# Current candidate: 1.7.0-rc.4 (2026-10-16)
+
+The owner removed the need for a manual route/browser dropdown. Intake selects the route:
+ordinary pasted links use the direct extractor/public probe independently of any browser setup;
+Send from the extension queues and downloads automatically with the sending browser/profile,
+even when the saved default differs. Mako retains the Edge exception. Browser/profile defaults
+remain in Settings for jobs needing a session without a sender. The dropdown and its state are
+removed; the UI regression asserts it stays absent and pastes YouTube with a disconnected
+extension plus a saved Chrome default. Before/after screenshots cover every screen.
+
+The remaining Brave connection failure had a Windows registration cause. Brave inherits
+Chromium's lookup of Chromium/Chrome NativeMessagingHosts keys, not the old BraveSoftware key.
+RC4 registers Brave at the supported shared Chrome key. Both Chrome and Brave launchers resolve
+the actual browser from their own process ancestry with a bounded, cancellable PowerShell/CIM
+query (4 s, 1 KiB output, up to 8 ancestors); failure stays unknown. Logical install choices are
+kept separate from the physical shared key. Repair removes the old Brave key. Integration
+revision 4 triggers startup repair; extension **1.1.3** needs Reload afterwards to restart its host.
+Edge keeps its own registration. No engine, cookie scope, protocol or active-tab rules change.
+
+Required evidence for RC4: unit/setup/worker/session/routing regressions and renderer build;
+real Electron UI/layout screenshots; actual portable Brave reproducing the old host_missing,
+then successful Repair/connection test, simultaneous Brave and Chromium with distinct identities,
+and automatic authenticated HLS Send from Brave while Chrome is the saved default; real Windows
+extension/media/packaged-host checks; complete installed-app upgrade/pause/merge/quit/update suite.
+CI pins the official portable Brave release and SHA-256 in scripts/windows/fetch-brave-test.ps1;
+the temporary browser is never installed or included in Grab. Personal profiles and live course/
+Mako content remain user checks. [Hebrew RC4 instructions](INSTALL-1.7.0-rc.4-HE.md).
+
+## Prior candidate: 1.7.0-rc.3 (2026-10-16)
 
 The owner clarified that ordinary pasted YouTube/public links must remain independent of browser
 setup. RC2 accidentally routed every configured YouTube lookup through the extension and let a

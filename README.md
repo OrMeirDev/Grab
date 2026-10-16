@@ -1,12 +1,12 @@
 # Grab
 
-Unified candidate: **1.7.0-rc.3**, including the browser extension and the audit fixes. [Install and test on your Windows PC (Hebrew)](docs/INSTALL-1.7.0-rc.3-HE.md). [Extension setup and troubleshooting](docs/browser-extension.md).
+Unified candidate: **1.7.0-rc.4**, including the browser extension and the audit fixes. [Install and test on your Windows PC (Hebrew)](docs/INSTALL-1.7.0-rc.4-HE.md). [Extension setup and troubleshooting](docs/browser-extension.md).
 
 Windows app for downloading videos and audio from YouTube and ~1,300 other sites, built on [yt-dlp](https://github.com/yt-dlp/yt-dlp). Hebrew, right-to-left interface.
 
 ## Install
 
-For **1.7.0-rc.3**, use the installer artifact from the successful [Browser integration workflow](https://github.com/OrMeirDev/Grab/actions/workflows/browser-integration.yml) on `feature/browser-extension-integration`, following the [Hebrew installation instructions](docs/INSTALL-1.7.0-rc.3-HE.md). The latest published release does not include this candidate. Its matching [Windows verify workflow](https://github.com/OrMeirDev/Grab/actions/workflows/windows-verify.yml) must also pass.
+For **1.7.0-rc.4**, use the installer artifact from the successful [Browser integration workflow](https://github.com/OrMeirDev/Grab/actions/workflows/browser-integration.yml) on `feature/browser-extension-integration`, following the [Hebrew installation instructions](docs/INSTALL-1.7.0-rc.4-HE.md). The latest published release does not include this candidate. Its matching [Windows verify workflow](https://github.com/OrMeirDev/Grab/actions/workflows/windows-verify.yml) must also pass.
 
 Published versions remain available under [Releases](https://github.com/OrMeirDev/Grab/releases). Installed copies update themselves when a new version is published to their update channel; this candidate is installed manually.
 
@@ -22,7 +22,7 @@ The installer is not code-signed, so Windows SmartScreen warns on first run: cli
 - History, library of downloaded files, searchable list of supported sites
 - One-click update of the yt-dlp engine
 - Finds embedded Mux and other players inside open Shadow DOM and frames, with network manifest discovery
-- Detects installed Chrome, Edge and Brave; supports a saved default, site rules and per-download browser/profile selection
+- Detects installed Chrome, Edge and Brave; supports a saved default, site rules and connected-profile settings
 - A locally loaded browser extension uses the active signed-in session and can send a page directly to Grab
 
 ## Pages that use your browser session
@@ -31,10 +31,10 @@ The 1.7.0 candidate uses a locally loaded extension in **Chrome, Edge or Brave**
 
 1. In Grab, open **הגדרות → דפדפן והרחבה**, then click **התקנה** next to the intended browser.
 2. In that browser's extensions page, enable **Developer mode**, choose **Load unpacked**, and select the stable extension folder shown by Grab. Repeat in each intended profile.
-3. Return to Grab, test the connection, and choose the browser/profile and general default. New settings include `mako.co.il → Edge`; other browser-assisted jobs follow the saved default; ordinary pasted links do not use it. An explicit per-download choice takes precedence over a site rule.
-4. Choose **בעזרת התוסף והדפדפן** before pasting an account/embedded page, or send it through the extension. Ordinary public links use **הורדה רגילה מקישור** without browser setup. Existing tabs are scanned without reloading, starting playback or closing them. Grab closes only tabs it opened for the job.
+3. Return to Grab, test the connection, and choose the browser/profile and general default. New settings include `mako.co.il → Edge`. Sending from the extension uses that browser/profile; ordinary pasted links do not use the default.
+4. Send an account/embedded page through the extension; it joins the queue and downloads automatically. Paste ordinary public links directly into Grab without browser setup or a route selector. Existing tabs are scanned without reloading, starting playback or closing them. Grab closes only tabs it opened for the job.
 
-See [extension setup and troubleshooting](docs/browser-extension.md) for connection, profile choice, repair and playback-required steps. The older remote-debugging path remains available for browsers that have never been set up with the extension; it is not needed for the setup above. Firefox is unsupported. Automated tests use throwaway profiles; personal Chrome/Edge/Brave sessions still need the [manual checks](docs/INSTALL-1.7.0-rc.3-HE.md).
+See [extension setup and troubleshooting](docs/browser-extension.md) for connection, profile choice, repair and playback-required steps. The older remote-debugging path remains available for browsers that have never been set up with the extension; it is not needed for the setup above. Firefox is unsupported. Automated tests use throwaway profiles; personal Chrome/Edge/Brave sessions still need the [manual checks](docs/INSTALL-1.7.0-rc.4-HE.md).
 
 Lookup reads player attributes (including signed Mux manifest URLs), open Shadow DOM, frame execution contexts and media network requests. Cookies for the page and discovered URLs are passed to yt-dlp in a temporary domain-scoped cookie jar, together with the player request's User-Agent, Referer and Origin. The jar is deleted after lookup/download. A failed download of an embedded source is looked up again to refresh expiring URLs.
 
