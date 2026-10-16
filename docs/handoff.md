@@ -26,6 +26,28 @@ CI pins the official portable Brave release and SHA-256 in scripts/windows/fetch
 the temporary browser is never installed or included in Grab. Personal profiles and live course/
 Mako content remain user checks. [Hebrew RC4 instructions](INSTALL-1.7.0-rc.4-HE.md).
 
+## RC4 verified candidate
+
+Source baseline: `426231aff241c735c942b0ddf453eef028fcecb4`. Application changes are in
+`a0e595108c129d5633b95d537306fb50acf7d010`; the next commit only waits for the Brave test popup
+and observed media to be ready. Documentation-only commits after this baseline do not change
+the app or its verification driver.
+
+| Check | Successful run | Evidence |
+| --- | --- | --- |
+| CI | [47](https://github.com/OrMeirDev/Grab/actions/runs/38886006914) | Linux/Windows regressions, renderer build, real Electron queue/probe/UI and all 28 layout captures; before/after all-screen review confirms removal of the intake dropdown |
+| Browser integration | [13](https://github.com/OrMeirDev/Grab/actions/runs/38886006887) | 18/18 real extension checks, 5/5 actual Brave checks including the old-key failure and authenticated automatic Send, 3/3 real media checks and packaged native host without system Node |
+| Windows verify | [28](https://github.com/OrMeirDev/Grab/actions/runs/38885641618) | Application baseline `a0e5951`: 250 unit/integration passes, 10 optional skips, 29/29 installed-app/upgrade checks including merge/pause, quit, cookie cleanup, rate limits and in-app update |
+
+Installer: [Grab-1.7.0-rc.4-Windows](https://github.com/OrMeirDev/Grab/actions/runs/38886006887/artifacts/12040895208).
+The artifact contains the NSIS installer, Hebrew instructions and SHA256SUMS. Both the ZIP digest
+and installer checksum were verified after download. Installer SHA-256:
+`df73ac29149682dfecb2e21b27dfa8fd2f19afbf6882c400aa061f136ca52065`.
+
+The actual Brave tests use an isolated profile. The owner's existing Brave/Chrome/Edge profiles,
+live YouTube link and Schooler/Mako accounts remain personal checks; after installing RC4, Repair
+then Reload the existing extension to **1.1.3**. No route selection is needed for paste or Send.
+
 ## Prior candidate: 1.7.0-rc.3 (2026-10-16)
 
 The owner clarified that ordinary pasted YouTube/public links must remain independent of browser
