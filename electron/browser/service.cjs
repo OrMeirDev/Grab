@@ -273,7 +273,7 @@ class BrowserService extends EventEmitter {
 
   rememberSession(instance, urls, snapshot) {
     const cookies = filterScopedCookies(urls, snapshot)
-      .map((c) => ({ name: c.name, value: c.value, domain: c.domain, path: c.path || '/', secure: !!c.secure, httpOnly: !!c.httpOnly, session: !!c.session, expires: c.session ? -1 : c.expirationDate || 0 }));
+      .map((c) => ({ name: c.name, value: c.value, domain: c.domain, hostOnly: c.hostOnly === true || (c.hostOnly === undefined && !c.domain.startsWith('.')), path: c.path || '/', secure: !!c.secure, httpOnly: !!c.httpOnly, session: !!c.session, expires: c.session ? -1 : c.expirationDate || 0 }));
     // A successful empty snapshot is different from a failed cookie request. Its handle
     // still binds this job to the chosen browser, so disconnect/restart requires rediscovery.
     const reference = this.session.rememberCookies(cookies, { source: 'extension:' + instance.key });
