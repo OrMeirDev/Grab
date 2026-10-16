@@ -23,3 +23,35 @@ test('diagnostic files never contain sensitive URL paths or tokens', () => {
     for (const secret of ['account-123','signed-token','auth=','token=secret','/private/']) assert.equal(raw.includes(secret), false, secret);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('diagnostic allowlist rejects arbitrary error strings and unknown fields', () => {
+  const { safeEventDetails } = require('../electron/infrastructure/diagnostics.cjs');
+  const data = safeEventDetails('lookup', { url: 'https://media.example/id-777', error: 'bearer secret', profile: 'alice', kind: 'blocked', strategy: 'yt-dlp', ms: 30, cookies: ['secret'] });
+  assert.deepEqual(data, { url: 'https://media.example', kind: 'blocked', strategy: 'yt-dlp', ms: 30 });
+});
+
+test('persistent history excludes signed URLs, including older records', async () => {
+  const { HistoryRepository } = require('../electron/infrastructure/repositories.cjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-history-private-'));
+  const signed = 'https://media.example/watch?token=sensitive-private-token';
+  try {
+    fs.writeFileSync(path.join(dir, 'history.json'), JSON.stringify([
+      { url: signed, name: 'old sensitive' },
+      { url: 'https://media.example/public', name: 'public' },
+    ]));
+    const h = new HistoryRepository(dir);
+    const rows = await h.all();
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].name, 'public');
+    assert.equal(await h.add({ url: signed, name: 'new sensitive' }), null);
+    assert.equal((await h.all()).length, 1);
+    const onDisk = fs.readFileSync(path.join(dir, 'history.json'), 'utf8');
+    assert.equal(onDisk.includes('sensitive-private-token'), false);
+    assert.equal(fs.existsSync(path.join(dir, 'history.json.bak')), false);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('free-text URL redaction removes embedded path identifiers', () => {
+  const { stripLinksInText } = require('../electron/domain/secrets.cjs');
+  assert.equal(stripLinksInText('403 https://media.example/user-123/hdntl=abc/master.m3u8?signature=x'), '403 https://media.example');
+});
