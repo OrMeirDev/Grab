@@ -13,6 +13,7 @@ const { detectBrowsers, browserName } = require('./browsers.cjs');
 const selection = require('./selection.cjs');
 const setup = require('./setup.cjs');
 const { siteKey } = require('../domain/site-policy.cjs');
+const { filterScopedCookies } = require('../domain/cookie-scope.cjs');
 
 const { DEADLINE_DEFAULTS, DEADLINE_LIMITS } = selection;
 
@@ -266,14 +267,12 @@ class BrowserService extends EventEmitter {
     try { reply = await this.hub.request(instance.key, 'cookies-request', { jobId: scopeKey, urls }, { timeoutMs: 8000, signal }); }
     catch { throw new BrowserError(signal?.aborted ? 'cancelled' : 'browserDisconnected'); }
     if (signal?.aborted) throw new BrowserError('cancelled');
-    if (reply.available === false) throw new BrowserError('sessionExpired');
+    if (reply.type !== 'cookies' || reply.jobId !== scopeKey || reply.available === false) throw new BrowserError('sessionExpired');
     return this.rememberSession(instance, urls, reply.cookies || []);
   }
 
   rememberSession(instance, urls, snapshot) {
-    const hosts = urls.map((u) => new URL(u).hostname);
-    const cookies = snapshot
-      .filter((c) => hosts.some((h) => domainMatches(h, c.domain)))
+    const cookies = filterScopedCookies(urls, snapshot)
       .map((c) => ({ name: c.name, value: c.value, domain: c.domain, path: c.path || '/', secure: !!c.secure, httpOnly: !!c.httpOnly, session: !!c.session, expires: c.session ? -1 : c.expirationDate || 0 }));
     // A successful empty snapshot is different from a failed cookie request. Its handle
     // still binds this job to the chosen browser, so disconnect/restart requires rediscovery.
