@@ -166,9 +166,13 @@ function createWindow() {
   // Check for an app update shortly after start, once the page is listening.
   win.webContents.once('did-finish-load', () => {
     if (!app.isPackaged) return;
-    setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 3000);
-    // Grab often stays open for hours, so keep checking while it runs.
-    setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 4 * 60 * 60 * 1000);
+    const checkAutomatically = async () => {
+      if ((await settingsRepo.get()).automaticUpdateChecks) await autoUpdater.checkForUpdates().catch(() => {});
+    };
+    setTimeout(checkAutomatically, 3000);
+    // Keep security updates discoverable, unless the user explicitly disabled background checks.
+    const timer = setInterval(checkAutomatically, 4 * 60 * 60 * 1000);
+    win.on('closed', () => clearInterval(timer));
   });
 
   if (DEV_URL) win.loadURL(DEV_URL);
@@ -238,6 +242,7 @@ router.handle('settings:set', [t.object({
   folder: t.optional(t.string({ min: 1, max: 1024 })),
   format: t.optional(t.oneOf(...FORMATS)),
   quality: t.optional(t.oneOf(...QUALITIES)),
+  automaticUpdateChecks: t.optional(t.boolean()),
 })], async (_e, patch) => {
   if (patch.folder && !approvedFolders.has(patch.folder) && patch.folder !== (await settingsRepo.get()).folder) {
     throw new Error('settings:set: the folder must be chosen in the folder dialog');
