@@ -23,12 +23,17 @@ async function browserKind({ declared = process.env.GRAB_BROWSER, platform = pro
     }
   }`;
   const powershell = path.win32.join(windowsDir, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  return new Promise((resolve) => {
-    exec(powershell, ['-NoProfile', '-NonInteractive', '-Command', script],
-      { encoding: 'utf8', timeout: 4000, maxBuffer: 1024, windowsHide: true, ...(signal ? { signal } : {}) }, (error, stdout) => {
-        const value = error ? '' : String(stdout || '').trim();
-        resolve(KINDS.includes(value) ? value : 'unknown');
-      });
-  });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (signal?.aborted) return 'unknown';
+    const result = await new Promise((resolve) => {
+      exec(powershell, ['-NoProfile', '-NonInteractive', '-Command', script],
+        { encoding: 'utf8', timeout: attempt ? 8000 : 4000, maxBuffer: 1024, windowsHide: true, ...(signal ? { signal } : {}) }, (error, stdout) => {
+          const value = error ? '' : String(stdout || '').trim();
+          resolve({ value: KINDS.includes(value) ? value : 'unknown', retry: !!error?.killed || error?.code === 'ETIMEDOUT' });
+        });
+    });
+    if (result.value !== 'unknown' || !result.retry) return result.value;
+  }
+  return 'unknown';
 }
 module.exports = { browserKind };

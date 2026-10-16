@@ -26,3 +26,17 @@ test('failed ancestry lookup stays unknown; explicit dedicated launchers retain 
     exec: (_exe, _args, _opts, done) => done(new Error('timeout')) }), 'unknown');
   for (const declared of ['edge', 'chrome', 'brave']) assert.equal(await browserKind({ declared, exec: () => assert.fail('dedicated/test launcher needs no ancestry lookup') }), declared);
 });
+
+test('a timed-out ancestry query gets one bounded retry and still never guesses', async () => {
+  for (const final of ['brave', 'unknown']) {
+    const limits = [];
+    const result = await browserKind({ declared: 'chromium', platform: 'win32', parentPid: 123,
+      exec: (_exe, _args, options, done) => {
+        limits.push(options.timeout);
+        if (limits.length === 1) done(Object.assign(new Error('timeout'), { killed: true }));
+        else done(null, final);
+      } });
+    assert.equal(result, final);
+    assert.deepEqual(limits, [4000, 8000]);
+  }
+});
