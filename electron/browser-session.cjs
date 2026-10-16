@@ -2,14 +2,15 @@ const { EventEmitter } = require('events');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const crypto = require('crypto');
+const { CookieVault } = require('./infrastructure/cookie-vault.cjs');
 
 // The user's default browser (where they are signed in). Chromium-based browsers all have the same
 // remote-debugging switch (<scheme>://inspect/#remote-debugging) and DevToolsActivePort file.
 const CHROME = { name: 'Chrome', scheme: 'chrome', dir: ['LOCALAPPDATA', 'Google', 'Chrome', 'User Data'] };
+const EDGE = { name: 'Edge', scheme: 'edge', dir: ['LOCALAPPDATA', 'Microsoft', 'Edge', 'User Data'] };
 const BROWSERS = [
   [/^ChromeHTML/i, CHROME],
-  [/^MSEdge/i, { name: 'Edge', scheme: 'edge', dir: ['LOCALAPPDATA', 'Microsoft', 'Edge', 'User Data'] }],
+  [/^MSEdge/i, EDGE],
   [/^Brave/i, { name: 'Brave', scheme: 'brave', dir: ['LOCALAPPDATA', 'BraveSoftware', 'Brave-Browser', 'User Data'] }],
   [/^Vivaldi/i, { name: 'Vivaldi', scheme: 'vivaldi', dir: ['LOCALAPPDATA', 'Vivaldi', 'User Data'] }],
   [/^OperaGX/i, { name: 'Opera GX', scheme: 'opera', dir: ['APPDATA', 'Opera Software', 'Opera GX Stable'] }],
@@ -36,9 +37,25 @@ function defaultBrowser(progId = defaultBrowserId()) {
   if (process.platform === 'win32') {
     const [env, ...rest] = b.dir;
     if (process.env[env]) info.endpointFile = path.join(process.env[env], ...rest, 'DevToolsActivePort');
-  } else if (process.platform === 'darwin') info.endpointFile = path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome', 'DevToolsActivePort');
-  else info.endpointFile = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'google-chrome', 'DevToolsActivePort');
+  } else if (process.platform === 'darwin') info.endpointFile = path.join(os.homedir(), 'Library', 'Application Support', ...(b === EDGE ? ['Microsoft Edge'] : ['Google', 'Chrome']), 'DevToolsActivePort');
+  else info.endpointFile = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), b === EDGE ? 'microsoft-edge' : 'google-chrome', 'DevToolsActivePort');
   return info;
+}
+
+function isMakoPage(pageUrl) {
+  try {
+    const url = new URL(pageUrl);
+    return /^https?:$/.test(url.protocol) && /(^|\.)mako\.co\.il$/i.test(url.hostname.replace(/\.$/, ''));
+  } catch { /* a general guide has no page URL */ }
+  return false;
+}
+
+// A browser picked by the selection rules (or the user) wins. Without one, Mako playback is looked up
+// in Edge and every other page keeps the default-browser policy.
+const PROG_IDS = { edge: 'MSEdgeHTM', chrome: 'ChromeHTML', brave: 'BraveHTML' };
+function browserForPage(pageUrl, browserId) {
+  if (browserId && PROG_IDS[browserId]) return defaultBrowser(PROG_IDS[browserId]);
+  return isMakoPage(pageUrl) ? defaultBrowser('MSEdgeHTM') : defaultBrowser();
 }
 
 const sessionError = (message, kind = 'browserSession', browser) => Object.assign(new Error(message), { kind, browser });
@@ -102,18 +119,23 @@ class CdpClient extends EventEmitter {
   disconnect() { this.socket.close(); }
 }
 
-let client = null;
-let connecting = null;
-// Connects to the user's default browser (or the one given, for tests). The file is left behind
+// A Mako lookup in Edge must not reuse or disconnect a lookup in the default browser.
+const connections = new Map();
+// Connects to the selected browser. The file is left behind
 // when the browser closes, so a refused connection means "open the browser", same as no file.
 async function connectBrowser({ endpointFile, browser = endpointFile ? { name: 'Chrome', scheme: 'chrome', endpointFile } : defaultBrowser() } = {}) {
   if (browser.supported === false) throw sessionError(`${browser.name} is not supported for signed-in lookup`, 'browserUnsupported', browser);
-  if (client?.connected && client.browser.name === browser.name) return client;
-  if (client?.connected) client.disconnect();
-  if (connecting) return connecting;
-  connecting = (async () => {
+  const key = browser.endpointFile || browser.name;
+  const existing = connections.get(key);
+  if (existing?.client?.connected) return existing.client;
+  if (existing?.connecting) return existing.connecting;
+  const connection = {};
+  connections.set(key, connection);
+  connection.connecting = (async () => {
     const WebSocket = require('ws');
-    const socket = new WebSocket(readEndpoint(browser.endpointFile, browser), { handshakeTimeout: 60000, perMessageDeflate: false });
+    const endpoint = readEndpoint(browser.endpointFile, browser);
+    const socket = new WebSocket(endpoint, { handshakeTimeout: 60000, perMessageDeflate: false });
+    connection.socket = socket;
     await new Promise((resolve, reject) => {
       const done = (error) => {
         socket.removeListener('open', opened);
@@ -128,15 +150,20 @@ async function connectBrowser({ endpointFile, browser = endpointFile ? { name: '
       socket.once('error', failed);
       socket.once('close', failed);
     });
-    const connected = new CdpClient(socket);
+    const connected = watchConnection(new CdpClient(socket));
     try { await connected.send('Browser.getVersion', {}, undefined, 60000); }
     catch (error) { connected.disconnect(); throw sessionError(error.message, 'browserSession', browser); }
     connected.browser = browser;
-    client = connected;
-    connected.once('disconnected', () => { if (client === connected) client = null; });
+    connected.endpoint = endpoint;
+    connection.client = connected;
+    connected.once('disconnected', () => { if (connections.get(key) === connection) connections.delete(key); });
     return connected;
   })();
-  try { return await connecting; } finally { connecting = null; }
+  try { return await connection.connecting; }
+  finally {
+    connection.connecting = null;
+    if (!connection.client?.connected && connections.get(key) === connection) connections.delete(key);
+  }
 }
 
 // Reuse the requested page if it is open. Otherwise create only a background tab
@@ -159,40 +186,18 @@ async function chooseTarget(cdp, pageUrl, { refresh = false } = {}) {
   return { targetId, created: true };
 }
 
-const cookieSnapshots = new Map();
-const activeCookieDirs = new Set();
-function rememberCookies(cookies) {
-  const reference = crypto.randomUUID();
-  cookieSnapshots.set(reference, { cookies, at: Date.now() });
-  for (const [key, value] of cookieSnapshots) if (Date.now() - value.at > 24 * 60 * 60 * 1000) cookieSnapshots.delete(key);
-  return reference;
+const vault = new CookieVault();
+const rememberCookies = (cookies, options) => vault.remember(cookies, options);
+const withSessionCookies = (reference, work) => vault.withJar(reference, work);
+const hasCookies = (reference) => !!reference && vault.has(reference);
+const forgetCookies = (reference) => vault.forget(reference);
+function watchConnection(cdp) {
+  cdp.once('disconnected', () => vault.forgetSource('browser'));
+  return cdp;
 }
-
-async function withSessionCookies(reference, work) {
-  const snapshot = cookieSnapshots.get(reference);
-  if (!snapshot?.cookies.length) return work(undefined);
-  const lines = snapshot.cookies.filter((c) => ![c.domain, c.path, c.name, c.value].some((v) => /[\t\r\n]/.test(v || ''))).map((c) => [
-    (c.httpOnly ? '#HttpOnly_' : '') + c.domain,
-    c.domain.startsWith('.') ? 'TRUE' : 'FALSE', c.path || '/',
-    c.secure ? 'TRUE' : 'FALSE', c.session || c.expires < 0 ? 0 : Math.floor(c.expires || 0), c.name, c.value,
-  ].join('\t'));
-  if (!lines.length) return work(undefined);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-cookies-'));
-  activeCookieDirs.add(dir);
-  const file = path.join(dir, 'cookies.txt');
-  try {
-    fs.writeFileSync(file, '# Netscape HTTP Cookie File\n' + lines.join('\n') + '\n', { mode: 0o600 });
-    return await work(file);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-    activeCookieDirs.delete(dir);
-  }
-}
-
 function disconnectBrowser() {
-  if (client) client.disconnect();
-  // Called on app shutdown, including while a download is being cancelled.
-  for (const dir of activeCookieDirs) fs.rmSync(dir, { recursive: true, force: true });
-  activeCookieDirs.clear();
+  for (const connection of connections.values()) connection.socket?.close();
+  connections.clear();
+  vault.clear();
 }
-module.exports = { connectBrowser, defaultBrowser, chooseTarget, rememberCookies, withSessionCookies, disconnectBrowser, CdpClient, readEndpoint };
+module.exports = { connectBrowser, defaultBrowser, browserForPage, isMakoPage, chooseTarget, rememberCookies, withSessionCookies, forgetCookies, hasCookies, watchConnection, disconnectBrowser, scavengeCookieJars: () => vault.scavenge(), CdpClient, readEndpoint };

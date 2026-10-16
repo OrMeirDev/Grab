@@ -1,0 +1,131 @@
+# Windows verification and a reviewable test build (not a release).
+# On a real Windows runner: tests (with the pinned yt-dlp.exe, Chrome and Edge on throwaway
+# profiles), the renderer build, the pinned native tools (fetch-bin + verify-bin), two NSIS test
+# builds (same app, versions A < B), then an in-place upgrade of the released 1.6.7 to A with
+# settings and history, driven through the installed app's own window (scripts/windows/), ending
+# with A updating itself to B from a feed served on the runner while a download runs.
+# The installers are workflow artifacts only: never published (--publish never, no token given to
+# electron-builder). Only these test builds read updates from the runner's own feed
+# (scripts/windows/stamp-test-build.cjs, not committed); package.json keeps the GitHub feed.
+name: Windows verify
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'electron/**'
+      - 'src/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'native-tools.lock.json'
+      - '.github/workflows/windows-verify.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 100
+    env:
+      TEST_VERSION: 1.7.0-test.${{ github.run_number }}
+      NEXT_VERSION: 1.7.1-test.${{ github.run_number }}
+      TEST_FEED: http://127.0.0.1:47290/
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: machine
+        run: |
+          New-Item -ItemType Directory -Force evidence | Out-Null
+          $os = Get-CimInstance Win32_OperatingSystem
+          $browsers = @{}
+          foreach ($p in @("$env:ProgramFiles\Google\Chrome\Application\chrome.exe", "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\BraveSoftware\Brave-Browser\Application\brave.exe")) {
+            if (Test-Path $p) { $browsers[(Split-Path $p -Leaf)] = (Get-Item $p).VersionInfo.ProductVersion }
+          }
+          @{ commit = "${{ github.sha }}"; windows = "$($os.Caption) $($os.Version) build $($os.BuildNumber)"; node = (node --version); browsers = $browsers } | ConvertTo-Json | Tee-Object evidence/machine.json
+      - name: npm ci (with install scripts)
+        run: npm ci --no-fund --no-audit
+      - name: fetch-bin (pinned, hash-checked)
+        run: npm run fetch-bin
+      - name: verify-bin
+        run: npm run verify-bin 2>&1 | Tee-Object evidence/verify-bin.txt
+      - name: tests (real yt-dlp.exe; Chrome and Edge on throwaway profiles)
+        env:
+          GRAB_TEST_YTDLP_DIR: ${{ github.workspace }}\bin
+        run: |
+          npm test 2>&1 | Tee-Object evidence/npm-test.txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: renderer build
+        run: npm run build
+      # The real app (not installed) with real timers and an instant fake yt-dlp: the 5-10 s rest
+      # after a YouTube download, then the next one starts by itself (GRB-01).
+      - name: YouTube rest, real Electron on Windows (e2e, fake engine)
+        run: |
+          npx electron e2e/queue-cooldown.cjs 2>&1 | Tee-Object evidence/e2e-queue-cooldown.txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: test build A (stamped, not committed; updates from the runner's feed)
+        run: |
+          Remove-Item Env:GH_TOKEN, Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
+          node scripts/windows/stamp-test-build.cjs --version $env:TEST_VERSION --feed $env:TEST_FEED
+          npm run dist -- --publish never
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force release-a | Out-Null
+          Move-Item "release/Grab-Setup-$env:TEST_VERSION.exe" release-a/
+      - name: test build B (newer; served on the runner's feed)
+        run: |
+          Remove-Item Env:GH_TOKEN, Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
+          node scripts/windows/stamp-test-build.cjs --version $env:NEXT_VERSION --feed $env:TEST_FEED
+          npm run dist -- --publish never
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # A "-test.N" version puts both builds on the "test" update channel: electron-builder
+          # writes test.yml and the app asks the feed for test.yml.
+          New-Item -ItemType Directory -Force feed | Out-Null
+          Copy-Item "release/Grab-Setup-$env:NEXT_VERSION.exe", release/test.yml feed/
+          Get-Content feed/test.yml | Tee-Object evidence/feed-test.yml
+          $sums = foreach ($f in "release-a/Grab-Setup-$env:TEST_VERSION.exe", "feed/Grab-Setup-$env:NEXT_VERSION.exe") {
+            "$((Get-FileHash -Algorithm SHA256 $f).Hash.ToLowerInvariant())  $(Split-Path $f -Leaf)"
+          }
+          $sums | Tee-Object evidence/SHA256SUMS.txt
+      - name: upgrade 1.6.7 -> A, the installed app, then A updates itself to B
+        run: |
+          node scripts/windows/verify-upgrade.cjs --installer "release-a/Grab-Setup-$env:TEST_VERSION.exe" --version $env:TEST_VERSION --next-version $env:NEXT_VERSION --feed-dir feed --feed-url $env:TEST_FEED --out evidence/installed
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: summary
+        if: always()
+        run: |
+          $rows = @()
+          foreach ($f in 'evidence/installed/upgrade-results.json', 'evidence/installed/installed-app-results.json') {
+            if (Test-Path $f) { $rows += Get-Content $f -Raw -Encoding utf8 | ConvertFrom-Json }
+          }
+          $lines = @('| ID | Check | Status |', '|---|---|---|') + ($rows | ForEach-Object { "| $($_.id) | $($_.title) | $($_.status) |" })
+          $tests = if (Test-Path evidence/npm-test.txt) { (Get-Content evidence/npm-test.txt | Select-String '^# (tests|pass|fail|skipped|todo|cancelled)') -join ', ' } else { 'not run' }
+          @("Test versions: $env:TEST_VERSION -> $env:NEXT_VERSION", "", "npm test: $tests", "") + $lines | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: grab-windows-evidence-${{ github.run_number }}
+          path: evidence/
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: success() || failure()
+        with:
+          name: grab-test-installer-${{ github.run_number }}
+          path: |
+            release-a/Grab-Setup-*.exe
+            feed/Grab-Setup-*.exe
+            evidence/SHA256SUMS.txt
+          if-no-files-found: warn
+          retention-days: 14

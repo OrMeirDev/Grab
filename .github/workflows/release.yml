@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: [Windows verify]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.id == github.event.repository.id)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify main checks, installer provenance, update feed and uploaded digests; publish
+        id: release
+        run: node scripts/release/publish.cjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-proof
+          path: release-proof.json
+          if-no-files-found: error
+          retention-days: 30
+
+  cleanup:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.publish.outputs.sha }}
+          fetch-depth: 0
+      - name: Retire the integrated development branches only when fully merged
+        run: >-
+          node scripts/release/cleanup-merged.cjs
+          claude/modest-pasteur-6315xe
+          codex/active-chrome-media-20261012
+          codex/preserve-media-request-context
+          feature/browser-extension-integration

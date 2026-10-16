@@ -1,0 +1,83 @@
+name: Browser integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package version
+        id: version
+        run: node -e "require('fs').appendFileSync(process.env.GITHUB_OUTPUT, 'version=' + require('./package.json').version + '\n')"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - name: Media verifier on Linux
+        if: runner.os == 'Linux'
+        run: command -v ffprobe || (sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg)
+      - name: Unit and integration regressions
+        run: npm test
+        env:
+          GRAB_TEST_REGISTRY: '1'
+      - name: Fetch Windows media engines
+        if: runner.os == 'Windows'
+        run: |
+          npm run fetch-bin
+          "$pwd\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Real media engine verification
+        if: runner.os == 'Windows'
+        run: npm run test:media
+      - name: Install throwaway Chromium
+        if: runner.os == 'Windows'
+        run: npx playwright install chromium
+      - name: Real extension, native host and authenticated download
+        if: runner.os == 'Windows'
+        run: npm run e2e:extension
+        env:
+          GRAB_REQUIRE_EXTENSION_TEST: '1'
+      - name: Fetch pinned portable Brave for integration checks
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/windows/fetch-brave-test.ps1
+      - name: Real Brave registration, identity and automatic authenticated send
+        if: runner.os == 'Windows'
+        run: node --test e2e/brave-connection.cjs
+        env:
+          GRAB_REQUIRE_BRAVE_TEST: '1'
+      - name: Build Windows test installer (no release)
+        if: runner.os == 'Windows'
+        run: npm run dist -- --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Verify packaged files and native host without system Node
+        if: runner.os == 'Windows'
+        run: npm run test:package
+        env:
+          GRAB_PACKAGED_DIR: release/win-unpacked
+      - name: Verified release bundle, checksums and updater metadata
+        if: runner.os == 'Windows'
+        run: node scripts/release/bundle.cjs
+      - name: Retain test installer
+        if: runner.os == 'Windows' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Grab-${{ steps.version.outputs.version }}-Windows
+          path: release/bundle/*
+          if-no-files-found: error
+          retention-days: 14

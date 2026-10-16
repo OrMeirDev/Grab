@@ -312,3 +312,33 @@ h2 { font-size: 22px; font-weight: 600; display: flex; align-items: center; gap:
   padding: 14px 16px; border-radius: 20px; background: var(--glass); border: 1px solid var(--border);
   box-shadow: inset 0 1px 0 var(--edge), var(--shadow-control);
 }
+
+/* ---- browser selection and extension setup ---- */
+.choice-row { display: inline-flex; gap: 6px; flex-wrap: wrap; margin-inline-start: 6px; }
+.pill-muted { background: #f0f0f5; color: #4a4d5c; }
+.browser-card .pill { padding: 3px 12px; font-size: 13px; }
+.browser-settings { margin-top: 16px; }
+.browser-card { padding: 12px 0; border-bottom: 1px solid var(--border); display: grid; gap: 8px; }
+.browser-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.browser-head .spacer { flex: 1; }
+.instance-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-inline-start: 14px; }
+.instance-row input:not([type]) { font: inherit; font-size: 14px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); min-width: 160px; }
+.rules .rule-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.rule-row code { font-size: 14px; }
+.rule-row.add input { font: inherit; font-size: 14px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); min-width: 190px; }
+.setting.steps, .setting.advanced { display: block; }
+.advanced summary { cursor: pointer; font-size: 15px; }
+.advanced-grid { display: grid; gap: 10px; margin-top: 10px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.advanced-grid label { display: grid; gap: 4px; font-size: 14px; color: var(--muted); }
+.advanced-grid input { font: inherit; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); max-width: 120px; }
+
+
+/* Settings share one scroll region; long extension instructions and local paths wrap. */
+.settings-scroll { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 2px 4px 4px; margin: 0 -4px; }
+.settings-scroll > .settings { flex: none; overflow: visible; }
+.browser-settings .row-meta { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.browser-settings .setting { flex-wrap: wrap; }
+.browser-settings .setting > div { flex: 1 1 240px; min-width: 0; }
+.browser-settings .setting > button { flex-shrink: 0; }
+.browser-settings .guide-address, .browser-settings .rule-row { flex-wrap: wrap; }
+.browser-settings .guide-address code { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
