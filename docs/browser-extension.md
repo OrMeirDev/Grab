@@ -126,7 +126,7 @@ The **Browser integration** GitHub Actions workflow runs Linux/Windows checks, r
 ### Personal Windows and mako checklist
 
 - [ ] Install/connect the extension in the actual Edge profile used for mako.
-- [ ] Leave Brave as the general default and verify that the mako rule selects Edge.
+- [ ] Leave Chrome as the general default and verify that the mako rule selects Edge while other sites keep Chrome.
 - [ ] Paste a fresh real mako page and verify the final downloaded file plays with sound.
 - [ ] Repeat with an existing tab; verify that it remains open and is not reloaded.
 - [ ] If prompted for playback, use the queue action and verify it opens the correct live player.

@@ -6,7 +6,9 @@ Windows app for downloading videos and audio from YouTube and ~1,300 other sites
 
 ## Install
 
-Download `Grab-Setup-x.y.z.exe` from the [latest release](https://github.com/OrMeirDev/Grab/releases/latest) and run it. Installed copies update themselves: when a new release is published, Grab shows an "update available" bar.
+For **1.7.0-rc.1**, use the installer artifact from the successful [Browser integration workflow](https://github.com/OrMeirDev/Grab/actions/workflows/browser-integration.yml) on `feature/browser-extension-integration`, following the [Hebrew installation instructions](docs/INSTALL-1.7.0-rc.1-HE.md). The latest published release does not include this candidate. Its matching [Windows verify workflow](https://github.com/OrMeirDev/Grab/actions/workflows/windows-verify.yml) must also pass.
+
+Published versions remain available under [Releases](https://github.com/OrMeirDev/Grab/releases). Installed copies update themselves when a new version is published to their update channel; this candidate is installed manually.
 
 The installer is not code-signed, so Windows SmartScreen warns on first run: click **More info → Run anyway**.
 
@@ -20,20 +22,23 @@ The installer is not code-signed, so Windows SmartScreen warns on first run: cli
 - History, library of downloaded files, searchable list of supported sites
 - One-click update of the yt-dlp engine
 - Finds embedded Mux and other players inside open Shadow DOM and frames, with network manifest discovery
+- Detects installed Chrome, Edge and Brave; supports a saved default, site rules and per-download browser/profile selection
+- A locally loaded browser extension uses the active signed-in session and can send a page directly to Grab
 
 ## Pages that use your browser session
 
-Grab connects to your running default browser when yt-dlp cannot read a page or needs authentication. It does not open a sign-in window or create a separate profile.
+The 1.7.0 candidate uses a locally loaded extension in **Chrome, Edge or Brave**. It uses the selected active browser/profile and does not open an in-app sign-in page or require remote debugging for extension use.
 
-Supported: Chromium-based default browsers (Chrome, Edge, Brave, Vivaldi, Opera, Chromium). Chrome is the reference; the others use the same protocol but are **not yet verified on Windows**. Firefox can't be used for this.
+1. In Grab, open **הגדרות → דפדפן והרחבה**, then click **התקנה** next to the intended browser.
+2. In that browser's extensions page, enable **Developer mode**, choose **Load unpacked**, and select the stable extension folder shown by Grab. Repeat in each intended profile.
+3. Return to Grab, test the connection, and choose the browser/profile and general default. New settings include `mako.co.il → Edge`; other sites follow the saved default. An explicit per-download choice takes precedence over a site rule.
+4. Paste the original page URL in Grab, or send it through the extension. Existing tabs are scanned without reloading, starting playback or closing them. Grab closes only tabs it opened for the job.
 
-1. Use a current browser (Chrome 144 or newer) and enable remote debugging once at `<browser>://inspect/#remote-debugging` (Grab's guide shows the exact address).
-2. Leave the browser running in the profile where you are already signed in. Accept its connection permission when Grab first connects (it asks again after a new connection).
-3. Paste the page URL in Grab as usual. An exact open tab is scanned without navigation or playback changes; otherwise Grab opens a background tab in the existing context and closes that tab when lookup finishes.
+See [extension setup and troubleshooting](docs/browser-extension.md) for connection, profile choice, repair and playback-required steps. The older remote-debugging path remains available for browsers that have never been set up with the extension; it is not needed for the setup above. Firefox is unsupported. Automated tests use throwaway profiles; personal Chrome/Edge/Brave sessions still need the [manual checks](docs/INSTALL-1.7.0-rc.1-HE.md).
 
 Lookup reads player attributes (including signed Mux manifest URLs), open Shadow DOM, frame execution contexts and media network requests. Cookies for the page and discovered URLs are passed to yt-dlp in a temporary domain-scoped cookie jar, together with the player request's User-Agent, Referer and Origin. The jar is deleted after lookup/download. A failed download of an embedded source is looked up again to refresh expiring URLs.
 
-Cookies from the page are kept in memory for at most 4 hours and only for the job that needs them. This connection discovers the browser's standard user-data directory; custom user-data directories need an endpoint selection option that doesn't exist yet. If the requested page exists in multiple browser contexts, Grab asks you to leave it open in the intended context.
+Cookies from the page are kept in memory for at most 4 hours behind a job's private session handle. Disconnecting an extension profile drops its handles. A restored download reacquires the selected session before network work; Grab reports a missing browser/profile explicitly. When several extension profiles are connected, choose the intended one instead of letting Grab guess.
 
 ## Develop
 
@@ -50,7 +55,7 @@ npm run release     # build and publish a GitHub release (needs GH_TOKEN)
 
 Architecture and contributor rules: [docs/architecture.md](docs/architecture.md), [AGENTS.md](AGENTS.md).
 CI (`.github/workflows/ci.yml`) runs the tests on Linux and Windows and the end-to-end checks.
-`.github/workflows/windows-verify.yml` (pushes to `claude/**`, or by hand) builds a test installer
+`.github/workflows/windows-verify.yml` (code pushes to `claude/**` and `feature/browser-extension-integration`, or by hand) builds two test installers
 on Windows, upgrades the released 1.6.7 with it and drives the installed app
 (`scripts/windows/`); the installer is a workflow artifact, never a release.
 

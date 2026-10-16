@@ -1,4 +1,42 @@
-> The sections below record the audit branch before extension unification. Current candidate: **1.7.0-rc.1**, `feature/browser-extension-integration`; installation: [Hebrew instructions](INSTALL-1.7.0-rc.1-HE.md). Prior CI results are historical evidence only; the combined candidate has its own checks.
+# Current unified candidate (2026-10-16)
+
+**1.7.0-rc.1**, branch `feature/browser-extension-integration`. This combines the browser extension,
+browser/profile selection, media-context fixes and audited main-owned download lifecycle. Source
+baseline: `d253e21a680a9c142a4f8429bfc019670f76e0df`; subsequent documentation-only changes do not
+change the app or verification driver. Install and enable the extension using the
+[Hebrew instructions](INSTALL-1.7.0-rc.1-HE.md).
+
+| Verification | Current source-baseline run | What it exercises |
+| --- | --- | --- |
+| CI | [run 40](https://github.com/OrMeirDev/Grab/actions/runs/38860623852) | Linux/Windows regressions and build; real Electron queue, hidden probe, browser UI and minimum-window layout |
+| Browser integration | [run 6](https://github.com/OrMeirDev/Grab/actions/runs/38860623824) | Real extension and native host, authenticated generated media, packaged runtime without system Node, RC installer and checksum |
+| Windows verify | [run 24](https://github.com/OrMeirDev/Grab/actions/runs/38860623806) | Pinned engines, real Chrome/Edge test profiles, upgrade from 1.6.7, pause during merge, quit, cookie cleanup, rate limits, in-app update and paused restore |
+
+These are live result links: all three must finish successfully before calling automated
+verification complete. The distributable RC installer is `Grab-1.7.0-rc.1-Windows` in a successful
+Browser integration run. The `1.7.0-test.N` / `1.7.1-test.N` installers from Windows verify use a
+runner-local update feed and are exclusively for that verification runner.
+
+Continuation fix: Windows verify run 23 passed 28/29 installed-app/upgrade checks. W-07g counted
+the old download's request as a post-update request because the fixture flushes its log every
+200 ms. Its receipt time was `19:06:22.714Z`, before the old attempt's last process exited at
+`19:06:23.065Z`; the log contains no request between that exit and the user's Resume click.
+`d253e21` measures the whole interval after the exact process exit using request timestamps,
+records the matching requests, and requires a valid exit time. It retains the paused-row,
+zero-request and no-active-download assertions. No application behavior or test threshold changed.
+Local build, syntax/diff checks and 58 coordinator/domain/architecture regressions passed. The
+local environment denies socket listeners (`listen EPERM`), so full browser/socket verification
+uses the linked CI runners.
+
+Remaining desktop checks: the user's actual Chrome profile, Edge for mako, a fresh authorized
+mako page and a signed-in course page, plus normal desktop installation. Automated throwaway
+profiles do not establish those results. Chrome can remain the general default, with the seeded
+`mako.co.il → Edge` rule and automatic per-download choice. Loading the unpacked extension is a
+manual browser step; normal extension use does not need remote debugging.
+
+> The sections below record the audit branch before extension unification. Their CI results and
+> feature statuses are historical evidence; the combined candidate and its browser chooser use
+> the verification and installation instructions above.
 
 # Grab refactor handoff (2026-10-15)
 
