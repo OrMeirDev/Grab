@@ -2,7 +2,7 @@ name: Browser integration
 
 on:
   push:
-    branches: [feature/browser-extension-integration]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -19,6 +19,9 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Package version
+        id: version
+        run: node -e "require('fs').appendFileSync(process.env.GITHUB_OUTPUT, 'version=' + require('./package.json').version + '\n')"
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -67,20 +70,14 @@ jobs:
         run: npm run test:package
         env:
           GRAB_PACKAGED_DIR: release/win-unpacked
-      - name: Installer checksum and Hebrew instructions
+      - name: Verified release bundle, checksums and updater metadata
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $installer = Get-Item release/Grab-Setup-*.exe
-          "$((Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant())  $($installer.Name)" | Set-Content release/SHA256SUMS.txt
-          Copy-Item docs/INSTALL-1.7.0-rc.4-HE.md release/
+        run: node scripts/release/bundle.cjs
       - name: Retain test installer
         if: runner.os == 'Windows' && success()
         uses: actions/upload-artifact@v4
         with:
-          name: Grab-1.7.0-rc.4-Windows
-          path: |
-            release/Grab-Setup-*.exe
-            release/SHA256SUMS.txt
-            release/INSTALL-1.7.0-rc.4-HE.md
-          retention-days: 7
+          name: Grab-${{ steps.version.outputs.version }}-Windows
+          path: release/bundle/*
+          if-no-files-found: error
+          retention-days: 14

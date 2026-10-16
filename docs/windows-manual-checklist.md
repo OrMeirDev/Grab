@@ -1,100 +1,20 @@
-> Historical checklist for the audit-only test build. For the unified extension build use [Grab 1.7.0-rc.1 — installation and tests in Hebrew](INSTALL-1.7.0-rc.1-HE.md).
+# Windows desktop checks
 
-# צ'קליסט לבדיקות ידניות ב־Windows (המחשב שלך)
+Install the latest stable build using [the Hebrew guide](INSTALL-WINDOWS-HE.md).
+The owner accepted RC4 on 2026-10-16. These targeted checks remain useful when a specific platform
+or profile changes; runner fixtures do not establish access to a personal account.
 
-רק מה ש־CI לא יכול לבדוק: פרופילים אישיים, חשבון אמיתי, תוכן אמיתי ושולחן עבודה רגיל. כל השאר
-(השהיה בזמן מיזוג, עדכון בזמן הורדה, תור ו־429, עוגיות, שמות קבצים) כבר עבר על runner — ראה
-`docs/handoff.md` §4. משך משוער: 60–90 דקות. השתמש רק בתוכן ובחשבונות שמותר לך לבדוק איתם.
+- Paste a public URL with all browsers closed; download MP4 and MP3.
+- Queue two YouTube links; each downloads once and the second starts after the rest.
+- Send an account-dependent page from the extension; its sending profile is retained.
+- Connect Chrome and Brave together; each answers Check connection and appears separately.
+- Keep a different saved default and Send from Brave; the job still uses Brave.
+- Paste a fresh Mako page with Edge connected; verify picture and sound in the final file.
+- Cancel discovery and confirm existing user tabs are neither reloaded nor closed.
+- Pause, quit, reopen and resume; the job stays paused until explicitly resumed and reacquires
+  its original session before any protected request.
+- Install a later stable update using the app banner; verify settings and history are retained.
 
-סימון: `[x]` עבר. אם נכשל: כתוב ❌ ליד הסעיף, צלם מסך ושמור את מה שמפורט בסעיף 7.
-
-## 0. לפני שמתחילים
-
-- [ ] **גיבוי.** סגור את Grab, ואז ב־PowerShell:
-      `Copy-Item "$env:APPDATA\Grab" "$env:USERPROFILE\Desktop\Grab-backup" -Recurse`
-      (הגדרות, היסטוריה ותור. גרסת הבדיקה משתמשת באותם קבצים.)
-- [ ] **הורדת ה־installer.** https://github.com/OrMeirDev/Grab/actions/runs/38748221063 ← Artifacts ←
-      `grab-test-installer-19` (זמין עד 29.10.2026). מתוך ה־zip צריך רק את
-      `release-a/Grab-Setup-1.6.8-test.19.exe`.
-- [ ] **בדיקת checksum.** ב־PowerShell, בתיקייה של הקובץ:
-      `(Get-FileHash .\Grab-Setup-1.6.8-test.19.exe -Algorithm SHA256).Hash`
-      צריך לצאת `8E23B41D006FE0578BE6616263EEDC9AB3A53E364D4EF1FC5F04086B7AECFEE9`.
-- [ ] רשום את גרסאות הדפדפנים (`chrome://version`, `edge://version`, `brave://version`): ________
-
-חשוב לדעת על גרסת הבדיקה:
-- היא לא מתעדכנת: כתובת העדכונים שלה היא מחשב ה־CI. "בדוק עדכונים" ייכשל — זה צפוי. בסוף
-  חוזרים לגרסה הרגילה (סעיף 6).
-- איך רואים תהליכים: מנהל המשימות ← Details, או ב־PowerShell
-  `Get-Process yt-dlp, ffmpeg -ErrorAction SilentlyContinue` (אין פלט = אין תהליך).
-
-## 1. התקנה על שולחן עבודה רגיל
-
-- [ ] הרץ את ה־installer מעל ה־Grab המותקן. מופיע SmartScreen (הקובץ לא חתום): "מידע נוסף" ←
-      "הפעל בכל זאת".
-- [ ] ההתקנה בעברית, מסתיימת בלי שגיאה; יש קיצור בשולחן העבודה ובתפריט התחל.
-- [ ] Grab נפתח; בפינה: "גרסה 1.6.8-test.19". ההיסטוריה וההגדרות שלך (תיקייה, פורמט, איכות) נשארו.
-- [ ] אחרי שנייה בערך: "המנוע מוכן" (שנייה ראשונה של "המנוע לא נמצא" באדום — ידוע, לא לסמן ככישלון).
-
-## 2. סרטון ציבורי אמיתי (אתר שאתה בוחר)
-
-- [ ] MP4: הדבק ← "זהה סרטונים" ← הורד. הקובץ נפתח ומתנגן עם תמונה וקול.
-- [ ] MP3 מאותו אתר: נוצר `.mp3` שמתנגן.
-- [ ] שניהם מופיעים בהיסטוריה ובספרייה.
-
-## 3. ההפסקה בין הורדות YouTube
-
-- [ ] הדבק שני קישורי YouTube ← "זהה סרטונים" ← "הורד הכול".
-- [ ] כשהראשון מסתיים מופיע למטה "הפסקה קצרה לפני הסרטון הבא…".
-- [ ] אחרי 5–10 שניות השני מתחיל **לבד** (בלי ללחוץ), ומסתיים. כל אחד ירד פעם אחת.
-
-## 4. חיבור לדפדפן — לחזור על הסעיף לכל דפדפן: Chrome ☐ · Edge ☐ · Brave ☐
-
-Grab משתמש בדפדפן ברירת המחדל של Windows ובפרופיל הרגיל שלך, שבו אתה מחובר.
-
-- [ ] הגדרות Windows ← אפליקציות ← אפליקציות ברירת מחדל: קבע את הדפדפן הנבדק כברירת מחדל.
-- [ ] פתח אותו בפרופיל הרגיל, היכנס לאתר המנויים, הדבק בשורת הכתובת
-      `chrome://inspect/#remote-debugging` (ב־Edge: `edge://…`, ב־Brave: `brave://…`) וסמן
-      Allow remote debugging.
-- [ ] ב־Grab: הגדרות ← "מדריך קצר" ← "בדוק חיבור". הדפדפן שואל אם לאשר ← אשר ←
-      "מחובר ל־<הדפדפן>". (שאלת האישור עצמה היא חלק מהבדיקה: רשום אם הופיעה.)
-- [ ] **כרטיסייה פתוחה לא נוגעים בה:** פתח דף שיעור, נגן כמה שניות, עצור ב־1:23 בערך וגלול למטה.
-      הדבק ב־Grab את **אותה כתובת בדיוק** ← זהה. צפוי: הסרטון נמצא; הכרטיסייה שלך לא נטענה מחדש,
-      הסרטון עדיין עצור באותה שנייה, הגלילה לא זזה, ולא נשארה כרטיסייה חדשה.
-- [ ] **דף שלא פתוח:** הדבק כתובת של שיעור אחר מאותו אתר. צפוי: כרטיסייה ברקע נפתחת לרגע ונסגרת
-      לבד; הכרטיסיות שלך לא השתנו; הסרטון נמצא.
-- [ ] הורד אותו: הקובץ מתנגן.
-- [ ] **הפעלה מחדש של הדפדפן:** סגור את הדפדפן לגמרי, פתח שוב באותו פרופיל, זהה שיעור נוסף. צפוי:
-      שאלת אישור חדשה ← אשר ← עובד. (אם צריך לסמן שוב את Allow remote debugging — רשום זאת.)
-- [ ] **שני סשנים:** פתח את אותו שיעור גם בחלון רגיל וגם בחלון InPrivate/Incognito, וזהה. צפוי:
-      "העמוד פתוח בכמה סשנים של <הדפדפן>; השאר אותו פתוח בסשן שבו אתה מחובר". סגור את החלון
-      הפרטי ← נסה שוב ← עובד.
-
-## 5. אתר מנויים עם חשבון אמיתי — אחרי הפעלה מחדש של Grab
-
-זו בדיקת הבטיחות של הסשן. את ההבטחה "שום בקשה לאתר בלי הסשן" כבר הוכחנו ב־CI עם אתר בדיקה
-שרושם כל בקשה (W-04a ובדיקות `session-discovery`); כאן בודקים שהזרימה האמיתית עובדת.
-
-- [ ] הדפדפן מחובר ופתוח. הדבק כתובת של **דף** שיעור (לא של הסרטון) ← זהה. בזמן החיפוש השורה אומרת
-      "מנסה דרך <הדפדפן> שלך…"; בסוף: מוכן להורדה.
-- [ ] **בלי להוריד**: סגור את Grab ופתח שוב. השורה עדיין שם. לחץ הורדה ← הדפדפן שואל שוב ← אשר ←
-      ההורדה מתחילה ומסתיימת, **בלי** שגיאה ובלי ניסיון כושל לפני כן.
-- [ ] **באמצע הורדה**: התחל להוריד שיעור אחר, סגור את Grab באמצע. פתח שוב: השורה "מושהה" ושום דבר
-      לא התחיל לבד. "המשך" ← אשר בדפדפן ← מסתיים, קובץ אחד (בלי "(2)").
-- [ ] **דפדפן סגור:** זהה שיעור, סגור את הדפדפן לגמרי, לחץ הורדה. צפוי: "האתר דורש את <הדפדפן>
-      שבו אתה מחובר. פתח אותו, אשר את החיבור ונסה שוב", עם קישור למדריך; שום קובץ לא נוצר. פתח את
-      הדפדפן ← "נסה שוב" ← אשר ← עובד.
-- [ ] **סירוב:** כששואלים אם לאשר את החיבור, לחץ ביטול/דחה. צפוי: אותה הודעה מפורשת, בלי הורדה.
-- [ ] אחרי כל ההורדות: `Get-Process yt-dlp, ffmpeg -ErrorAction SilentlyContinue` לא מחזיר כלום.
-
-## 6. חזרה לגרסה הרגילה
-
-- [ ] הגדרות Windows ← אפליקציות ← Grab ← הסרה. אם נשאלת על מחיקת נתונים — **לא**.
-- [ ] בדוק שההסרה ניקתה: אין קיצורים, אין Grab ברשימת האפליקציות.
-- [ ] התקן את 1.6.7 מ־https://github.com/OrMeirDev/Grab/releases/tag/v1.6.7 ופתח: ההיסטוריה וההגדרות שם.
-- [ ] אם משהו חסר או מוזר: סגור את Grab והחזר את הגיבוי מסעיף 0 לתיקייה `%APPDATA%\Grab`.
-
-## 7. מה לשלוח לי
-
-- הקובץ הזה מסומן (או רשימה: מספר סעיף ← ✅/❌ + הערה), וגרסאות הדפדפנים מסעיף 0.
-- לכל ❌: צילום מסך, השעה המשוערת, והקובץ `%APPDATA%\Grab\logs\diagnostics.log`. אין בו עוגיות
-  ולא כתובות מלאות (רק אתר ונתיב), אבל הנתיב יכול לחשוף שם של קורס — עבור עליו לפני ששולחים.
+Record the app/extension version, profile alias, exact error and final playback result for a
+failure. Diagnostics redact cookies and signatures; review page paths before sharing them.
+The historical audit-only checklist is [archived](archive/windows-manual-checklist-2026-10-15.md).

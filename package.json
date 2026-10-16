@@ -1,6 +1,6 @@
 {
   "name": "grab",
-  "version": "1.7.0-rc.4",
+  "version": "1.7.0",
   "description": "Grab - video downloader",
   "author": "Or meir Tzarfati",
   "main": "electron/main.cjs",
@@ -11,7 +11,7 @@
     "build": "vite build",
     "start": "electron .",
     "dist": "node scripts/verify-native-tools.cjs && vite build && electron-builder --win nsis --x64",
-    "release": "node scripts/verify-native-tools.cjs && vite build && electron-builder --win nsis --x64 --publish always",
+    "release": "node scripts/release/publish.cjs",
     "fetch-bin": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fetch-bin.ps1",
     "e2e:glass-menu": "vite build && electron e2e/glass-menu.cjs",
     "e2e:hidden-probe": "electron e2e/hidden-probe.cjs",
@@ -39,7 +39,8 @@
     "simple-icons": "^16.35.0",
     "vite": "^8.3.4",
     "wait-on": "^8.0.1",
-    "playwright": "1.58.2"
+    "playwright": "1.58.2",
+    "js-yaml": "4.3.2"
   },
   "build": {
     "appId": "com.grab.downloader",

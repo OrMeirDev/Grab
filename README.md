@@ -1,14 +1,12 @@
 # Grab
 
-Unified candidate: **1.7.0-rc.4**, including the browser extension and the audit fixes. [Install and test on your Windows PC (Hebrew)](docs/INSTALL-1.7.0-rc.4-HE.md). [Extension setup and troubleshooting](docs/browser-extension.md).
+Stable version: **1.7.0**. [Download the Windows installer](https://github.com/OrMeirDev/Grab/releases/download/v1.7.0/Grab-Setup-1.7.0.exe). [Installation in Hebrew](docs/INSTALL-WINDOWS-HE.md). [Release notes](docs/releases/1.7.0.md).
 
 Windows app for downloading videos and audio from YouTube and ~1,300 other sites, built on [yt-dlp](https://github.com/yt-dlp/yt-dlp). Hebrew, right-to-left interface.
 
 ## Install
 
-For **1.7.0-rc.4**, use the installer artifact from the successful [Browser integration workflow](https://github.com/OrMeirDev/Grab/actions/workflows/browser-integration.yml) on `feature/browser-extension-integration`, following the [Hebrew installation instructions](docs/INSTALL-1.7.0-rc.4-HE.md). The latest published release does not include this candidate. Its matching [Windows verify workflow](https://github.com/OrMeirDev/Grab/actions/workflows/windows-verify.yml) must also pass.
-
-Published versions remain available under [Releases](https://github.com/OrMeirDev/Grab/releases). Installed copies update themselves when a new version is published to their update channel; this candidate is installed manually.
+Download [Grab-Setup-1.7.0.exe](https://github.com/OrMeirDev/Grab/releases/download/v1.7.0/Grab-Setup-1.7.0.exe) from [Releases](https://github.com/OrMeirDev/Grab/releases/latest) and install over your existing copy. Settings and history are retained. The release includes updater metadata, checksums and the [Hebrew guide](docs/INSTALL-WINDOWS-HE.md). Ordinary stable updates are also available inside Grab.
 
 The installer is not code-signed, so Windows SmartScreen warns on first run: click **More info → Run anyway**.
 
@@ -27,14 +25,14 @@ The installer is not code-signed, so Windows SmartScreen warns on first run: cli
 
 ## Pages that use your browser session
 
-The 1.7.0 candidate uses a locally loaded extension in **Chrome, Edge or Brave**. It uses the selected active browser/profile and does not open an in-app sign-in page or require remote debugging for extension use.
+Grab 1.7.0 uses a locally loaded extension in **Chrome, Edge or Brave**. It uses the selected active browser/profile and does not open an in-app sign-in page or require remote debugging for extension use.
 
 1. In Grab, open **הגדרות → דפדפן והרחבה**, then click **התקנה** next to the intended browser.
 2. In that browser's extensions page, enable **Developer mode**, choose **Load unpacked**, and select the stable extension folder shown by Grab. Repeat in each intended profile.
 3. Return to Grab, test the connection, and choose the browser/profile and general default. New settings include `mako.co.il → Edge`. Sending from the extension uses that browser/profile; ordinary pasted links do not use the default.
 4. Send an account/embedded page through the extension; it joins the queue and downloads automatically. Paste ordinary public links directly into Grab without browser setup or a route selector. Existing tabs are scanned without reloading, starting playback or closing them. Grab closes only tabs it opened for the job.
 
-See [extension setup and troubleshooting](docs/browser-extension.md) for connection, profile choice, repair and playback-required steps. The older remote-debugging path remains available for browsers that have never been set up with the extension; it is not needed for the setup above. Firefox is unsupported. Automated tests use throwaway profiles; personal Chrome/Edge/Brave sessions still need the [manual checks](docs/INSTALL-1.7.0-rc.4-HE.md).
+See [extension setup and troubleshooting](docs/browser-extension.md) for connection, profile choice, repair and playback-required steps. The older remote-debugging path remains available for browsers that have never been set up with the extension; it is not needed for the setup above. Firefox is unsupported. Automated tests use throwaway profiles; personal Chrome/Edge/Brave sessions still need the [manual checks](docs/windows-manual-checklist.md).
 
 Lookup reads player attributes (including signed Mux manifest URLs), open Shadow DOM, frame execution contexts and media network requests. Cookies for the page and discovered URLs are passed to yt-dlp in a temporary domain-scoped cookie jar, together with the player request's User-Agent, Referer and Origin. The jar is deleted after lookup/download. A failed download of an embedded source is looked up again to refresh expiring URLs.
 
@@ -50,16 +48,14 @@ npm test            # unit + integration tests (the real-Chromium/real-yt-dlp on
 npm run e2e:queue-cooldown   # end-to-end checks in the real app; see e2e/README.md
 npm run verify-bin  # bin/ matches native-tools.lock.json (also runs before dist/release)
 npm run dist        # build the installer into release/
-npm run release     # build and publish a GitHub release (needs GH_TOKEN)
+npm run release     # CI-only verified publication; see docs/releasing.md
 ```
 
 Architecture and contributor rules: [docs/architecture.md](docs/architecture.md), [AGENTS.md](AGENTS.md).
 CI (`.github/workflows/ci.yml`) runs the tests on Linux and Windows and the end-to-end checks.
-`.github/workflows/windows-verify.yml` (code pushes to `claude/**` and `feature/browser-extension-integration`, or by hand) builds two test installers
-on Windows, upgrades the released 1.6.7 with it and drives the installed app
-(`scripts/windows/`); the installer is a workflow artifact, never a release.
+[Browser integration](.github/workflows/browser-integration.yml) checks the real extension/Brave and prepares the tested installer bundle. [Windows verify](.github/workflows/windows-verify.yml) installs over 1.6.7 and checks pause/merge/quit, session cleanup, queue and in-app update. After all main checks succeed, [Release](.github/workflows/release.yml) publishes that exact installer and its update metadata. See [releasing](docs/releasing.md) for the version/tag process.
 
-To publish an update: bump `version` in `package.json`, then run `npm run release` (see docs/handoff.md for the release checks still to automate).
+Current project state: [handoff](docs/handoff.md). Historical audits and RC installation guides: [archive](docs/archive/).
 
 ## Not supported
 

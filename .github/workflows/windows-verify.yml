@@ -12,7 +12,7 @@ name: Windows verify
 on:
   workflow_dispatch:
   push:
-    branches: ['claude/**', feature/browser-extension-integration]
+    branches: [main]
     paths:
       - 'electron/**'
       - 'src/**'

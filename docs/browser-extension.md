@@ -1,27 +1,8 @@
 # Browser extension integration
 
-This feature is on `feature/browser-extension-integration`, separate from `main` and published releases. It supports GRAB's Hebrew Windows UI and a locally loaded Chromium Manifest V3 extension for Edge, Chrome, and Brave. Each intended browser **profile** needs its own unpacked-extension installation. No extension store account or publication is required.
+Browser integration is included in **Grab 1.7.0** on main and in the stable Windows release. It supports Chrome, Edge and Brave using each active profile. Each intended profile loads the unpacked extension once; no extension-store publication is required.
 
-## Try the feature on Windows
-
-Use this branch in a clean checkout or worktree; preserve your local changes when switching branches.
-
-```powershell
-git fetch origin
-git switch feature/browser-extension-integration
-git pull --ff-only origin feature/browser-extension-integration
-npm ci
-npm run fetch-bin
-npm run dev
-```
-
-To test an installed build instead of development mode:
-
-```powershell
-npm run dist -- --publish never
-```
-
-Run the resulting `release/Grab-Setup-1.7.0-rc.4.exe`. Building this test installer does not publish a release. The normal GitHub latest-release download does not automatically contain changes from this feature branch.
+Install using [the Hebrew guide](INSTALL-WINDOWS-HE.md). For development, use a clean checkout of main, then npm ci, npm run fetch-bin and npm run dev. npm run dist builds a local installer without publishing. Stable releases use the [verified publication workflow](releasing.md).
 
 ## One-time browser setup
 
@@ -66,7 +47,7 @@ Existing user tabs are not reloaded or closed. Fresh re-probes use job-owned tem
 
 ## Repair, remove, and development commands
 
-**תיקון** updates the stable extension folder and native registration. Reload the extension in the browser afterwards when its code/version changed, then test the connection. Registered browsers follow a moved/upgraded GRAB runtime during startup repair. RC4 requires extension **1.1.3**. In Brave, open `brave://extensions` and Reload after Repair. Chrome and Brave share the supported Windows native-host key; the host identifies the actual launching browser from its parent processes. Repair migrates the old unused BraveSoftware key.
+**תיקון** updates the stable extension folder and native registration. Reload the extension in the browser afterwards when its code/version changed, then test the connection. Registered browsers follow a moved/upgraded GRAB runtime during startup repair. Grab 1.7.0 requires extension **1.1.3**. In Brave, open `brave://extensions` and Reload after Repair. Chrome and Brave share the supported Windows native-host key; the host identifies the actual launching browser from its parent processes. Repair migrates the old unused BraveSoftware key.
 
 For a development checkout, the following Windows commands use the same setup implementation:
 
@@ -138,8 +119,8 @@ The **Browser integration** GitHub Actions workflow runs Linux/Windows checks, r
 
 Automated fixtures do not prove access to personal mako sessions or the owner's actual installed profiles. Those checks remain manual until performed on that Windows PC.
 
-## Unified release candidate
+## Stable release
 
-Version 1.7.0-rc.4 combines the audit branch, the media request-context fixes and the browser extension. The main-process DownloadCoordinator owns both paste and Send-to-GRAB jobs; private media URLs, headers and cookie handles never enter renderer snapshots or queue.json. Browser/profile choices survive restart. Cookie acquisition errors fail before the extractor is called; each disconnected extension profile loses only its own vault handles. The pinned engines, process-tree shutdown, verified output and upgrade checks remain enabled.
+Version 1.7.0 combines the audit branch, the media request-context fixes and the browser extension. The main-process DownloadCoordinator owns both paste and Send-to-GRAB jobs; private media URLs, headers and cookie handles never enter renderer snapshots or queue.json. Browser/profile choices survive restart. Cookie acquisition errors fail before the extractor is called; each disconnected extension profile loses only its own vault handles. The pinned engines, process-tree shutdown, verified output and upgrade checks remain enabled.
 
-See [Hebrew installation and personal-profile checks](INSTALL-1.7.0-rc.4-HE.md). The installer and SHA256SUMS are artifacts of the Browser integration workflow; Windows verify separately exercises installation over 1.6.7 and the installed app's update flow. Test results must refer to the actual unified commit, not an older branch's green run.
+See [Hebrew installation](INSTALL-WINDOWS-HE.md) and [desktop checks](windows-manual-checklist.md). The installer and checksums are in the stable GitHub release; publication requires CI, Browser integration and Windows verify on the same main commit.
