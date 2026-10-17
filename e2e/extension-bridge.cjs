@@ -214,6 +214,16 @@ test('real Chromium + real extension + real native host + hub', { skip, timeout:
     }
   });
 
+  await run('a stalled page load does not consume the player-discovery deadline', async () => {
+    const before = (await first.pages()).map((p) => p.targetId).sort();
+    const started = Date.now();
+    const r = await discoverOn(key, fixture.url('/loading'));
+    assert.ok(r.candidates.some((c) => c.url === fixture.url('/files/clip.mp4')));
+    assert.ok(fixture.requests.some((req) => req.path === '/never-finishes'), 'the load-blocking request really started');
+    assert.ok(Date.now() - started < 30000, 'player discovery keeps time before the 40-second total deadline');
+    await until(async () => JSON.stringify((await first.pages()).map((p) => p.targetId).sort()) === JSON.stringify(before), 10000, 'only the temporary tab to close');
+  });
+
   await run('HLS via XMLHttpRequest, DASH and an opaque URL (content-type only)', async () => {
     const x = await discoverOn(key, fixture.url('/xhr-hls'));
     assert.ok(x.candidates.some((c) => c.kind === 'hls'));

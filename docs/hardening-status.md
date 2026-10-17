@@ -17,7 +17,7 @@ These changes are not in the published 1.7.0 installer.
 | F07 account attribution on extension sends | Keep the approved session-preserving behavior. This is required product behavior, not anonymity. | Personal-profile check |
 | F08–F11 storage/scope improvements | Retained; temporary/cache/log directories also receive restrictive Windows ACLs. | Standard-user Windows ACL proof |
 | F12 browser identity timeouts | Isolated in [PR #8](https://github.com/OrMeirDev/Grab/pull/8): one bounded retry after a timeout; privacy never substitutes a guessed browser. | Windows extension/Brave checks |
-| F13 extension stale detection | Bump unpacked extension to 1.1.4 because its permission set changed. Repair + Reload remain required. | Reload Chrome/Edge/Brave |
+| F13 extension stale detection | Unpacked extension 1.1.5 includes the permission changes and bounded discovery waits. Repair + Reload remain required. | Reload Chrome/Edge/Brave |
 | F14 logs directory permissions | Owner-only directory; restrict existing rotated logs on POSIX; do not follow directory symlinks. | Windows ACL checks |
 | F15 incomplete validation | Standalone Windows privacy tests, standard-user ACL/cross-user denial, before/after synthetic-profile screenshots and installed Windows verify are automated. | Results on final commit; installed personal-profile/account scenarios |
 | F16 host-only expansion | Mandatory in-process policy, strict urllib jars, scope-preserving authenticated metadata, explicit refusal of unguarded contextual external network downloaders. | Standalone Windows exe + real account compatibility |

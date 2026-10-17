@@ -4,10 +4,23 @@
 
 The hardening branch builds on PR #6 and the privacy changes from PR #5. See
 [the findings/status matrix](hardening-status.md) and [ADR 0003](adr/0003-download-network-privacy.md).
-Its required extension version is 1.1.4. This work is separate from the published stable installer;
+Its required extension version is 1.1.5. This work is separate from the published stable installer;
 final-head CI, installed Windows checks and real-account compatibility remain release gates.
 
 ### Local upgrade follow-up (2026-10-17)
+
+Extension discovery bounds each DOM scan to 1.5 seconds, injects without waiting for document idle,
+and reserves discovery time after at most 8 seconds waiting for a job-owned tab to finish loading.
+Discarded user tabs are left dormant; other existing tabs are scanned without playback and never
+navigated or closed. A pending injection is reused rather than accumulating requests; late results
+are ignored. Network observations remain usable when a DOM scan times out. Cancellation stops the
+loading wait and only closes the job-owned tab. Controlled-worker regressions cover stalled scans,
+discarded tabs, incomplete loads, cancellation and the unchanged total deadline. The Windows real
+extension fixture includes a page whose image response never finishes. The owner's intermittent
+Mako/Edge cold-start timeout is not yet attributed conclusively: repeat installed cold starts and
+resume checks with the updated extension, preserving existing personal tabs and sanitized timings.
+The extension version is bumped to 1.1.5 so same-version application upgrades refresh its files;
+Reload is still required in each browser before those checks.
 
 Private native-host runtimes are now content-verified against the installed executable,
 runtime files and locales, including same-version/same-size rebuilds. Startup auto-repair
