@@ -29,8 +29,14 @@ async function connectInstance({ hub, browser, getInstance, settings = {}, deps 
     if (pick.problem === 'choice_required') throw new BrowserError('choiceRequired', { options: pick.options });
     if (pick.problem === 'instance_disconnected') {
       // The profile the user chose is not connected. Wait briefly for it (extension reconnecting), never use another one.
+      // If its browser is closed, start the browser as for a first connection; a running browser is never started again.
       const wanted = pick.wanted;
-      try { await hub.waitFor((i) => i.key === wanted, { timeoutMs: cfg.connectMs, signal: signal }); }
+      let launched = false;
+      if (!pick.options.length && browser.exe && deps.isRunning && !(await deps.isRunning(browser.id))) {
+        throwIfAborted();
+        try { deps.launch(browser.exe); launched = true; } catch { /* the wait below then settles as wrongProfile */ }
+      }
+      try { await hub.waitFor((i) => i.key === wanted, { timeoutMs: cfg.connectMs + (launched ? cfg.launchGraceMs : 0), signal: signal }); }
       catch (e) { throw e.code === 'cancelled' ? new BrowserError('cancelled') : new BrowserError('wrongProfile', { options: pick.options }); }
       pick = getInstance();
     }

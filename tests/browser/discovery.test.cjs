@@ -177,6 +177,43 @@ test('two profiles: the chosen one is used, a missing remembered one is never re
   assert.equal(a.received.filter((m) => m.type === 'discover').length, 0);
 });
 
+// A restored session job keeps the profile it was found with. When that browser is closed,
+// Grab starts it exactly as for a first connection, then still accepts only that profile.
+test('a remembered profile whose browser is closed: Grab starts the browser once and waits for that profile only', async (t) => {
+  const { hub, connect } = await rig(t);
+  const wanted = (key) => () => pickInstance({ browserId: 'edge', instances: hub.instances(), settings: {}, explicitInstance: key });
+  const started = [];
+  const closedBrowser = (instanceId, launched) => ({
+    isRunning: async () => false,
+    launch: (exe) => { launched.push(exe); setTimeout(async () => { const b = await connect({ instanceId }); started.push(b); respond(b, (m) => b.write(protocol.make('candidates', { jobId: m.jobId, final: true, candidates: [cand(`https://cdn.test/from-${instanceId}.m3u8`)] }))); }, 150); },
+  });
+
+  const launched = [];
+  const r = await discover({ hub, browser: edge, url: 'https://x.test/p', getInstance: wanted('edge:prof-b'), settings, deps: closedBrowser('prof-b', launched) });
+  assert.deepEqual(launched, [edge.exe], 'the closed browser is started once');
+  assert.equal(r.instance.key, 'edge:prof-b');
+  assert.equal(r.candidates[0].url, 'https://cdn.test/from-prof-b.m3u8');
+
+  // The browser is closed again; starting it brings up another profile: still never substituted.
+  await Promise.all(started.splice(0).map((b) => b.kill()));
+  for (let i = 0; i < 40 && hub.instances().length; i++) await sleep(50);
+  assert.equal(hub.instances().length, 0);
+  const other = [];
+  await assert.rejects(discover({ hub, browser: edge, url: 'https://x.test/p', getInstance: wanted('edge:prof-c'), settings, deps: closedBrowser('prof-a', other) }), { kind: 'wrongProfile' });
+  assert.deepEqual(other, [edge.exe]);
+  const a = await hub.waitFor((i) => i.key === 'edge:prof-a', { timeoutMs: 2000 });
+  assert.ok(a, 'the other profile did connect');
+  assert.equal(hub.instances().filter((i) => i.key === 'edge:prof-c').length, 0);
+});
+
+test('a remembered profile missing while its browser runs: no second browser start, wrongProfile', async (t) => {
+  const { hub } = await rig(t);
+  const launched = [];
+  const getInstance = () => pickInstance({ browserId: 'edge', instances: hub.instances(), settings: {}, explicitInstance: 'edge:prof-b' });
+  await assert.rejects(discover({ hub, browser: edge, url: 'https://x.test/p', getInstance, settings, deps: { isRunning: async () => true, launch: (e) => launched.push(e) } }), { kind: 'wrongProfile' });
+  assert.deepEqual(launched, [], 'a running browser is never started again');
+});
+
 test('a timeout names the extension job stage: from job-failed, or the last valid progress stage when the app timer ends it', async (t) => {
   const { hub, connect, getInstance } = await rig(t);
   const b = await connect();

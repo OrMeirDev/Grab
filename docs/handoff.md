@@ -30,6 +30,13 @@ last valid stage, also when its own timer ends the job. That stage reaches the l
 permissions are unchanged. The bump makes an installed 1.1.5 report as outdated, so Repair and
 Reload are needed. When an installed cold-start timeout recurs, record the lookup's `jobStage`.
 
+Resuming a restored session job whose browser is closed now starts that browser, as a first
+connection already did, then still waits only for the remembered profile. Before this, the
+installed d024572 candidate failed such a resume with `wrongProfile` after 10 s without starting
+Edge (2026-10-17, Mako job paused at 14% and Grab restarted). A running browser is never started
+again, and another profile is never substituted. Windows check: with Edge closed, resume a paused
+Mako job after restarting Grab, and expect a new lookup through Edge, then completion.
+
 Private native-host runtimes are now content-verified against the installed executable,
 runtime files and locales, including same-version/same-size rebuilds. Startup auto-repair
 checks the bytes before reusing a connection. A new private copy is staged and verified before
