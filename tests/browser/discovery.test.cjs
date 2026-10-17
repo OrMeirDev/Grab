@@ -176,3 +176,16 @@ test('two profiles: the chosen one is used, a missing remembered one is never re
   await assert.rejects(discover({ hub, browser: edge, url: 'https://x.test/p', getInstance: ghost, settings }), { kind: 'wrongProfile' });
   assert.equal(a.received.filter((m) => m.type === 'discover').length, 0);
 });
+
+test('a timeout names the extension job stage: from job-failed, or the last progress when the app timer ends it', async (t) => {
+  const { hub, connect, getInstance } = await rig(t);
+  const b = await connect();
+  let mode = 'failed';
+  respond(b, (m) => {
+    if (mode === 'failed') b.write(protocol.make('job-failed', { jobId: m.jobId, reason: 'timeout', stage: 'waiting_load' }));
+    else b.write(protocol.make('progress', { jobId: m.jobId, state: 'opening' }));
+  });
+  await assert.rejects(discover({ hub, browser: edge, url: 'https://x.test/p', getInstance: getInstance(), settings }), { kind: 'discoveryTimeout', jobStage: 'waiting_load' });
+  mode = 'silent';
+  await assert.rejects(discover({ hub, browser: edge, url: 'https://x.test/p', getInstance: getInstance(), settings: { ...settings, discoveryMs: 500 } }), { kind: 'discoveryTimeout', jobStage: 'opening' });
+});

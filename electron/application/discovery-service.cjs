@@ -34,7 +34,7 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
       result = controller.signal.aborted ? (timedOut ? { ok: false, kind: 'discoveryTimeout', error: 'The lookup took too long' } : cancelled())
         : { ok: false, kind: error.kind || 'other', error: String(error.message || error) };
     } finally { clearTimeout(timer); unlisten(); options.signal?.removeEventListener('abort', onAbort); }
-    record('lookup', { url, ok: !!result.ok, kind: result.ok ? null : result.kind, strategy, ms: now() - started, error: result.ok ? null : result.error });
+    record('lookup', { url, ok: !!result.ok, kind: result.ok ? null : result.kind, strategy, ms: now() - started, error: result.ok ? null : result.error, jobStage: result.ok ? null : result.jobStage });
     return result;
   }
 

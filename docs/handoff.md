@@ -22,6 +22,22 @@ file. Verify the installed upgrade with synthetic old records in both active and
 inspect only sanitized results/counts. The real-engine fixture also releases its cached metadata
 through the engine lifecycle, including failed assertions.
 
+### Extension discovery waits (2026-10-17)
+
+One Mako-via-Edge lookup after Grab cold-started Edge spent the full 60 s inside the extension job
+(`discoveryTimeout`, cause not proven). Two waits in `extension/background.js` were unbounded and
+are now capped. First, an existing tab of the page is used only when it is loaded and not
+discarded or frozen. Its scan is limited to 4 s, then the job falls through to its own temporary
+tab. The user's tab is never reloaded, navigated or closed. Second, the temporary tab's load event
+is waited for at most 15 s, then scanning starts anyway. A scan that does not answer never counts
+as "no video". On a timeout, `job-failed` carries an optional `stage` (`locating`, `opening`,
+`waiting_load` or `discovering`). It reaches the lookup result as `jobStage` and diagnostics as an
+enum-only field. Protocol and permissions are unchanged, so the extension stays at the unreleased
+1.1.4. A browser that already loaded an earlier 1.1.4 must be repaired and its extension reloaded,
+because the version number will not flag it as stale. Windows check still needed: close Edge with
+Mako tabs open (so they are restored or asleep), let Grab cold-start Edge for a Mako link, and
+confirm candidates arrive. If it fails, check the lookup's `jobStage` in diagnostics.
+
 The owner's local report confirms public downloads and Mako/Edge, including session reacquisition
 after restart, on packaged candidate source 3caa352. Extension sends/sending-profile retention,
 real standard-user acceptance and the in-app updater remain unverified locally. These results do not

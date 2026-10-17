@@ -151,3 +151,13 @@ test('an incomplete migration disables disk append and retries after the obstruc
     assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'diagnostics.log'), 'utf8')).app, '1.7.0');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a lookup records the extension job stage only from the fixed stage list', () => {
+  const { safeEventDetails, ENUM_FIELDS } = require('../electron/infrastructure/diagnostics.cjs');
+  assert.deepEqual(ENUM_FIELDS.jobStage, require('../extension/lib/protocol.js').JOB_STAGES, 'the diagnostics enum follows the protocol');
+  for (const stage of ENUM_FIELDS.jobStage) assert.equal(safeEventDetails('lookup', { kind: 'discoveryTimeout', jobStage: stage }).jobStage, stage);
+  for (const value of ['waiting for https://media.example/x', 'Discovering', 'other text', '', 7, null, { stage: 'opening' }]) {
+    assert.equal('jobStage' in safeEventDetails('lookup', { kind: 'discoveryTimeout', jobStage: value }), false, JSON.stringify(value));
+  }
+  assert.equal('jobStage' in safeEventDetails('download', { jobStage: 'opening' }), false, 'only lookups carry a job stage');
+});

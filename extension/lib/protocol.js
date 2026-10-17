@@ -27,6 +27,9 @@
     'no_video', 'playback_required', 'timeout', 'cancelled', 'tab_failed', 'protected',
     'extension_error', 'permission_denied', 'navigation_changed',
   ];
+  // Where a discovery job was when it failed. Optional on job-failed (older extensions omit it);
+  // a fixed enum so the app can record it in diagnostics without free text.
+  const JOB_STAGES = ['locating', 'opening', 'waiting_load', 'discovering'];
 
   function validCandidate(c) {
     if (!isObj(c) || !isHttpUrl(c.url)) return false;
@@ -55,7 +58,7 @@
     'reveal-tab': { dir: 'app', check: (m) => isId(m.jobId) },
     progress: { dir: 'ext', check: (m) => isId(m.jobId) && ['locating', 'opening', 'discovering', 'playback_required', 'probing'].includes(m.state) },
     candidates: { dir: 'ext', check: (m) => isId(m.jobId) && validCandidates(m.candidates) && typeof m.final === 'boolean' && optStr(m.title, 300) },
-    'job-failed': { dir: 'ext', check: (m) => isId(m.jobId) && REASONS.includes(m.reason) && optStr(m.message, 300) },
+    'job-failed': { dir: 'ext', check: (m) => isId(m.jobId) && REASONS.includes(m.reason) && optStr(m.message, 300) && (m.stage === undefined || JOB_STAGES.includes(m.stage)) },
     'cookies-request': { dir: 'app', check: (m) => isId(m.jobId) && Array.isArray(m.urls) && m.urls.length >= 1 && m.urls.length <= 20 && m.urls.every(isHttpUrl) },
     'page-session-request': { dir: 'app', check: (m) => isId(m.jobId) && isHttpUrl(m.url) },
     cookies: { dir: 'ext', check: (m) => isId(m.jobId) && (m.available === undefined || typeof m.available === 'boolean') && optStr(m.userAgent, 512) && Array.isArray(m.cookies) && m.cookies.length <= 400 && m.cookies.every((c) => isObj(c) && isStr(c.name, 4096) && typeof c.value === 'string' && c.value.length <= 8192 && isStr(c.domain, 255)) },
@@ -83,5 +86,5 @@
   const newId = (prefix = 'm') => `${prefix}${Date.now().toString(36)}${(counter++).toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   const make = (type, payload = {}, replyTo) => ({ v: PROTOCOL_VERSION, id: newId(), type, ...(replyTo ? { replyTo } : {}), ...payload });
 
-  return { PROTOCOL_VERSION, HOST_NAME, MAX_MESSAGE_BYTES, MAX_URL, MAX_CANDIDATES, REASONS, TYPES, validate, validCandidate, make, newId, isHttpUrl, isId };
+  return { PROTOCOL_VERSION, HOST_NAME, MAX_MESSAGE_BYTES, MAX_URL, MAX_CANDIDATES, REASONS, JOB_STAGES, TYPES, validate, validCandidate, make, newId, isHttpUrl, isId };
 }));

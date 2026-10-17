@@ -21,8 +21,18 @@ const SCOPE_TTL_MS = 15 * 60 * 1000;
 const SCAN_INTERVAL_MS = 750;
 const DEADLINE_MARGIN_MS = 1500;
 const NO_VIDEO_AFTER_MS = 15000;
+// Per-step bounds inside a discovery job, so one stuck browser call cannot use up the whole
+// deadline: a page scan (executeScript in every frame), and waiting for the temporary tab's load
+// event (network observations do not need it, so scanning starts anyway after this).
+const SCAN_STEP_MS = 4000;
+const LOAD_WAIT_MS = 15000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Resolves with the fallback after ms; the slow call itself is left to settle on its own.
+function within(promise, ms, fallback) {
+  let timer;
+  return Promise.race([promise, new Promise((r) => { timer = setTimeout(() => r(fallback), ms); })]).finally(() => clearTimeout(timer));
+}
 
 // ---------------------------------------------------------------- identity
 let identityPromise = null;
@@ -287,11 +297,15 @@ async function freshObservations(tabId) {
   return { items: rec.items.filter((o) => now - o.at < OBS_TTL_MS), hosts: rec.hosts || [] };
 }
 
-async function scanDom(tabId, startPlayback) {
+async function scanDom(tabId, startPlayback, limitMs = 0) {
+  const failed = { media: [], players: 0, playing: 0, playRejected: 0, blob: 0, drm: false, title: '', embeds: [], failed: true };
   let results = [];
   try {
-    results = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: C.collectInPage, args: [{ startPlayback }] });
-  } catch (e) { return { media: [], players: 0, playing: 0, playRejected: 0, blob: 0, drm: false, title: '', embeds: [], failed: true }; }
+    const run = chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: C.collectInPage, args: [{ startPlayback }] });
+    run.catch(() => {}); // a scan abandoned after limitMs may still reject later
+    results = limitMs ? await within(run, limitMs, null) : await run;
+    if (results === null) return { ...failed, timedOut: true };
+  } catch (e) { return failed; }
   const out = { media: [], players: 0, playing: 0, playRejected: 0, blob: 0, drm: false, title: '', embeds: [], failed: false };
   for (const r of results) {
     const v = r && r.result;
@@ -307,9 +321,10 @@ async function scanDom(tabId, startPlayback) {
 }
 
 // Candidates for one tab: fresh network observations plus what the page's players expose now.
-async function gather(tabId, { play = false } = {}) {
+// scanMs bounds the page scan; on expiry only the network observations are used.
+async function gather(tabId, { play = false, scanMs = 0 } = {}) {
   const { items, hosts } = await freshObservations(tabId);
-  const dom = await scanDom(tabId, play);
+  const dom = await scanDom(tabId, play, scanMs);
   const obs = items.map((o) => ({ ...o, hosts }));
   for (const m of dom.media) {
     const cls = M.classify({ url: m.url });
@@ -412,9 +427,11 @@ async function revealJobTab(jobId) {
   } catch (e) { /* tab gone */ }
 }
 
+// Only a loaded, live tab is worth scanning. A session-restored, discarded or sleeping tab (or
+// one still loading) is left alone: scripting it can hang, and it is never reloaded for us.
 async function findExistingTab(url) {
   const tabs = await chrome.tabs.query({});
-  const matches = tabs.filter((t) => t.url && M.sameNavigationUrl(t.url, url));
+  const matches = tabs.filter((t) => t.url && M.sameNavigationUrl(t.url, url) && t.status === 'complete' && !t.discarded && !t.frozen);
   matches.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
   return matches[0] || null;
 }
@@ -431,23 +448,24 @@ async function waitTabComplete(tabId, until) {
 
 function startJob(m) {
   if (jobs.has(m.jobId)) return;
-  const job = { id: m.jobId, url: m.url, refresh: !!m.refresh, tabId: null, owned: false, aborted: null, deadlineAt: Date.now() + m.deadlineMs - DEADLINE_MARGIN_MS, state: 'locating', timer: null };
+  // state is what the app was told (progress); stage is where the job actually is, reported on failure.
+  const job = { id: m.jobId, url: m.url, refresh: !!m.refresh, tabId: null, owned: false, aborted: null, deadlineAt: Date.now() + m.deadlineMs - DEADLINE_MARGIN_MS, state: 'locating', stage: 'locating', timer: null };
   jobs.set(job.id, job);
   job.timer = setTimeout(() => {
     if (jobs.get(job.id) !== job) return;
     job.aborted = 'timeout';
     const reason = job.state === 'playback_required' ? 'playback_required' : 'timeout';
     finishJob(job);
-    post(P.make('job-failed', { jobId: job.id, reason }));
+    post(P.make('job-failed', { jobId: job.id, reason, stage: job.stage }));
   }, Math.max(1000, m.deadlineMs - DEADLINE_MARGIN_MS));
   runJob(job).catch((e) => {
     if (jobs.get(job.id) !== job) return;
     finishJob(job);
-    post(P.make('job-failed', { jobId: job.id, reason: 'extension_error', message: String(e && e.message || e).slice(0, 200) }));
+    post(P.make('job-failed', { jobId: job.id, reason: 'extension_error', stage: job.stage, message: String(e && e.message || e).slice(0, 200) }));
   });
 }
 
-const progress = (job, state) => { job.state = state; if (!job.aborted) post(P.make('progress', { jobId: job.id, state })); };
+const progress = (job, state) => { job.state = state; if (P.JOB_STAGES.includes(state)) job.stage = state; if (!job.aborted) post(P.make('progress', { jobId: job.id, state })); };
 const alive = (job) => jobs.get(job.id) === job && !job.aborted;
 
 function deliver(job, ranked, dom) {
@@ -467,7 +485,8 @@ async function runJob(job) {
   const existing = job.refresh ? null : await findExistingTab(job.url);
   if (!alive(job)) return;
   if (existing) {
-    const g = await gather(existing.id, { play: false });
+    // Bounded: a tab that does not answer the scan quickly falls through to the temporary tab.
+    const g = await gather(existing.id, { play: false, scanMs: SCAN_STEP_MS });
     if (!alive(job)) return;
     if (g.ranked.plausible.length) { deliver(job, g.ranked, g.dom); return; }
   }
@@ -479,13 +498,17 @@ async function runJob(job) {
   await rememberOwned(tab.id, true);
   if (!alive(job)) { finishJob(job); return; }
   progress(job, 'discovering');
-  await waitTabComplete(tab.id, job.deadlineAt);
+  // The load event is waited for at most LOAD_WAIT_MS, then scanning starts regardless.
+  job.stage = 'waiting_load';
+  await waitTabComplete(tab.id, Math.min(job.deadlineAt, Date.now() + LOAD_WAIT_MS));
+  if (!alive(job)) return;
+  job.stage = 'discovering';
   const started = Date.now();
   let lastCount = -1;
   let lastChange = Date.now();
   let prompted = false;
   while (alive(job) && Date.now() < job.deadlineAt) {
-    const g = await gather(tab.id, { play: true });
+    const g = await gather(tab.id, { play: true, scanMs: SCAN_STEP_MS });
     if (!alive(job)) return;
     const count = g.ranked.ranked.length;
     if (count !== lastCount) { lastCount = count; lastChange = Date.now(); }
@@ -498,7 +521,8 @@ async function runJob(job) {
     }
     if (prompted && count) { prompted = false; job.state = 'discovering'; }
     // A page with no player and no media request is not going to produce one: say so instead of waiting out the deadline.
-    if (!count && !prompted && g.dom.players === 0 && !g.dom.blob && Date.now() - started > NO_VIDEO_AFTER_MS) {
+    // A scan that did not answer in time says nothing about the page, so it never counts as "no player".
+    if (!count && !prompted && !g.dom.timedOut && g.dom.players === 0 && !g.dom.blob && Date.now() - started > NO_VIDEO_AFTER_MS) {
       finishJob(job);
       post(P.make('job-failed', { jobId: job.id, reason: 'no_video' }));
       return;

@@ -47,10 +47,15 @@ function redact(value, depth = 0) {
 // Explicit, fail-closed schema: diagnostic events never persist arbitrary extractor stderr,
 // URLs, account identifiers or future fields that have not received a privacy review.
 const SAFE_STRING_FIELDS = {
-  lookup: ['kind', 'strategy'],
+  lookup: ['kind', 'strategy', 'jobStage'],
   download: ['kind', 'format', 'quality'],
   probe: ['probe', 'browser'],
   start: ['app', 'electron', 'engine'],
+};
+// String fields that are closed enums, not just safe-looking text. jobStage is where a browser
+// extension job was when it failed (extension/lib/protocol.js JOB_STAGES).
+const ENUM_FIELDS = {
+  jobStage: ['locating', 'opening', 'waiting_load', 'discovering'],
 };
 const SAFE_NUMBER_FIELDS = {
   lookup: ['ms'],
@@ -73,6 +78,7 @@ function safeEventDetails(event, details = {}) {
   }
   for (const key of Object.hasOwn(SAFE_STRING_FIELDS, event) ? SAFE_STRING_FIELDS[event] : []) {
     const value = source[key];
+    if (Object.hasOwn(ENUM_FIELDS, key)) { if (ENUM_FIELDS[key].includes(value)) result[key] = value; continue; }
     if (typeof value === 'string' && /^[a-zA-Z0-9._ -]{1,64}$/.test(value)) result[key] = value;
   }
   for (const key of Object.hasOwn(SAFE_NUMBER_FIELDS, event) ? SAFE_NUMBER_FIELDS[event] : []) {
@@ -165,4 +171,4 @@ class Diagnostics {
   recent(n = 100) { return this.entries.slice(-n); }
 }
 
-module.exports = { Diagnostics, redact, redactUrl, safeEventDetails };
+module.exports = { Diagnostics, redact, redactUrl, safeEventDetails, ENUM_FIELDS };
