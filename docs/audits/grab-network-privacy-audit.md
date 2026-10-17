@@ -4,6 +4,20 @@ Audit date 2026-10-16 · security branch `security/privacy-minimization-20261016
 Companion reports: [comparison with main](grab-network-privacy-comparison.md) ·
 [regression results](grab-security-regression-results.md) · tools and Windows procedure: [scripts/audit/](../../scripts/audit/README.md)
 
+> **Status update 2026-10-17.** `main` is now `d024572`. It contains the security branch (#5), the
+> F05 fix (#6, through #7) and PR #7, which addresses F01–F04, F06 and F16 with a mandatory yt-dlp
+> postprocessor plugin (`engine-plugins/`, ADR 0003). An independent black-box check of F16, written
+> separately from that implementation and run against the real pinned yt-dlp (PyInstaller and zipimport
+> builds), passed on `d024572` and failed on `02817d9`:
+> - host-only cookies reach the exact host only, also after a redirect and during a download;
+> - server-set cookies follow the same rule;
+> - the user's default yt-dlp plugin folders are not executed (with a positive control);
+> - isolation holds after a cancel, and a missing plugin folder stops every lookup before any request.
+>
+> Remaining F16-adjacent gap (P3, same-user trust boundary): an extra `.py` placed in
+> `resources/engine-plugins` is executed. Windows (`yt-dlp.exe`, installed app, real accounts) remains
+> unverified here. The findings table below describes the 2026-10-16 audit of `02817d9`.
+
 ## Bottom line
 
 1. **On the wire, the security branch sends exactly what main sends.** Every download request we captured
