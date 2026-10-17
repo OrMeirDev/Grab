@@ -52,6 +52,87 @@ test('analyze can be cancelled and classifies failures', { skip }, async () => {
   } finally { f.cleanup(); }
 });
 
+test('lookup secrets stay off disk and argv; rotated and anonymous cookies survive through stdin', { skip }, async () => {
+  const f = fakeEngine(`
+    if (args.includes('-J')) console.log(JSON.stringify({ id: 'fixture', title: 'Private', ext: 'mp4',
+      url: 'https://fixture.example/video.mp4', cookies: 'session=browser-secret; Domain=fixture.example',
+      http_headers: { Authorization: 'Bearer private-token', Cookie: 'rotation=rotated-secret' },
+      formats: [{ url: 'https://fixture.example/video.mp4', ext: 'mp4', cookies: 'anonymous=lookup-secret' }],
+      grab_cookie_records: [{ name: 'session', value: 'browser-secret', domain_specified: false }] }));
+    else {
+      let text = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (s) => text += s);
+      process.stdin.on('end', () => {
+        const info = JSON.parse(text);
+        if (!info.cookies.includes('browser-secret') || !info.formats[0].cookies.includes('lookup-secret') ||
+            !info.http_headers.Cookie.includes('rotated-secret') || info.grab_cookie_records[0].domain_specified !== false) process.exit(3);
+        const out = args[args.indexOf('-o') + 1].replace('.%(ext)s', '.mp4');
+        require('fs').writeFileSync(out, TEST_MEDIA); console.log('GRABFILE|' + out);
+      });
+    }`);
+  let info;
+  try {
+    info = await f.engine.analyze('https://fixture.example/watch');
+    assert.equal(info.ok, true);
+    const disk = fs.readFileSync(info.infoFile, 'utf8');
+    for (const value of ['browser-secret', 'private-token', 'rotated-secret', 'lookup-secret', 'grab_cookie_records']) assert.ok(!disk.includes(value), value);
+    assert.equal(JSON.parse(disk).__grab_private_context, true);
+    const result = await f.engine.download({ url: 'https://fixture.example/watch', outputBase: path.join(f.dir, 'private'),
+      format: 'mp4', infoFile: info.infoFile, infoAt: info.infoAt }, () => {}).done;
+    assert.equal(result.ok, true);
+    const args = f.calls().at(-1);
+    assert.equal(args[args.indexOf('--load-info-json') + 1], '-');
+    assert.ok(!JSON.stringify(args).includes('secret'));
+    let fallbackArgs, fallbackInput;
+    await f.engine.download({ url: 'https://fixture.example/watch', outputBase: path.join(f.dir, 'stale'),
+      format: 'mp4', infoFile: info.infoFile, infoAt: info.infoAt, infoExpiresAt: Date.now() - 1 }, () => {}, {
+      runImpl: (a, options) => { fallbackArgs = a; fallbackInput = options.input;
+        return { stop() {}, done: Promise.resolve({ code: 1, err: 'fixture' }) }; },
+    }).done;
+    assert.ok(!fallbackArgs.includes('--load-info-json'));
+    assert.equal(fallbackInput, undefined, 'a fresh extraction must not receive unrelated cached secrets on stdin');
+    f.engine.releaseInfo(info.infoFile);
+    assert.equal(fs.existsSync(info.infoFile), false);
+  } finally { if (info?.infoFile) f.engine.releaseInfo(info.infoFile); f.cleanup(); }
+});
+
+test('forgetting a browser session invalidates its extractor metadata before another download', { skip }, async () => {
+  const { rememberCookies, withSessionCookies, forgetCookies } = require('../electron/browser-session.cjs');
+  const f = fakeEngine(`console.log(JSON.stringify({ title: 'Private', ext: 'mp4', url: 'https://fixture.example/video.mp4', cookies: 'session=synthetic-private' }));`);
+  const reference = rememberCookies([], { source: 'browser' });
+  let info;
+  try {
+    info = await withSessionCookies(reference, () => f.engine.analyze('https://fixture.example/watch'));
+    assert.equal(info.ok, true);
+    assert.ok(info.infoFile);
+    forgetCookies(reference);
+    let args, input;
+    await f.engine.download({ url: 'https://fixture.example/watch', outputBase: path.join(f.dir, 'fresh'),
+      format: 'mp4', infoFile: info.infoFile, infoAt: info.infoAt }, () => {}, {
+      runImpl: (a, options) => { args = a; input = options.input;
+        return { stop() {}, done: Promise.resolve({ code: 1, err: 'fixture' }) }; },
+    }).done;
+    assert.ok(!args.includes('--load-info-json'));
+    assert.equal(input, undefined);
+    assert.equal(fs.existsSync(info.infoFile), false);
+  } finally { forgetCookies(reference); if (info?.infoFile) f.engine.releaseInfo(info.infoFile); f.cleanup(); }
+});
+
+test('a sanitized cache without its private context is never used as a complete lookup', { skip }, async () => {
+  const engine = require('../electron/engine.cjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-orphan-info-'));
+  try {
+    const infoFile = path.join(dir, 'orphan.json');
+    fs.writeFileSync(infoFile, JSON.stringify({ __grab_private_context: true }));
+    let args;
+    await engine.download({ url: 'https://fixture.example/watch', outputBase: path.join(dir, 'out'),
+      format: 'mp4', infoFile, infoAt: Date.now() }, () => {}, { runImpl: (captured) => {
+        args = captured; return { stop() {}, done: Promise.resolve({ code: 1, err: 'fixture' }) };
+      } }).done;
+    assert.ok(!args.includes('--load-info-json'));
+    assert.equal(args.at(-1), 'https://fixture.example/watch');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('a download that exits 0 without its file is a failure; with it, a success', { skip }, async () => {
   const f = fakeEngine(`
     const o = args[args.indexOf('-o') + 1].replace('.%(ext)s', '.mp4').replace(/%%/g, '%');

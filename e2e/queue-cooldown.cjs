@@ -11,7 +11,7 @@ const os = require('os');
 
 const APP_DIR = path.join(__dirname, '..');
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-cooldown-'));
-app.setPath('userData', profile);
+require('../test-support/electron-profile.cjs').isolateElectronProfile(app, profile);
 app.on('window-all-closed', () => {});
 
 const engine = require(path.join(APP_DIR, 'electron', 'engine.cjs'));

@@ -1,5 +1,53 @@
 # Grab 1.7.0 — current state (2026-10-16)
 
+## Unreleased privacy hardening
+
+The hardening branch builds on PR #6 and the privacy changes from PR #5. See
+[the findings/status matrix](hardening-status.md) and [ADR 0003](adr/0003-download-network-privacy.md).
+Its required extension version is 1.1.6. This work is separate from the published stable installer;
+final-head CI, installed Windows checks and real-account compatibility remain release gates.
+
+### Local upgrade follow-up (2026-10-17)
+
+Extension discovery bounds each DOM scan to 1.5 seconds, injects without waiting for document idle,
+and reserves discovery time after at most 8 seconds waiting for a job-owned tab to finish loading.
+Discarded user tabs are left dormant; other existing tabs are scanned without playback and never
+navigated or closed. A pending injection is reused rather than accumulating requests; late results
+are ignored. Network observations remain usable when a DOM scan times out. Cancellation stops the
+loading wait and only closes the job-owned tab. Controlled-worker regressions cover stalled scans,
+discarded tabs, incomplete loads, cancellation and the unchanged total deadline. The Windows real
+extension fixture includes a page whose image response never finishes. The owner's intermittent
+Mako/Edge cold-start timeout is not yet attributed conclusively: repeat installed cold starts and
+resume checks with the updated extension, preserving existing personal tabs and sanitized timings.
+The extension version is bumped to 1.1.5 so same-version application upgrades refresh its files;
+Reload is still required in each browser before those checks.
+
+Extension 1.1.6 makes a discovery timeout attributable. `progress` and `job-failed` carry an optional
+`stage` from a fixed protocol enum: `locating`, `opening`, `waiting_load` or `discovering`. The UI
+state is unchanged; waiting for the load event is still shown as discovering. The app keeps the
+last valid stage, also when its own timer ends the job. That stage reaches the lookup result as
+`jobStage` and diagnostics as an enum-only field; other values are dropped. Protocol version and
+permissions are unchanged. The bump makes an installed 1.1.5 report as outdated, so Repair and
+Reload are needed. When an installed cold-start timeout recurs, record the lookup's `jobStage`.
+
+Private native-host runtimes are now content-verified against the installed executable,
+runtime files and locales, including same-version/same-size rebuilds. Startup auto-repair
+checks the bytes before reusing a connection. A new private copy is staged and verified before
+selection; an existing host copy is not overwritten. Verify this with an installed same-version
+upgrade and compare hashes of the selected host, DLLs and locales to the installed application.
+
+Diagnostics now reapply the current allowlist to existing logs and numbered rotations at startup,
+before a new event is written. Malformed/oversized legacy input is dropped; no unredacted backup is
+created. If migration cannot finish, disk logging waits and retries rather than appending to the old
+file. Verify the installed upgrade with synthetic old records in both active and rotated logs, and
+inspect only sanitized results/counts. The real-engine fixture also releases its cached metadata
+through the engine lifecycle, including failed assertions.
+
+The owner's local report confirms public downloads and Mako/Edge, including session reacquisition
+after restart, on packaged candidate source 3caa352. Extension sends/sending-profile retention,
+real standard-user acceptance and the in-app updater remain unverified locally. These results do not
+approve a later candidate automatically. No merge or production release is implied.
+
 The owner confirmed RC4 works well on the desktop and authorized merging all integrated work,
 retiring unused branches and publishing the full 1.7.0 release. Stable 1.7.0 retains the approved
 RC4 application and extension 1.1.3; this preparation changes versioning, release automation and

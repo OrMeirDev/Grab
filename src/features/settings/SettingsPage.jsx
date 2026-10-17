@@ -32,6 +32,13 @@ export default function SettingsPage({ settings, onChange, version, engine, app,
         </div>
         <div className="setting">
           <div>
+            <div className="setting-title">בדיקת עדכונים אוטומטית</div>
+            <div className="row-meta">מומלץ לאבטחה. ניתן לכבות בקשות רקע ולבדוק ידנית בכל עת.</div>
+          </div>
+          <input type="checkbox" aria-label="בדיקת עדכונים אוטומטית" checked={settings?.automaticUpdateChecks !== false} onChange={(e) => onChange({ automaticUpdateChecks: e.target.checked })} />
+        </div>
+        <div className="setting">
+          <div>
             <div className="setting-title">מנוע הורדות</div>
             <div className="row-meta">{version ? `yt-dlp ${version}` : 'לא נמצא'}</div>
             {engine?.state && <div className={`row-meta ${failed ? 'tag-muted' : ''}`}>{engine.message}</div>}

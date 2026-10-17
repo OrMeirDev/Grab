@@ -1,7 +1,5 @@
 // Recognizing links that carry a secret (a token, a signature, credentials) so they are never
-// written to disk, and cutting links in free text down to scheme://host/path. Pure.
-
-const { redactMediaSecrets } = require('./media-request-context.cjs');
+// written to disk, and cutting links in free text down to their origin. Pure.
 
 // Query or fragment keys that carry access (signed URLs, session ids, API keys).
 const SECRET_PARAM = /token|sig(nature)?$|^sig|signature|auth|key|secret|passw|session|^sid$|policy|expires|credential|jwt|hmac|^hash$|^x-amz-|^x-goog-|^hdnts$|^hdnea$|^acl$|^h$/i; // h: Vimeo private-link hash
@@ -18,7 +16,7 @@ function linkHasSecret(url) {
 // "HTTP Error 403 for https://cdn/v.mp4?token=x" -> "HTTP Error 403 for https://cdn/v.mp4"
 function stripLinksInText(text) {
   return String(text ?? '').replace(/https?:\/\/[^\s"'<>]+/g, (m) => {
-    try { const u = new URL(m); return redactMediaSecrets(`${u.protocol}//${u.host}${u.pathname}`); } catch { return '[link]'; }
+    try { const u = new URL(m); return u.origin; } catch { return '[link]'; }
   });
 }
 

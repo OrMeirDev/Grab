@@ -13,6 +13,7 @@ const { detectBrowsers, browserName } = require('./browsers.cjs');
 const selection = require('./selection.cjs');
 const setup = require('./setup.cjs');
 const { siteKey } = require('../domain/site-policy.cjs');
+const { filterScopedCookies } = require('../domain/cookie-scope.cjs');
 
 const { DEADLINE_DEFAULTS, DEADLINE_LIMITS } = selection;
 
@@ -87,7 +88,7 @@ class BrowserService extends EventEmitter {
   }
 
   async refreshHealth() {
-    this.health = await setup.health({ integrationDir: this.integrationDir, registry: this.registry, hub: this.hub, detected: this.detected.browsers, appVersion: this.appVersion, sourceRoot: this.sourceRoot });
+    this.health = await setup.health({ integrationDir: this.integrationDir, registry: this.registry, hub: this.hub, detected: this.detected.browsers, appVersion: this.appVersion, sourceRoot: this.sourceRoot, runtimeVerified: this.runtimeVerified });
     this.healthAt = Date.now();
   }
 
@@ -95,9 +96,21 @@ class BrowserService extends EventEmitter {
   async autoRepair() {
     const record = setup.readInstall(this.integrationDir);
     if (!record || !record.browsers || !record.browsers.length) return;
-    if (record.appVersion === this.appVersion && record.runtime === setup.resolveRuntime() &&
-      record.integrationVersion === setup.INTEGRATION_VERSION && record.extensionVersion === this.identity.version) return;
-    try { await setup.install({ sourceRoot: this.sourceRoot, integrationDir: this.integrationDir, browsers: record.browsers, appVersion: this.appVersion, registry: this.registry }); } catch { /* shown by health */ }
+    const runtime = setup.resolveRuntime();
+    this.runtimeVerified = false;
+    if (record.appVersion === this.appVersion && record.runtime === runtime &&
+      record.integrationVersion === setup.INTEGRATION_VERSION && record.extensionVersion === this.identity.version) {
+      try {
+        this.runtimeVerified = await setup.hostRuntimeIsCurrent({ runtime, sourceRoot: this.sourceRoot,
+          integrationDir: this.integrationDir, appVersion: this.appVersion, hostRuntime: record.hostRuntime });
+      } catch { /* repair below; report a stale connection if it cannot be repaired */ }
+      if (this.runtimeVerified) return;
+    }
+    try {
+      await setup.install({ sourceRoot: this.sourceRoot, integrationDir: this.integrationDir,
+        browsers: record.browsers, appVersion: this.appVersion, registry: this.registry, runtime });
+      this.runtimeVerified = true;
+    } catch { /* shown by health */ }
     await this.refreshHealth();
   }
 
@@ -208,6 +221,7 @@ class BrowserService extends EventEmitter {
     if (!ids.length) return { ok: false, kind: 'noBrowser' };
     try {
       const r = await setup.install({ sourceRoot: this.sourceRoot, integrationDir: this.integrationDir, browsers: ids, appVersion: this.appVersion, registry: this.registry });
+      this.runtimeVerified = true;
       await this.refresh();
       return { ok: true, extensionDir: r.extensionDir, extensionId: r.id || this.identity.id, state: this.state() };
     } catch (e) { return { ok: false, kind: 'setupFailed', error: String(e && e.message || e).slice(0, 200) }; }
@@ -247,6 +261,7 @@ class BrowserService extends EventEmitter {
     if (!(error instanceof BrowserError)) return this.fail('extensionError', browser, { error: String(error && error.message || error).slice(0, 200) });
     const kindMap = { noVideo: 'noVideoBrowser', protectedMedia: 'protected', choiceRequired: 'browserChoice' };
     const extra = error.options ? { options: error.options.map((i) => ({ key: i.key, label: this.instanceLabel(i) })) } : {};
+    if (protocol.JOB_STAGES.includes(error.jobStage)) extra.jobStage = error.jobStage;
     return this.fail(kindMap[error.kind] || error.kind, browser, extra);
   }
 
@@ -266,15 +281,13 @@ class BrowserService extends EventEmitter {
     try { reply = await this.hub.request(instance.key, 'cookies-request', { jobId: scopeKey, urls }, { timeoutMs: 8000, signal }); }
     catch { throw new BrowserError(signal?.aborted ? 'cancelled' : 'browserDisconnected'); }
     if (signal?.aborted) throw new BrowserError('cancelled');
-    if (reply.available === false) throw new BrowserError('sessionExpired');
+    if (reply.type !== 'cookies' || reply.jobId !== scopeKey || reply.available === false) throw new BrowserError('sessionExpired');
     return this.rememberSession(instance, urls, reply.cookies || []);
   }
 
   rememberSession(instance, urls, snapshot) {
-    const hosts = urls.map((u) => new URL(u).hostname);
-    const cookies = snapshot
-      .filter((c) => hosts.some((h) => domainMatches(h, c.domain)))
-      .map((c) => ({ name: c.name, value: c.value, domain: c.domain, path: c.path || '/', secure: !!c.secure, httpOnly: !!c.httpOnly, session: !!c.session, expires: c.session ? -1 : c.expirationDate || 0 }));
+    const cookies = filterScopedCookies(urls, snapshot)
+      .map((c) => ({ name: c.name, value: c.value, domain: c.domain, hostOnly: c.hostOnly === true || (c.hostOnly === undefined && !c.domain.startsWith('.')), path: c.path || '/', secure: !!c.secure, httpOnly: !!c.httpOnly, session: !!c.session, expires: c.session ? -1 : c.expirationDate || 0 }));
     // A successful empty snapshot is different from a failed cookie request. Its handle
     // still binds this job to the chosen browser, so disconnect/restart requires rediscovery.
     const reference = this.session.rememberCookies(cookies, { source: 'extension:' + instance.key });

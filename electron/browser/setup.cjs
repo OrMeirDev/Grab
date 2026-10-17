@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 const protocol = require('../../extension/lib/protocol.js');
+const { prepareHostRuntime, hostRuntimeIsCurrent } = require('./host-runtime.cjs');
 
 const HOST_NAME = protocol.HOST_NAME;
 const INTEGRATION_VERSION = 4;
@@ -118,49 +119,11 @@ function resolveRuntime() {
 const installFile = (dir) => path.join(dir, 'install.json');
 function readInstall(dir) { try { return JSON.parse(fs.readFileSync(installFile(dir), 'utf8')); } catch { return null; } }
 
-// The browser keeps its native host alive after the UI closes. Run it from a versioned
-// private copy of the shipped runtime, under a distinct executable name, so an active
-// extension cannot lock Grab.exe/DLLs or look like the UI to the Windows installer.
-async function prepareHostRuntime(runtime, sourceRoot, integrationDir, appVersion) {
-  if (!fs.existsSync(path.join(sourceRoot, 'app.asar'))) return runtime;
-  const stat = fs.statSync(runtime);
-  const revision = crypto.createHash('sha256').update([runtime, appVersion, stat.size, stat.mtimeMs].join(':')).digest('hex').slice(0, 16);
-  const root = path.dirname(runtime);
-  const entries = await fs.promises.readdir(root, { withFileTypes: true });
-  const valid = (candidate) => {
-    if (!candidate || !path.resolve(candidate).startsWith(path.resolve(integrationDir, 'runtimes') + path.sep)) return false;
-    const folder = path.dirname(candidate);
-    try {
-      return fs.existsSync(path.join(folder, '.ready')) && entries.filter((e) => e.isFile()).every((e) =>
-        fs.statSync(path.join(folder, e.name === path.basename(runtime) ? 'GrabBrowserHost.exe' : e.name)).size === fs.statSync(path.join(root, e.name)).size);
-    } catch { return false; }
-  };
-  const previous = readInstall(integrationDir);
-  if (previous?.runtime === runtime && previous.appVersion === appVersion && valid(previous.hostRuntime)) return previous.hostRuntime;
-  let dir = path.join(integrationDir, 'runtimes', revision);
-  if (valid(path.join(dir, 'GrabBrowserHost.exe'))) return path.join(dir, 'GrabBrowserHost.exe');
-  // Never overwrite a loaded executable when repairing a damaged runtime; the repaired host
-  // gets a new complete directory, and the existing port can finish safely.
-  if (fs.existsSync(dir)) dir += '-' + crypto.randomUUID();
-  const target = path.join(dir, 'GrabBrowserHost.exe');
-  const stage = dir + '-' + crypto.randomUUID();
-  await fs.promises.mkdir(stage, { recursive: true });
-  try {
-    for (const ent of entries) {
-      if (ent.isFile()) await fs.promises.copyFile(path.join(root, ent.name), path.join(stage, ent.name === path.basename(runtime) ? 'GrabBrowserHost.exe' : ent.name));
-      else if (ent.isDirectory() && ent.name === 'locales') await fs.promises.cp(path.join(root, ent.name), path.join(stage, ent.name), { recursive: true });
-    }
-    await fs.promises.writeFile(path.join(stage, '.ready'), appVersion);
-    await fs.promises.rename(stage, dir);
-  } catch (error) { await fs.promises.rm(stage, { recursive: true, force: true }); throw error; }
-  return target;
-}
-
 // sourceRoot has extension\ and native-host\ (the repository in development, resources\ when packaged).
 async function install({ sourceRoot, integrationDir = defaultIntegrationDir(), browsers = BROWSER_IDS, runtime = resolveRuntime(), appVersion = '0', registry = windowsRegistry, hostName = HOST_NAME } = {}) {
   if (!browsers.every((b) => BROWSER_IDS.includes(b))) throw new Error('Unsupported browser in install request');
   if (!fs.existsSync(runtime)) throw new Error('The Grab program file for the browser connection was not found');
-  const hostRuntime = await prepareHostRuntime(runtime, sourceRoot, integrationDir, appVersion);
+  const hostRuntime = await prepareHostRuntime(runtime, sourceRoot, integrationDir, appVersion, readInstall(integrationDir));
   const identity = readExtensionIdentity(path.join(sourceRoot, 'extension'));
   copyDirExact(path.join(sourceRoot, 'extension'), path.join(integrationDir, 'extension'));
   const hostDir = path.join(integrationDir, 'native-host');
@@ -211,7 +174,7 @@ async function uninstall({ integrationDir = defaultIntegrationDir(), registry = 
 
 // Per-browser setup diagnosis. `state`:
 //   not_detected | unknown (nothing wrong found, no connection now) | connected | setup_problem
-async function health({ integrationDir = defaultIntegrationDir(), registry = windowsRegistry, hostName = HOST_NAME, hub, detected = [], appVersion = '0', sourceRoot } = {}) {
+async function health({ integrationDir = defaultIntegrationDir(), registry = windowsRegistry, hostName = HOST_NAME, hub, detected = [], appVersion = '0', sourceRoot, runtimeVerified } = {}) {
   const record = readInstall(integrationDir);
   let expected = null;
   try { expected = readExtensionIdentity(sourceRoot ? path.join(sourceRoot, 'extension') : path.join(integrationDir, 'extension')); } catch { /* reported below */ }
@@ -234,7 +197,7 @@ async function health({ integrationDir = defaultIntegrationDir(), registry = win
       if (record.runtime && !fs.existsSync(record.runtime)) problems.push('runtime_missing');
       if (record.hostRuntime && !fs.existsSync(record.hostRuntime)) problems.push('runtime_missing');
       if (HOST_FILES.some((f) => !fs.existsSync(path.join(integrationDir, 'native-host', f)))) problems.push('host_script_missing');
-      if (record.appVersion !== appVersion || record.integrationVersion !== INTEGRATION_VERSION || record.extensionVersion !== expected?.version) problems.push('stale_version');
+      if (record.appVersion !== appVersion || record.integrationVersion !== INTEGRATION_VERSION || record.extensionVersion !== expected?.version || runtimeVerified === false) problems.push('stale_version');
     }
     if (record && !fs.existsSync(path.join(integrationDir, 'extension', 'manifest.json'))) problems.push('extension_folder_missing');
     const live = instances.filter((i) => i.browser === browser);
@@ -251,5 +214,5 @@ async function health({ integrationDir = defaultIntegrationDir(), registry = win
 
 module.exports = {
   HOST_NAME, INTEGRATION_VERSION, REGISTRY_KEYS, BROWSER_IDS, defaultIntegrationDir, extensionIdFromKey, readExtensionIdentity,
-  install, uninstall, health, windowsRegistry, resolveRuntime, launcherText, readInstall,
+  install, uninstall, health, windowsRegistry, resolveRuntime, launcherText, readInstall, hostRuntimeIsCurrent,
 };

@@ -34,12 +34,17 @@ class JsonStore {
     const p = this.fs.promises;
     await p.mkdir(path.dirname(this.file), { recursive: true });
     const tmp = `${this.file}.${process.pid}.${Date.now()}.tmp`;
-    const handle = await p.open(tmp, 'w');
+    // Sensitive queues/history/settings should never be world-readable on POSIX.
+    // Windows relies on the per-user profile directory ACL.
+    const handle = await p.open(tmp, 'w', 0o600);
     try {
       await handle.writeFile(JSON.stringify(value, null, 2));
       await handle.sync();
     } finally { await handle.close(); }
-    try { await p.copyFile(this.file, this.file + '.bak'); } catch { /* first save */ }
+    try {
+      await p.copyFile(this.file, this.file + '.bak');
+      if (process.platform !== 'win32') await p.chmod(this.file + '.bak', 0o600);
+    } catch { /* first save */ }
     // Windows can briefly refuse the rename while an antivirus scans the old file.
     for (let attempt = 0; ; attempt++) {
       try { await p.rename(tmp, this.file); return; }

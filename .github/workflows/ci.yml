@@ -16,6 +16,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows-privacy-acl:
+    name: Windows private directory ACLs
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Exact ACL setup and cookie-vault lifecycle without downloaded engines
+        run: node --test --test-timeout=120000 tests/private-info-dir.test.cjs tests/cookie-vault-jar.test.cjs tests/privacy-settings.test.cjs tests/vault-metadata.test.cjs
+      - name: Actual standard user and cross-user access denial
+        shell: pwsh
+        run: ./scripts/windows/verify-standard-user-privacy.ps1
   test:
     name: test (${{ matrix.os }})
     strategy:
@@ -41,6 +55,14 @@ jobs:
           echo "1fa6733c37ea6fb51c99ad8fe785e7b7e5f3246c9b980230329d4fb72ed8d4d6  $RUNNER_TEMP/ytdlp/yt-dlp" | sha256sum -c -
           chmod +x "$RUNNER_TEMP/ytdlp/yt-dlp"
           echo "GRAB_TEST_YTDLP_DIR=$RUNNER_TEMP/ytdlp" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/ytdlp" >> "$GITHUB_PATH"
+      - name: Pinned Windows engines for privacy and cookie integration tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          npm run fetch-bin
+          "GRAB_TEST_YTDLP_DIR=$pwd\bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "$pwd\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       # FFmpeg for tests/merge-pause.integration.test.cjs (pause during a real merge).
       - name: ffmpeg for the merge integration test
         if: runner.os == 'Linux'
@@ -65,6 +87,8 @@ jobs:
         run: xvfb-run -a npx electron --no-sandbox e2e/queue-cooldown.cjs
       - name: hidden player probe (GRB-12)
         run: xvfb-run -a npx electron --no-sandbox e2e/hidden-probe.cjs
+      - name: Actual Electron network privacy capture
+        run: xvfb-run -a node e2e/network-privacy.cjs
       - name: browser integration UI and screenshots
         run: xvfb-run -a npx electron --no-sandbox e2e/browser-ui.cjs
       - name: queue layout at supported window sizes

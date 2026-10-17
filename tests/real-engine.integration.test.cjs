@@ -12,7 +12,7 @@ const path = require('node:path');
 const DIR = process.env.GRAB_TEST_YTDLP_DIR;
 const skip = !(DIR && fs.existsSync(path.join(DIR, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp'))) && 'set GRAB_TEST_YTDLP_DIR to run';
 
-test('real yt-dlp: session cookies and context, template escaping, progress, verified file', { skip, timeout: 120000 }, async () => {
+test('real yt-dlp: session cookies and context, template escaping, progress, verified file', { skip, timeout: 120000 }, async (t) => {
   const site = await require('./fixtures/media-site.cjs').start({ mediaData: require('./fixtures/sample-media.cjs') });
   const engine = require('../electron/engine.cjs');
   const browser = require('../electron/browser-session.cjs');
@@ -28,6 +28,7 @@ test('real yt-dlp: session cookies and context, template escaping, progress, ver
     const requestContext = { userAgent: 'Grab test', referer: site.base + '/watch', origin: site.base };
     await browser.withSessionCookies(ref, async (cookieFile) => {
       const info = await engine.analyze(media, { cookieFile, requestContext });
+      t.after(() => engine.releaseInfo(info.infoFile));
       assert.equal(info.ok, true, info.error);
       assert.equal(engine.isInfoFile(info.infoFile), true);
       const progress = [];
@@ -37,7 +38,7 @@ test('real yt-dlp: session cookies and context, template escaping, progress, ver
       assert.equal(fs.statSync(r.file).size, require('./fixtures/sample-media.cjs').length);
       assert.ok(progress.some((p) => p.percent === 100));
       assert.equal(r.delivered.ext, 'mp4');
-      fs.rmSync(info.infoFile, { force: true });
+      engine.releaseInfo(info.infoFile);
     });
     const served = site.log.filter((l) => l.url === '/media/big.mp4' && /play=granted/.test(l.cookie || ''));
     assert.ok(served.length >= 2 && served.every((l) => l.referer === site.base + '/watch' && l.host.startsWith('127.0.0.1')));
@@ -49,7 +50,7 @@ test('real yt-dlp: session cookies and context, template escaping, progress, ver
 
 // The real yt-dlp's answer to HTTP 429 is classified as a rate limit (held at once), not as a bot
 // check (which goes on to the user's browser): during the lookup and during the download.
-test('real yt-dlp: HTTP 429 is a rate limit, at lookup and at download', { skip, timeout: 120000 }, async () => {
+test('real yt-dlp: HTTP 429 is a rate limit, at lookup and at download', { skip, timeout: 120000 }, async (t) => {
   const site = await require('./fixtures/media-site.cjs').start({ mediaData: require('./fixtures/sample-media.cjs') });
   const engine = require('../electron/engine.cjs');
   engine.setUserBinDir(DIR);
@@ -59,11 +60,12 @@ test('real yt-dlp: HTTP 429 is a rate limit, at lookup and at download', { skip,
     assert.equal(lookup.ok, false);
     assert.equal(lookup.kind, 'rateLimited', lookup.error);
     const info = await engine.analyze(site.base + '/rl/2/b.mp4');
+    t.after(() => engine.releaseInfo(info.infoFile));
     assert.equal(info.ok, true, info.error);
     const r = await engine.download({ url: site.base + '/rl/2/b.mp4', outputBase: path.join(out, 'b'), format: 'mp4', quality: 'best', infoFile: info.infoFile, infoAt: info.infoAt }, () => {}).done;
     assert.equal(r.ok, false);
     assert.equal(r.kind, 'rateLimited', r.error);
-    fs.rmSync(info.infoFile, { force: true });
+    engine.releaseInfo(info.infoFile);
   } finally {
     await site.close();
     fs.rmSync(out, { recursive: true, force: true });
@@ -96,21 +98,27 @@ test('real yt-dlp + real discovery + real Chromium: after a restart, a members-o
   const endpointFile = path.join(profile, 'DevToolsActivePort');
   const until = async (fn, ms = 120000) => { const t0 = Date.now(); while (!(await fn()) && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 100)); };
   let hiddenCalls = 0;
+  const coordinators = [];
   const hiddenProbe = { findMedia: async (url) => { hiddenCalls++; await new Promise((r) => http.get(url, (res) => { res.resume(); res.on('end', r); }).on('error', r)); return { candidates: [] }; } };
   const run = (saved, browserInfo) => {
     const browserSession = { ...browser, defaultBrowser: () => browserInfo, browserForPage: () => browserInfo };
     const discovery = createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession });
     const runner = createDownloadRunner({ engine, browserSession, allocator: new OutputAllocator() });
-    return new DownloadCoordinator({
+    const coordinator = new DownloadCoordinator({
       random: () => 0,
       store: { load: async () => saved.list || [], save: async (l) => { saved.list = JSON.parse(JSON.stringify(l)); } },
       getSettings: async () => ({ folder: out, format: 'mp4', quality: 'best' }),
       recordCompletion: async () => {},
-      releaseContext: (job) => { if (job.cookieRef) browser.forgetCookies(job.cookieRef); },
+      releaseContext: (job) => {
+        if (job.cookieRef) browser.forgetCookies(job.cookieRef);
+        if (job.infoFile) engine.releaseInfo(job.infoFile);
+      },
       hasSession: (ref) => browser.hasCookies(ref),
       discover: (url, o) => discovery.analyze(url, o),
       startDownload: (plan, p) => runner.start(plan, p),
     });
+    coordinators.push(coordinator);
+    return coordinator;
   };
   const chromeInfo = { name: 'Chrome', scheme: 'chrome', endpointFile };
   const members = (from) => site.log.slice(from).filter((l) => l.url.startsWith('/members/'));
@@ -167,6 +175,10 @@ test('real yt-dlp + real discovery + real Chromium: after a restart, a members-o
     assert.equal(four.jobs[0].error.kind, 'sessionRequired');
     assert.deepEqual(members(from).map((l) => l.url), [], 'C: no request at all to the members area');
   } finally {
+    for (const coordinator of coordinators) {
+      await coordinator.shutdown();
+      for (const job of coordinator.jobs) if (job.infoFile) engine.releaseInfo(job.infoFile);
+    }
     browser.disconnectBrowser();
     await killTree(chrome);
     await site.close();

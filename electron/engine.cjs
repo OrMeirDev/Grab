@@ -10,9 +10,12 @@ const { ProcessRegistry } = require('./infrastructure/process-registry.cjs');
 const { errorKind, cleanError } = require('./domain/engine-errors.cjs');
 const { normalizeContext, mediaExpiry } = require('./domain/media-request-context.cjs');
 const { safeName } = require('./domain/output-names.cjs');
+const { ensurePrivateDir } = require('./infrastructure/private-info-dir.cjs');
+const { sharedCookieVault: privateVault } = require('./infrastructure/cookie-vault.cjs');
 
 const IS_WIN = process.platform === 'win32';
 const EXE = IS_WIN ? '.exe' : '';
+const CONTEXT_KEY = crypto.randomBytes(32).toString('hex');
 
 // An engine updated from inside the app lives in the user's data folder, so reinstalling or
 // updating Grab never overwrites it with an older copy. It takes priority over the bundled one.
@@ -80,6 +83,8 @@ function spawnEnv() {
     PATH: [...extra, ...(allowSystemTools ? [process.env.PATH || ''] : [process.env.SystemRoot ? path.join(process.env.SystemRoot, 'System32') : '']) ].filter(Boolean).join(path.delimiter),
     PYTHONIOENCODING: 'utf-8',
     PYTHONUTF8: '1',
+    PYTHONDONTWRITEBYTECODE: '1',
+    YTDLP_NO_PLUGINS: '',
   };
 }
 
@@ -98,13 +103,19 @@ const registry = new ProcessRegistry();
 let replacing = false;
 
 // --ignore-config: a yt-dlp configuration file on the user's PC never changes how Grab runs it.
-function run(args, { onLine, exe, kind = 'analyze', signal, internal = false, timeoutMs, idleTimeoutMs } = {}) {
+function run(args, { onLine, exe, kind = 'analyze', signal, internal = false, timeoutMs, idleTimeoutMs, input, requestUrls = [] } = {}) {
   if (replacing && !internal) {
     const result = { code: -1, out: '', err: 'ERROR: the download engine is being updated', engineUpdating: true };
     return { child: null, done: Promise.resolve(result), stop: () => {} };
   }
-  return runProcess(exe || findBinary('yt-dlp'), ['--ignore-config', '--encoding', 'utf-8', ...args], {
-    env: spawnEnv(), onLine, signal, registry, label: kind, ...LIMITS[kind], ...(timeoutMs !== undefined ? { timeoutMs } : {}), ...(idleTimeoutMs !== undefined ? { idleTimeoutMs } : {}),
+  const origins = [...new Set(requestUrls.flatMap((url) => { try { const u = new URL(url); return /^https?:$/.test(u.protocol) ? [u.origin] : []; } catch { return []; } }))];
+  const plugins = process.resourcesPath && fs.existsSync(path.join(process.resourcesPath, 'engine-plugins'))
+    ? path.join(process.resourcesPath, 'engine-plugins') : path.join(__dirname, '..', 'engine-plugins');
+  // Naming the mandatory PP makes a missing/failed guard fatal before any site request.
+  // No plugins from the user's config, executable directory or PYTHONPATH are loaded.
+  const guard = ['analyze', 'download'].includes(kind) ? ['--no-plugin-dirs', '--plugin-dirs', plugins, '--use-postprocessor', 'GrabPrivacy:when=pre_process'] : ['--no-plugin-dirs'];
+  return runProcess(exe || findBinary('yt-dlp'), ['--ignore-config', '--encoding', 'utf-8', ...guard, ...args], {
+    env: { ...spawnEnv(), GRAB_HEADER_ORIGINS: JSON.stringify(origins), GRAB_CONTEXT_KEY: CONTEXT_KEY }, onLine, signal, input, registry, label: kind, ...LIMITS[kind], ...(timeoutMs !== undefined ? { timeoutMs } : {}), ...(idleTimeoutMs !== undefined ? { idleTimeoutMs } : {}),
   });
 }
 
@@ -179,14 +190,31 @@ async function updateEngine() {
   }
 }
 
-// The lookup result is saved so the download can reuse it instead of asking the site again.
-// Stream links inside it expire (YouTube: ~6h), so it's only trusted for INFO_MAX_AGE_MS.
+// Lookup results stay in memory so a download can reuse them without persisting secrets.
+// Random disk markers retain the existing job lifecycle; legacy cache files are scavenged.
 const INFO_DIR = path.join(os.tmpdir(), 'grab-info');
 const INFO_MAX_AGE_MS = 4 * 60 * 60 * 1000;
+const privateInfo = new Map();
 
-// Start-up: lookup files of an earlier run are never used again (a restored job looks up afresh),
-// and they hold signed media addresses, so all of them go.
+function releaseInfo(infoFile) {
+  const entry = privateInfo.get(infoFile);
+  if (entry) { privateVault.forgetMetadata(entry.reference); clearTimeout(entry.timer); }
+  privateInfo.delete(infoFile);
+  if (isInfoFile(infoFile)) { try { fs.rmSync(infoFile, { force: true }); } catch { /* startup cleans leftovers */ } }
+}
+
+function prunePrivateInfo() {
+  for (const [file, entry] of privateInfo) {
+    if (!privateVault.hasMetadata(entry.reference) || !fs.existsSync(file)) releaseInfo(file);
+  }
+}
+
+// Start-up: old markers have no live context; older Grab versions also left signed metadata.
+// A restored job looks up afresh, so none of those files may be reused.
 function cleanInfoCache() {
+  for (const entry of privateInfo.values()) clearTimeout(entry.timer);
+  privateInfo.clear();
+  privateVault.clearMetadata();
   try {
     for (const f of fs.readdirSync(INFO_DIR)) fs.rmSync(path.join(INFO_DIR, f), { force: true });
   } catch { /* nothing cached yet */ }
@@ -221,7 +249,7 @@ function hasMediaFormats(info) {
 // signal: an AbortSignal that cancels the lookup.
 async function analyze(url, { title: pageTitle, signal, timeoutMs, ...context } = {}) {
   const extra = sessionArgs(context);
-  const r = await run(['-J', '--no-playlist', '--no-warnings', '--skip-download', '--sleep-requests', '1', ...extra, '--', url], { kind: 'analyze', signal, timeoutMs }).done;
+  const r = await run(['-J', '--no-playlist', '--no-warnings', '--skip-download', '--sleep-requests', '1', ...extra, '--', url], { kind: 'analyze', signal, timeoutMs, requestUrls: [url] }).done;
   const { code, out } = r;
   const err = stopNote(r) || r.err;
   if (r.aborted) return { ok: false, error: 'cancelled', kind: 'cancelled' };
@@ -231,11 +259,19 @@ async function analyze(url, { title: pageTitle, signal, timeoutMs, ...context } 
     const j = JSON.parse(out);
     if (!hasMediaFormats(j)) return { ok: false, kind: 'notmedia', error: 'The response contains no recognized video or audio format' };
     let infoFile = null;
+    let reference = null;
     try {
-      fs.mkdirSync(INFO_DIR, { recursive: true, mode: 0o700 });
-      infoFile = path.join(INFO_DIR, `${crypto.createHash('sha1').update(url).digest('hex')}-${crypto.randomUUID()}.json`);
-      fs.writeFileSync(infoFile, out, { mode: 0o600 });
-    } catch { infoFile = null; }
+      prunePrivateInfo();
+      if (!ensurePrivateDir(INFO_DIR)) throw new Error('Signed metadata cache is not private');
+      reference = privateVault.rememberMetadata(out);
+      infoFile = path.join(INFO_DIR, `${crypto.randomBytes(20).toString('hex')}-${crypto.randomUUID()}.json`);
+      // The disk file is only a lifecycle marker. No extractor output, signed URLs,
+      // browser cookies or lookup-time cookies are ever persisted here.
+      fs.writeFileSync(infoFile, '{"__grab_private_context":true}', { mode: 0o600, flag: 'wx' });
+      const timer = setTimeout(() => releaseInfo(infoFile), INFO_MAX_AGE_MS);
+      timer.unref?.();
+      privateInfo.set(infoFile, { reference, timer });
+    } catch { if (reference) privateVault.forgetMetadata(reference); infoFile = null; }
     return {
       ok: true,
       infoFile,
@@ -253,18 +289,23 @@ async function analyze(url, { title: pageTitle, signal, timeoutMs, ...context } 
 }
 
 function freshInfo(infoFile, infoAt, expiresAt) {
-  return !!infoFile && (!expiresAt || Date.now() < expiresAt - 5000) && Date.now() - (infoAt || 0) < INFO_MAX_AGE_MS && fs.existsSync(infoFile);
+  prunePrivateInfo();
+  if (!infoFile || (expiresAt && Date.now() >= expiresAt - 5000) || Date.now() - (infoAt || 0) >= INFO_MAX_AGE_MS) return false;
+  try {
+    const metadata = JSON.parse(fs.readFileSync(infoFile, 'utf8'));
+    return !metadata.__grab_private_context || privateInfo.has(infoFile);
+  } catch { return false; }
 }
 
 // outputBase: the job's file path without extension, chosen by the output allocator (unique and
 // safe). folder/name are the older form, still accepted for callers that don't allocate.
-function downloadArgs({ url, mediaUrl, referer, requestContext, cookieFile, outputBase, name, folder, format, quality, infoFile, infoAt, infoExpiresAt }) {
+function downloadArgs({ url, mediaUrl, referer, requestContext, cookieFile, outputBase, name, folder, format, quality, infoFile, infoAt, infoExpiresAt, privateInput }) {
   // A literal % in the name must not be read as part of yt-dlp's output template.
   const out = (outputBase || path.join(folder, safeName(name))).replace(/%/g, '%%') + '.%(ext)s';
   // Reuse the lookup result when it's still fresh; otherwise fetch the page again, slowly.
   // A video found inside a page's player is fetched from its own address, as that page does.
   const expiry = [infoExpiresAt, mediaExpiry(mediaUrl || url)].filter((v) => Number.isFinite(v) && v > 0);
-  const source = freshInfo(infoFile, infoAt, expiry.length ? Math.min(...expiry) : null) ? ['--load-info-json', infoFile] : ['--sleep-requests', '1', '--', mediaUrl || url];
+  const source = freshInfo(infoFile, infoAt, expiry.length ? Math.min(...expiry) : null) ? ['--load-info-json', privateInput ? '-' : infoFile] : ['--sleep-requests', '1', '--', mediaUrl || url];
   source.unshift(...sessionArgs({ referer, requestContext, cookieFile }));
   // --print implies quiet mode, so --progress is needed to keep the progress lines coming.
   const common = ['--newline', '--progress', '--no-playlist', '--no-warnings', '-R', '10', '--fragment-retries', '10',
@@ -320,7 +361,13 @@ function download(opts, onProgress, { runImpl = run, verifyImpl = verifyOutput }
   let delivered = null;
   let stopped = false;
   let verifier = null;
-  const job = runImpl(downloadArgs(opts), {
+  prunePrivateInfo();
+  const input = privateVault.readMetadata(privateInfo.get(opts.infoFile)?.reference);
+  const args = downloadArgs({ ...opts, privateInput: !!input });
+  const infoIndex = args.indexOf('--load-info-json');
+  const job = runImpl(args, {
+    input: infoIndex >= 0 && args[infoIndex + 1] === '-' ? input : undefined,
+    requestUrls: [opts.mediaUrl || opts.url],
     kind: 'download', idleTimeoutMs: opts.idleMs,
     onLine: (line) => {
       if (line.startsWith('GRAB|')) {
@@ -392,4 +439,4 @@ const stopAll = (timeoutMs) => registry.stopAll(timeoutMs);
 // A lookup result file Grab wrote itself (the only info file a download may load).
 const isInfoFile = (p) => typeof p === 'string' && path.dirname(path.resolve(p)) === path.resolve(INFO_DIR) && /^[0-9a-f]{40}-(?:\d+|[0-9a-f-]{36})\.json$/.test(path.basename(p));
 
-module.exports = { configure, version, analyze, download, safeName, extractors, cleanInfoCache, setUserBinDir, reconcileEngine, updateEngine, busy, stopAll, isInfoFile, mediaExpiry };
+module.exports = { configure, version, analyze, download, safeName, extractors, cleanInfoCache, releaseInfo, setUserBinDir, reconcileEngine, updateEngine, busy, stopAll, isInfoFile, mediaExpiry };

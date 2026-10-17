@@ -1,6 +1,7 @@
 // Settings and history, stored as atomic JSON files in the user's data folder.
 const crypto = require('crypto');
 const path = require('path');
+const fs = require('fs');
 const { JsonStore } = require('./json-store.cjs');
 const { normalizeSettings, normalizeHistory, normalizeHistoryEntry, HISTORY_LIMIT } = require('../domain/records.cjs');
 
@@ -42,8 +43,10 @@ class HistoryRepository {
       const loaded = await this.store.load();
       if (!this.list) {
         this.list = loaded;
-        // entries from before ids existed keep the ids they were just given
-        if (loaded.length) await this.store.save(loaded);
+        // Always re-save through the hardened normalizer, even when it removed every
+        // legacy signed link. Do not retain an unfiltered pre-migration backup.
+        await this.store.save(loaded);
+        await fs.promises.rm(this.store.file + '.bak', { force: true });
       }
     }
     return this.list;
@@ -51,6 +54,8 @@ class HistoryRepository {
   add(entry) {
     return this.serial(async () => {
       const e = normalizeHistoryEntry({ ...entry, id: crypto.randomUUID(), completedAt: new Date().toISOString() }, () => crypto.randomUUID());
+      // Sensitive links can be downloaded without being written to disk.
+      if (!e) return null;
       this.list = [e, ...(await this.all())].slice(0, HISTORY_LIMIT);
       await this.store.save(this.list);
       return e;

@@ -11,7 +11,7 @@ const OUT_DIR = path.join(__dirname, 'output', path.basename(__filename, '.cjs')
 fs.mkdirSync(OUT_DIR, { recursive: true });
 const grab = APP_DIR;
 const out = OUT_DIR;
-app.setPath('userData', fs.mkdtempSync(path.join(require('os').tmpdir(), 'e2e-')));
+require('../test-support/electron-profile.cjs').isolateElectronProfile(app, fs.mkdtempSync(path.join(require('os').tmpdir(), 'e2e-')));
 app.on('window-all-closed', () => {});
 
 const LONG = '-הכשרת הפרימיום המקיפה של DarkCrypto- שיעור מספר 12: ניתוח טכני מתקדם ותבניות מסחר';

@@ -50,6 +50,7 @@ async function createSessionFixture({ env = process.env } = {}) {
 
   const pages = {
     '/direct': () => page('Direct video', '<video src="/files/clip.mp4" muted autoplay loop playsinline></video>'),
+    '/loading': () => page('Video with a stalled subresource', '<video src="/files/clip.mp4" muted autoplay loop playsinline></video><img src="/never-finishes">'),
     '/hls': () => page('HLS via fetch', hlsLoader('episode1')),
     '/xhr-hls': () => page('HLS via XHR', `<video id="v" muted></video><script>
       const x = new XMLHttpRequest(); x.open('GET', ${JSON.stringify(cdnOrigin + '/media/episode1/master.m3u8' + sig)}); x.withCredentials = true; x.send();
@@ -82,6 +83,13 @@ async function createSessionFixture({ env = process.env } = {}) {
     const send = (status, type, body, headers = {}) => { res.writeHead(status, { 'Content-Type': type, ...headers }); res.end(body); };
     const cors = onCdn ? { 'Access-Control-Allow-Origin': req.headers.origin || pageOrigin, 'Access-Control-Allow-Credentials': 'true', 'Vary': 'Origin' } : {};
     if (req.method === 'OPTIONS') return send(204, 'text/plain', '', { ...cors, 'Access-Control-Allow-Headers': 'range' });
+    if (url.pathname === '/never-finishes') {
+      // Keep the load event pending while the document and its media are already available.
+      // The request is closed when the job-owned tab closes (or fixture.close destroys sockets).
+      res.writeHead(200, { 'Content-Type': 'image/png' });
+      res.flushHeaders();
+      return;
+    }
 
     if (url.pathname === '/login') {
       return send(200, 'text/html', page('Signed in', 'ok'), { 'Set-Cookie': `grabsid=${secret}; Path=/; HttpOnly; SameSite=Lax` });

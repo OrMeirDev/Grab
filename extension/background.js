@@ -21,8 +21,18 @@ const SCOPE_TTL_MS = 15 * 60 * 1000;
 const SCAN_INTERVAL_MS = 750;
 const DEADLINE_MARGIN_MS = 1500;
 const NO_VIDEO_AFTER_MS = 15000;
+const DOM_SCAN_MS = 1500;
+const TAB_READY_MS = 8000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Browser APIs can remain pending on restored documents or stalled frames. A late result
+// must not consume the discovery budget or be delivered after its caller moved on.
+function within(promise, ms, fallback) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), Math.max(0, ms));
+    Promise.resolve(promise).then((value) => { clearTimeout(timer); resolve(value); }, () => { clearTimeout(timer); resolve(fallback); });
+  });
+}
 
 // ---------------------------------------------------------------- identity
 let identityPromise = null;
@@ -203,6 +213,8 @@ chrome.webNavigation.onCommitted.addListener((d) => {
   });
 });
 chrome.tabs.onRemoved.addListener((tabId) => {
+  pendingDomScans.delete(tabId + ':false');
+  pendingDomScans.delete(tabId + ':true');
   for (const [id, req] of requests) if (req.tabId === tabId) requests.delete(id);
   withTab(tabId, () => chrome.storage.session.remove(tabKey(tabId)));
   for (const job of jobs.values()) if (job.tabId === tabId && job.owned) { job.owned = false; job.tabGone = true; }
@@ -287,11 +299,23 @@ async function freshObservations(tabId) {
   return { items: rec.items.filter((o) => now - o.at < OBS_TTL_MS), hosts: rec.hosts || [] };
 }
 
-async function scanDom(tabId, startPlayback) {
+const pendingDomScans = new Map();
+async function scanDom(tabId, startPlayback, deadlineAt = Infinity) {
+  const failed = () => ({ media: [], players: 0, playing: 0, playRejected: 0, blob: 0, drm: false, title: '', embeds: [], failed: true });
+  const budget = Math.min(DOM_SCAN_MS, deadlineAt - Date.now());
+  if (budget <= 0) return failed();
   let results = [];
   try {
-    results = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: C.collectInPage, args: [{ startPlayback }] });
-  } catch (e) { return { media: [], players: 0, playing: 0, playRejected: 0, blob: 0, drm: false, title: '', embeds: [], failed: true }; }
+    const key = tabId + ':' + startPlayback;
+    let pending = pendingDomScans.get(key);
+    if (!pending) {
+      pending = Promise.resolve(chrome.scripting.executeScript({ target: { tabId, allFrames: true }, injectImmediately: true, func: C.collectInPage, args: [{ startPlayback }] })).catch(() => null);
+      pendingDomScans.set(key, pending);
+      pending.then(() => { if (pendingDomScans.get(key) === pending) pendingDomScans.delete(key); });
+    }
+    results = await within(pending, budget, null);
+    if (!results) return failed();
+  } catch (e) { return failed(); }
   const out = { media: [], players: 0, playing: 0, playRejected: 0, blob: 0, drm: false, title: '', embeds: [], failed: false };
   for (const r of results) {
     const v = r && r.result;
@@ -307,9 +331,9 @@ async function scanDom(tabId, startPlayback) {
 }
 
 // Candidates for one tab: fresh network observations plus what the page's players expose now.
-async function gather(tabId, { play = false } = {}) {
+async function gather(tabId, { play = false, deadlineAt = Infinity } = {}) {
   const { items, hosts } = await freshObservations(tabId);
-  const dom = await scanDom(tabId, play);
+  const dom = await scanDom(tabId, play, deadlineAt);
   const obs = items.map((o) => ({ ...o, hosts }));
   for (const m of dom.media) {
     const cls = M.classify({ url: m.url });
@@ -414,15 +438,19 @@ async function revealJobTab(jobId) {
 
 async function findExistingTab(url) {
   const tabs = await chrome.tabs.query({});
-  const matches = tabs.filter((t) => t.url && M.sameNavigationUrl(t.url, url));
+  const matches = tabs.filter((t) => !t.discarded && t.url && M.sameNavigationUrl(t.url, url));
   matches.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
   return matches[0] || null;
 }
 
-async function waitTabComplete(tabId, until) {
-  while (Date.now() < until) {
+async function waitTabComplete(job, tabId) {
+  // Full load can wait forever for advertising/analytics. Reserve time for player discovery
+  // even when the tab never reaches complete; immediate scans can inspect its current DOM.
+  const until = Math.min(job.deadlineAt, Date.now() + TAB_READY_MS);
+  while (alive(job) && Date.now() < until) {
     let tab;
-    try { tab = await chrome.tabs.get(tabId); } catch (e) { return false; }
+    try { tab = await within(chrome.tabs.get(tabId), Math.min(1000, until - Date.now()), null); } catch (e) { return false; }
+    if (!tab) return false;
     if (tab.status === 'complete') return true;
     await sleep(250);
   }
@@ -431,23 +459,29 @@ async function waitTabComplete(tabId, until) {
 
 function startJob(m) {
   if (jobs.has(m.jobId)) return;
-  const job = { id: m.jobId, url: m.url, refresh: !!m.refresh, tabId: null, owned: false, aborted: null, deadlineAt: Date.now() + m.deadlineMs - DEADLINE_MARGIN_MS, state: 'locating', timer: null };
+  // state is what the UI is told; stage (protocol JOB_STAGES) is where the job actually is.
+  const job = { id: m.jobId, url: m.url, refresh: !!m.refresh, tabId: null, owned: false, aborted: null, deadlineAt: Date.now() + m.deadlineMs - DEADLINE_MARGIN_MS, state: 'locating', stage: 'locating', timer: null };
   jobs.set(job.id, job);
   job.timer = setTimeout(() => {
     if (jobs.get(job.id) !== job) return;
     job.aborted = 'timeout';
     const reason = job.state === 'playback_required' ? 'playback_required' : 'timeout';
     finishJob(job);
-    post(P.make('job-failed', { jobId: job.id, reason }));
+    post(P.make('job-failed', { jobId: job.id, reason, stage: job.stage }));
   }, Math.max(1000, m.deadlineMs - DEADLINE_MARGIN_MS));
   runJob(job).catch((e) => {
     if (jobs.get(job.id) !== job) return;
     finishJob(job);
-    post(P.make('job-failed', { jobId: job.id, reason: 'extension_error', message: String(e && e.message || e).slice(0, 200) }));
+    post(P.make('job-failed', { jobId: job.id, reason: 'extension_error', stage: job.stage, message: String(e && e.message || e).slice(0, 200) }));
   });
 }
 
-const progress = (job, state) => { job.state = state; if (!job.aborted) post(P.make('progress', { jobId: job.id, state })); };
+// stage defaults to the state when it names one; playback_required keeps the current stage.
+const progress = (job, state, stage = P.JOB_STAGES.includes(state) ? state : job.stage) => {
+  job.state = state;
+  job.stage = stage;
+  if (!job.aborted) post(P.make('progress', { jobId: job.id, state, stage }));
+};
 const alive = (job) => jobs.get(job.id) === job && !job.aborted;
 
 function deliver(job, ranked, dom) {
@@ -467,7 +501,7 @@ async function runJob(job) {
   const existing = job.refresh ? null : await findExistingTab(job.url);
   if (!alive(job)) return;
   if (existing) {
-    const g = await gather(existing.id, { play: false });
+    const g = await gather(existing.id, { play: false, deadlineAt: job.deadlineAt });
     if (!alive(job)) return;
     if (g.ranked.plausible.length) { deliver(job, g.ranked, g.dom); return; }
   }
@@ -478,14 +512,16 @@ async function runJob(job) {
   job.owned = true;
   await rememberOwned(tab.id, true);
   if (!alive(job)) { finishJob(job); return; }
+  progress(job, 'discovering', 'waiting_load');
+  await waitTabComplete(job, tab.id);
+  if (!alive(job)) return;
   progress(job, 'discovering');
-  await waitTabComplete(tab.id, job.deadlineAt);
   const started = Date.now();
   let lastCount = -1;
   let lastChange = Date.now();
   let prompted = false;
   while (alive(job) && Date.now() < job.deadlineAt) {
-    const g = await gather(tab.id, { play: true });
+    const g = await gather(tab.id, { play: true, deadlineAt: job.deadlineAt });
     if (!alive(job)) return;
     const count = g.ranked.ranked.length;
     if (count !== lastCount) { lastCount = count; lastChange = Date.now(); }
@@ -498,7 +534,7 @@ async function runJob(job) {
     }
     if (prompted && count) { prompted = false; job.state = 'discovering'; }
     // A page with no player and no media request is not going to produce one: say so instead of waiting out the deadline.
-    if (!count && !prompted && g.dom.players === 0 && !g.dom.blob && Date.now() - started > NO_VIDEO_AFTER_MS) {
+    if (!count && !prompted && !g.dom.failed && g.dom.players === 0 && !g.dom.blob && Date.now() - started > NO_VIDEO_AFTER_MS) {
       finishJob(job);
       post(P.make('job-failed', { jobId: job.id, reason: 'no_video' }));
       return;

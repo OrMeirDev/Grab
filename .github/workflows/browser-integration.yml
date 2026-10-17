@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: browser-integration-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   checks:
     strategy:
@@ -43,6 +47,15 @@ jobs:
       - name: Real media engine verification
         if: runner.os == 'Windows'
         run: npm run test:media
+      - name: Actual Windows Electron network privacy capture
+        if: runner.os == 'Windows'
+        run: node e2e/network-privacy.cjs
+      - name: Real Windows privacy boundary and metadata round-trip
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:GRAB_TEST_YTDLP_DIR = "$pwd\bin"
+          node --test tests/privacy-engine.integration.test.cjs tests/cookie-vault-jar.test.cjs
       - name: Install throwaway Chromium
         if: runner.os == 'Windows'
         run: npx playwright install chromium
@@ -73,6 +86,40 @@ jobs:
       - name: Verified release bundle, checksums and updater metadata
         if: runner.os == 'Windows'
         run: node scripts/release/bundle.cjs
+      - name: Current UI screenshots from a synthetic profile
+        if: runner.os == 'Windows' && github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          $env:APPDATA = Join-Path $env:RUNNER_TEMP 'grab-ui-fixture'
+          $env:MAIN_TOO = '1'
+          New-Item -ItemType Directory -Force $env:APPDATA | Out-Null
+          npm run e2e:screenshots
+      - name: Checkout the exact PR base for before screenshots
+        if: runner.os == 'Windows' && github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: ui-baseline
+          persist-credentials: false
+      - name: Baseline UI screenshots using the same pinned engines and synthetic profile
+        if: runner.os == 'Windows' && github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          $env:APPDATA = Join-Path $env:RUNNER_TEMP 'grab-ui-fixture'
+          $env:MAIN_TOO = '1'
+          New-Item -ItemType Junction -Path "$pwd\ui-baseline\bin" -Target "$pwd\bin" | Out-Null
+          Set-Location ui-baseline
+          npm ci --no-audit --no-fund
+          npm run e2e:screenshots
+      - name: Retain before and after UI evidence
+        if: runner.os == 'Windows' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grab-privacy-ui-before-after
+          path: |
+            e2e/output/screenshots/
+            ui-baseline/e2e/output/screenshots/
+          if-no-files-found: warn
       - name: Retain test installer
         if: runner.os == 'Windows' && success()
         uses: actions/upload-artifact@v4

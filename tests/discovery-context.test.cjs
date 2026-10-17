@@ -162,8 +162,8 @@ test('diagnostics keep the facts and drop every secret', () => {
   });
   const text = JSON.stringify(e);
   for (const secret of ['token=', 'signature', 'Signature=', 'Expires', 'handle', 'cookies.txt', 'UA', 'sid=1', 'a=b', 'Bearer', '#t=3']) assert.equal(text.includes(secret), false, secret);
-  assert.equal(e.url, 'https://stream.mux.com/abc.m3u8');
-  assert.equal(e.error, 'HTTP Error 403 for https://cdn.example/v.mp4');
-  assert.deepEqual(e.diagnostics, { framesScanned: 3, rejected: { ad: 2 } });
+  assert.equal(e.url, 'https://stream.mux.com');
+  assert.equal(e.error, undefined, 'free-form server errors must never persist');
+  assert.equal(e.diagnostics, undefined, 'arbitrary nested diagnostic fields must never persist');
   assert.equal(d.recent(1)[0], e);
 });

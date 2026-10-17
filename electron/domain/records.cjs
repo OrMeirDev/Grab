@@ -2,6 +2,7 @@
 // partial or damaged is turned into a usable one. Pure.
 
 const { sanitizeBrowserSettings } = require('./browser-policy.cjs');
+const { linkHasSecret } = require('./secrets.cjs');
 
 const FORMATS = ['mp4', 'mp3'];
 const QUALITIES = ['best', '1080', '720', '480'];
@@ -16,13 +17,16 @@ function normalizeSettings(raw, defaults) {
     folder: str(s.folder, 1024) || defaults.folder,
     format: FORMATS.includes(s.format) ? s.format : defaults.format,
     quality: QUALITIES.includes(s.quality) ? s.quality : defaults.quality,
+    automaticUpdateChecks: typeof s.automaticUpdateChecks === 'boolean' ? s.automaticUpdateChecks : true,
     ...(s.browser && typeof s.browser === 'object' ? { browser: sanitizeBrowserSettings(s.browser) } : {}),
   };
 }
 
 // A history entry. id: entries saved before ids existed get one (makeId) the first time they load.
 function normalizeHistoryEntry(e, makeId) {
-  if (!e || typeof e !== 'object' || typeof e.url !== 'string') return null;
+  // Signed or authenticated URLs must never enter persistent download history.
+  // Downloaded files remain available from the library independently of history.
+  if (!e || typeof e !== 'object' || typeof e.url !== 'string' || linkHasSecret(e.url)) return null;
   return {
     id: str(e.id, 64) || makeId(),
     name: str(e.name, 500) || '',

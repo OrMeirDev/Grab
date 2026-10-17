@@ -2,7 +2,7 @@ const { EventEmitter } = require('events');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { CookieVault } = require('./infrastructure/cookie-vault.cjs');
+const { sharedCookieVault: vault } = require('./infrastructure/cookie-vault.cjs');
 
 // The user's default browser (where they are signed in). Chromium-based browsers all have the same
 // remote-debugging switch (<scheme>://inspect/#remote-debugging) and DevToolsActivePort file.
@@ -186,7 +186,6 @@ async function chooseTarget(cdp, pageUrl, { refresh = false } = {}) {
   return { targetId, created: true };
 }
 
-const vault = new CookieVault();
 const rememberCookies = (cookies, options) => vault.remember(cookies, options);
 const withSessionCookies = (reference, work) => vault.withJar(reference, work);
 const hasCookies = (reference) => !!reference && vault.has(reference);

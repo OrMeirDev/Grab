@@ -8,7 +8,7 @@ const OUT_DIR = path.join(__dirname, 'output', path.basename(__filename, '.cjs')
 fs.mkdirSync(OUT_DIR, { recursive: true });
 const dir = APP_DIR;
 const out = OUT_DIR;
-app.setPath('userData', fs.mkdtempSync(path.join(require('os').tmpdir(), 'lg-')));
+require('../test-support/electron-profile.cjs').isolateElectronProfile(app, fs.mkdtempSync(path.join(require('os').tmpdir(), 'lg-')));
 app.on('window-all-closed', () => {});
 app.whenReady().then(async () => {
   require(path.join(dir, 'electron', 'main.cjs'));

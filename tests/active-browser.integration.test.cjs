@@ -24,7 +24,10 @@ test(`active browser (${B.name}): exact tab reused untouched, own tab closed, co
   const site = await require('./fixtures/media-site.cjs').start();
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-chrome-'));
   const pageUrl = site.base + '/watch';
-  const chrome = spawn(B.path, ['--headless=new', '--no-sandbox', '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--autoplay-policy=no-user-gesture-required', pageUrl], { stdio: ['ignore', 'ignore', 'pipe'] });
+  // A fresh Edge profile can still inherit OS-account sync and install extensions.
+  // Keep this controlled fixture free of sync/extension-created tabs without
+  // weakening the assertions that Grab leaves the original tab untouched.
+  const chrome = spawn(B.path, ['--headless=new', '--no-sandbox', '--no-first-run', '--no-default-browser-check', '--disable-sync', '--disable-extensions', '--disable-gpu', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--autoplay-policy=no-user-gesture-required', pageUrl], { stdio: ['ignore', 'ignore', 'pipe'] });
   // What the browser said, for a failure message (its stderr, last 2 KB).
   let stderr = '';
   chrome.stderr.on('data', (d) => { stderr = (stderr + d).slice(-2048); });
