@@ -1,12 +1,12 @@
 # Grab
 
-Stable version: **1.7.0**. [Download the Windows installer](https://github.com/OrMeirDev/Grab/releases/download/v1.7.0/Grab-Setup-1.7.0.exe). [Installation in Hebrew](docs/INSTALL-WINDOWS-HE.md). [Release notes](docs/releases/1.7.0.md).
+Stable version: **1.7.1**. [Download the Windows installer](https://github.com/OrMeirDev/Grab/releases/download/v1.7.1/Grab-Setup-1.7.1.exe). [Installation in Hebrew](docs/INSTALL-WINDOWS-HE.md). [Release notes](docs/releases/1.7.1.md).
 
 Windows app for downloading videos and audio from YouTube and ~1,300 other sites, built on [yt-dlp](https://github.com/yt-dlp/yt-dlp). Hebrew, right-to-left interface.
 
 ## Install
 
-Download [Grab-Setup-1.7.0.exe](https://github.com/OrMeirDev/Grab/releases/download/v1.7.0/Grab-Setup-1.7.0.exe) from [Releases](https://github.com/OrMeirDev/Grab/releases/latest) and install over your existing copy. Settings and history are retained. The release includes updater metadata, checksums and the [Hebrew guide](docs/INSTALL-WINDOWS-HE.md). Ordinary stable updates are also available inside Grab.
+Download [Grab-Setup-1.7.1.exe](https://github.com/OrMeirDev/Grab/releases/download/v1.7.1/Grab-Setup-1.7.1.exe) from [Releases](https://github.com/OrMeirDev/Grab/releases/latest) and install over your existing copy. Settings and history are retained. The release includes updater metadata, checksums and the [Hebrew guide](docs/INSTALL-WINDOWS-HE.md). Ordinary stable updates are also available inside Grab.
 
 The installer is not code-signed, so Windows SmartScreen warns on first run: click **More info → Run anyway**.
 
@@ -25,7 +25,7 @@ The installer is not code-signed, so Windows SmartScreen warns on first run: cli
 
 ## Pages that use your browser session
 
-Grab 1.7.0 uses a locally loaded extension in **Chrome, Edge or Brave**. It uses the selected active browser/profile and does not open an in-app sign-in page or require remote debugging for extension use.
+Grab 1.7.1 uses a locally loaded extension in **Chrome, Edge or Brave**. It uses the selected active browser/profile and does not open an in-app sign-in page or require remote debugging for extension use.
 
 1. In Grab, open **הגדרות → דפדפן והרחבה**, then click **התקנה** next to the intended browser.
 2. In that browser's extensions page, enable **Developer mode**, choose **Load unpacked**, and select the stable extension folder shown by Grab. Repeat in each intended profile.
@@ -34,7 +34,7 @@ Grab 1.7.0 uses a locally loaded extension in **Chrome, Edge or Brave**. It uses
 
 See [extension setup and troubleshooting](docs/browser-extension.md) for connection, profile choice, repair and playback-required steps. The older remote-debugging path remains available for browsers that have never been set up with the extension; it is not needed for the setup above. Firefox is unsupported. Automated tests use throwaway profiles; personal Chrome/Edge/Brave sessions still need the [manual checks](docs/windows-manual-checklist.md).
 
-Lookup reads player attributes (including signed Mux manifest URLs), open Shadow DOM, frame execution contexts and media network requests. Cookies for the page and discovered URLs are passed to yt-dlp in a temporary domain-scoped cookie jar, together with the player request's User-Agent, Referer and Origin. The jar is deleted after lookup/download. A failed download of an embedded source is looked up again to refresh expiring URLs.
+Lookup reads player attributes (including signed Mux manifest URLs), open Shadow DOM, frame execution contexts and media network requests. Session cookies stay behind private handles; the engine receives the necessary session and playback context without placing cookie values in command-line arguments or renderer state. The mandatory yt-dlp plugin enforces host-only, domain, path and Secure cookie scope, including redirects and HLS fragments. A failed download of an embedded source is looked up again to refresh expiring URLs in the same session.
 
 Cookies from the page are kept in memory for at most 4 hours behind a job's private session handle. Disconnecting an extension profile drops its handles. A restored download reacquires the selected session before network work; Grab reports a missing browser/profile explicitly. When several extension profiles are connected, choose the intended one instead of letting Grab guess.
 

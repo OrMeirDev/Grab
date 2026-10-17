@@ -1,6 +1,28 @@
-# Grab 1.7.0 — current state (2026-10-16)
+# Grab 1.7.1 — release preparation (2026-10-17)
 
-## Unreleased privacy hardening
+The owner explicitly requested publication of stable **1.7.1** on 2026-10-17, continuing the
+integrated main source `78d9371742dc8c4d70c39f86bd9d0c4eb5591135`. This preparation changes the
+application version and current release/upgrade documentation; bundled tools remain pinned.
+The extension is **1.1.6**. Publication must consume the verified installer from three successful
+main workflows on the exact 1.7.1 source SHA, as described in [releasing](releasing.md).
+
+The owner's installed d024572 build passed three public download runs, including exact-offset
+resume and full decode of the resulting files. Source 78d9371 additionally includes PR #15:
+resuming a job with a remembered profile starts its closed browser and never substitutes another
+profile. PR #15 passed all three workflows, including 29/29 installed-app/upgrade checks after
+one Windows verify rerun. A later main Brave Send run reported `sessionExpired`; preserve that
+evidence and require the fresh 1.7.1 integration run to pass before publication.
+
+Personal-profile Sends in all three browsers, installed Mako resume with the PR #15 fix, a local
+genuine standard user and the local in-app updater have not all been completed. These coverage
+limits remain explicit; release authorization does not turn them into performed checks. The
+installer remains unsigned. The public and synthetic-session acceptance work continues separately.
+
+Current release notes: [1.7.1](releases/1.7.1.md). The historical source notes below describe the
+individual hardening candidates and the preceding 1.7.0 release; their earlier authorization/gate
+statements do not override the owner's current 1.7.1 publication request.
+
+## Hardening verification history
 
 The hardening branch builds on PR #6 and the privacy changes from PR #5. See
 [the findings/status matrix](hardening-status.md) and [ADR 0003](adr/0003-download-network-privacy.md).
@@ -72,7 +94,7 @@ documentation. There is no UI redesign or engine upgrade.
 
 ## Release and verification
 
-[Release process](releasing.md), [release notes](releases/1.7.0.md),
+[Release process](releasing.md), [release notes](releases/1.7.1.md),
 [Windows installation](INSTALL-WINDOWS-HE.md), [extension setup](browser-extension.md).
 The Release workflow requires successful CI, Browser integration and Windows verify push runs
 for the exact same release source SHA on main. It downloads the tested Windows bundle, checks its source
