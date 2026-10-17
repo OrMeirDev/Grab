@@ -89,3 +89,65 @@ test('diagnostics restrict existing directories and rotated logs and refuse a sy
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('startup sanitizes legacy and rotated diagnostics before the first new event, without raw backups', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-legacy-diagnostics-'));
+  try {
+    const at = '2026-10-16T12:34:56.000Z';
+    const legacy = JSON.stringify({ at, event: 'lookup', url: 'https://alice:credential@media.test/private/account-73/clip?token=legacy-secret#frag',
+      ok: true, ms: 12, kind: 'found', error: 'Bearer legacy-secret', headers: { Authorization: 'legacy-secret' }, profile: 'account-73' });
+    for (const name of ['diagnostics.log', 'diagnostics.log.1', 'diagnostics.log.2']) {
+      fs.writeFileSync(path.join(dir, name), legacy + '\nnot JSON: legacy-secret\n' + JSON.stringify({ event: 'constructor', at: 'legacy-secret' }) + '\n');
+    }
+    fs.writeFileSync(path.join(dir, 'unrelated.txt'), 'untouched');
+    const migrated = new Diagnostics({ dir });
+    assert.equal(migrated.migrationComplete, true);
+    const before = new Map();
+    for (const name of ['diagnostics.log', 'diagnostics.log.1', 'diagnostics.log.2']) {
+      const file = path.join(dir, name);
+      const text = fs.readFileSync(file, 'utf8');
+      assert.deepEqual(text.trim().split('\n').map(JSON.parse), [
+        { at, event: 'lookup', url: 'https://media.test', kind: 'found', ms: 12, ok: true }, { event: 'unknown' },
+      ]);
+      for (const value of ['legacy-secret', 'credential', 'account-73', 'token=', '#frag', 'Bearer', 'headers', 'profile']) assert.equal(text.includes(value), false, value);
+      if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o077, 0);
+      before.set(name, text);
+    }
+    assert.deepEqual(fs.readdirSync(dir).sort(), ['diagnostics.log', 'diagnostics.log.1', 'diagnostics.log.2', 'unrelated.txt']);
+    assert.equal(fs.readFileSync(path.join(dir, 'unrelated.txt'), 'utf8'), 'untouched');
+    assert.equal(new Diagnostics({ dir }).migrationComplete, true);
+    for (const [name, text] of before) assert.equal(fs.readFileSync(path.join(dir, name), 'utf8'), text, 'migration is idempotent');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('startup drops oversized legacy diagnostics and unlinks log symlinks without rewriting their targets', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-log-boundary-'));
+  try {
+    const dir = path.join(root, 'logs'); fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, 'diagnostics.log'), 'legacy-secret'.repeat(100000));
+    const outside = path.join(root, 'outside'); fs.writeFileSync(outside, 'external-canary');
+    if (process.platform !== 'win32') fs.symlinkSync(outside, path.join(dir, 'diagnostics.log.1'));
+    const d = new Diagnostics({ dir });
+    assert.equal(d.migrationComplete, true);
+    assert.equal(fs.readFileSync(path.join(dir, 'diagnostics.log'), 'utf8'), '');
+    assert.equal(fs.readFileSync(outside, 'utf8'), 'external-canary');
+    d.record('start', { app: '1.7.0' });
+    assert.doesNotMatch(fs.readFileSync(path.join(dir, 'diagnostics.log'), 'utf8'), /legacy-secret/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('an incomplete migration disables disk append and retries after the obstruction is removed', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-log-retry-'));
+  try {
+    const obstacle = path.join(dir, 'diagnostics.log.1'); fs.mkdirSync(obstacle);
+    const d = new Diagnostics({ dir });
+    assert.equal(d.migrationComplete, false);
+    d.record('start', { app: '1.7.0' });
+    assert.equal(fs.existsSync(path.join(dir, 'diagnostics.log')), false);
+    assert.equal(d.recent().length, 1, 'memory diagnostics remain available');
+    fs.rmdirSync(obstacle);
+    d.record('start', { app: '1.7.0' });
+    assert.equal(d.migrationComplete, true);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'diagnostics.log'), 'utf8')).app, '1.7.0');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

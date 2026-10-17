@@ -7,6 +7,7 @@
 // Diagnostics record only scheme://host[:port] for HTTP(S) URLs.
 const fs = require('fs');
 const path = require('path');
+const crypto = require('node:crypto');
 const { ensurePrivateDir } = require('./private-info-dir.cjs');
 
 const MAX_BYTES = 1024 * 1024;
@@ -62,6 +63,7 @@ const SAFE_BOOL_FIELDS = {
   probe: ['protected', 'reusedTab'],
   start: ['packaged'],
 };
+const knownEvent = (event) => Object.hasOwn(SAFE_STRING_FIELDS, event) || event === 'browser-start';
 // No free-form strings and no arbitrary object trees are stored in diagnostics.
 function safeEventDetails(event, details = {}) {
   const source = details && typeof details === 'object' ? details : {};
@@ -69,15 +71,15 @@ function safeEventDetails(event, details = {}) {
   if (['lookup', 'download', 'probe'].includes(event) && typeof source.url === 'string') {
     result.url = redactUrl(source.url);
   }
-  for (const key of SAFE_STRING_FIELDS[event] || []) {
+  for (const key of Object.hasOwn(SAFE_STRING_FIELDS, event) ? SAFE_STRING_FIELDS[event] : []) {
     const value = source[key];
     if (typeof value === 'string' && /^[a-zA-Z0-9._ -]{1,64}$/.test(value)) result[key] = value;
   }
-  for (const key of SAFE_NUMBER_FIELDS[event] || []) {
+  for (const key of Object.hasOwn(SAFE_NUMBER_FIELDS, event) ? SAFE_NUMBER_FIELDS[event] : []) {
     const value = source[key];
     if (Number.isFinite(value) && value >= 0 && value <= 86400000) result[key] = value;
   }
-  for (const key of SAFE_BOOL_FIELDS[event] || []) {
+  for (const key of Object.hasOwn(SAFE_BOOL_FIELDS, event) ? SAFE_BOOL_FIELDS[event] : []) {
     if (typeof source[key] === 'boolean') result[key] = source[key];
   }
   if (event === 'download' && source.delivered && typeof source.delivered === 'object') {
@@ -98,11 +100,44 @@ function safeEventDetails(event, details = {}) {
   return result;
 }
 
+// Apply the current schema to every retained log on startup, including rotations.
+// Never rotate/back up the raw legacy bytes. Oversized or malformed input is dropped.
+function migrateLogs(dir) {
+  if (!ensurePrivateDir(dir)) return false;
+  try {
+    for (const name of fs.readdirSync(dir).filter((n) => /^diagnostics\.log(?:\.\d+)?$/.test(n))) {
+      const file = path.join(dir, name);
+      const stat = fs.lstatSync(file);
+      if (stat.isSymbolicLink()) { fs.unlinkSync(file); continue; }
+      if (!stat.isFile()) return false;
+      const raw = stat.size <= MAX_BYTES ? fs.readFileSync(file, 'utf8') : '';
+      const safe = [];
+      for (const line of raw.split(/\r?\n/)) {
+        let value;
+        try { value = JSON.parse(line); } catch { continue; }
+        if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+        const event = knownEvent(value.event) ? value.event : 'unknown';
+        const at = typeof value.at === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value.at)
+          && Number.isFinite(Date.parse(value.at)) ? { at: value.at } : {};
+        safe.push(JSON.stringify({ ...at, event, ...safeEventDetails(event, value) }));
+      }
+      const text = safe.length ? safe.join('\n') + '\n' : '';
+      const temporary = file + '.privacy-' + crypto.randomUUID() + '.tmp';
+      try {
+        fs.writeFileSync(temporary, text, { mode: 0o600, flag: 'wx' });
+        fs.renameSync(temporary, file);
+      } finally { fs.rmSync(temporary, { force: true }); }
+    }
+    return true;
+  } catch { return false; }
+}
+
 class Diagnostics {
   constructor({ dir, now = () => new Date() } = {}) {
     this.file = dir ? path.join(dir, 'diagnostics.log') : null;
     this.now = now;
     this.entries = [];
+    this.migrationComplete = !this.file || migrateLogs(path.dirname(this.file));
   }
 
   record(event, details = {}) {
@@ -112,6 +147,8 @@ class Diagnostics {
     if (this.entries.length > MAX_MEMORY) this.entries.shift();
     if (!this.file) return entry;
     try {
+      if (!this.migrationComplete) this.migrationComplete = migrateLogs(path.dirname(this.file));
+      if (!this.migrationComplete) return entry; // retry next time; never append to an unmigrated log
       if (!ensurePrivateDir(path.dirname(this.file))) return entry;
       if (process.platform !== 'win32') {
         for (const file of [this.file, this.file + '.1']) {

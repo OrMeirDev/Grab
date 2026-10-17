@@ -7,6 +7,20 @@ The hardening branch builds on PR #6 and the privacy changes from PR #5. See
 Its required extension version is 1.1.4. This work is separate from the published stable installer;
 final-head CI, installed Windows checks and real-account compatibility remain release gates.
 
+### Local upgrade follow-up (2026-10-17)
+
+Diagnostics now reapply the current allowlist to existing logs and numbered rotations at startup,
+before a new event is written. Malformed/oversized legacy input is dropped; no unredacted backup is
+created. If migration cannot finish, disk logging waits and retries rather than appending to the old
+file. Verify the installed upgrade with synthetic old records in both active and rotated logs, and
+inspect only sanitized results/counts. The real-engine fixture also releases its cached metadata
+through the engine lifecycle, including failed assertions.
+
+The owner's local report confirms public downloads and Mako/Edge, including session reacquisition
+after restart, on packaged candidate source 3caa352. Extension sends/sending-profile retention,
+real standard-user acceptance and the in-app updater remain unverified locally. These results do not
+approve a later candidate automatically. No merge or production release is implied.
+
 The owner confirmed RC4 works well on the desktop and authorized merging all integrated work,
 retiring unused branches and publishing the full 1.7.0 release. Stable 1.7.0 retains the approved
 RC4 application and extension 1.1.3; this preparation changes versioning, release automation and
