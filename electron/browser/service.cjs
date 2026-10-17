@@ -88,7 +88,7 @@ class BrowserService extends EventEmitter {
   }
 
   async refreshHealth() {
-    this.health = await setup.health({ integrationDir: this.integrationDir, registry: this.registry, hub: this.hub, detected: this.detected.browsers, appVersion: this.appVersion, sourceRoot: this.sourceRoot });
+    this.health = await setup.health({ integrationDir: this.integrationDir, registry: this.registry, hub: this.hub, detected: this.detected.browsers, appVersion: this.appVersion, sourceRoot: this.sourceRoot, runtimeVerified: this.runtimeVerified });
     this.healthAt = Date.now();
   }
 
@@ -96,9 +96,21 @@ class BrowserService extends EventEmitter {
   async autoRepair() {
     const record = setup.readInstall(this.integrationDir);
     if (!record || !record.browsers || !record.browsers.length) return;
-    if (record.appVersion === this.appVersion && record.runtime === setup.resolveRuntime() &&
-      record.integrationVersion === setup.INTEGRATION_VERSION && record.extensionVersion === this.identity.version) return;
-    try { await setup.install({ sourceRoot: this.sourceRoot, integrationDir: this.integrationDir, browsers: record.browsers, appVersion: this.appVersion, registry: this.registry }); } catch { /* shown by health */ }
+    const runtime = setup.resolveRuntime();
+    this.runtimeVerified = false;
+    if (record.appVersion === this.appVersion && record.runtime === runtime &&
+      record.integrationVersion === setup.INTEGRATION_VERSION && record.extensionVersion === this.identity.version) {
+      try {
+        this.runtimeVerified = await setup.hostRuntimeIsCurrent({ runtime, sourceRoot: this.sourceRoot,
+          integrationDir: this.integrationDir, appVersion: this.appVersion, hostRuntime: record.hostRuntime });
+      } catch { /* repair below; report a stale connection if it cannot be repaired */ }
+      if (this.runtimeVerified) return;
+    }
+    try {
+      await setup.install({ sourceRoot: this.sourceRoot, integrationDir: this.integrationDir,
+        browsers: record.browsers, appVersion: this.appVersion, registry: this.registry, runtime });
+      this.runtimeVerified = true;
+    } catch { /* shown by health */ }
     await this.refreshHealth();
   }
 
@@ -209,6 +221,7 @@ class BrowserService extends EventEmitter {
     if (!ids.length) return { ok: false, kind: 'noBrowser' };
     try {
       const r = await setup.install({ sourceRoot: this.sourceRoot, integrationDir: this.integrationDir, browsers: ids, appVersion: this.appVersion, registry: this.registry });
+      this.runtimeVerified = true;
       await this.refresh();
       return { ok: true, extensionDir: r.extensionDir, extensionId: r.id || this.identity.id, state: this.state() };
     } catch (e) { return { ok: false, kind: 'setupFailed', error: String(e && e.message || e).slice(0, 200) }; }

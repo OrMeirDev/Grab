@@ -9,6 +9,12 @@ final-head CI, installed Windows checks and real-account compatibility remain re
 
 ### Local upgrade follow-up (2026-10-17)
 
+Private native-host runtimes are now content-verified against the installed executable,
+runtime files and locales, including same-version/same-size rebuilds. Startup auto-repair
+checks the bytes before reusing a connection. A new private copy is staged and verified before
+selection; an existing host copy is not overwritten. Verify this with an installed same-version
+upgrade and compare hashes of the selected host, DLLs and locales to the installed application.
+
 Diagnostics now reapply the current allowlist to existing logs and numbered rotations at startup,
 before a new event is written. Malformed/oversized legacy input is dropped; no unredacted backup is
 created. If migration cannot finish, disk logging waits and retries rather than appending to the old
