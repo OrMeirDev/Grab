@@ -459,23 +459,29 @@ async function waitTabComplete(job, tabId) {
 
 function startJob(m) {
   if (jobs.has(m.jobId)) return;
-  const job = { id: m.jobId, url: m.url, refresh: !!m.refresh, tabId: null, owned: false, aborted: null, deadlineAt: Date.now() + m.deadlineMs - DEADLINE_MARGIN_MS, state: 'locating', timer: null };
+  // state is what the UI is told; stage (protocol JOB_STAGES) is where the job actually is.
+  const job = { id: m.jobId, url: m.url, refresh: !!m.refresh, tabId: null, owned: false, aborted: null, deadlineAt: Date.now() + m.deadlineMs - DEADLINE_MARGIN_MS, state: 'locating', stage: 'locating', timer: null };
   jobs.set(job.id, job);
   job.timer = setTimeout(() => {
     if (jobs.get(job.id) !== job) return;
     job.aborted = 'timeout';
     const reason = job.state === 'playback_required' ? 'playback_required' : 'timeout';
     finishJob(job);
-    post(P.make('job-failed', { jobId: job.id, reason }));
+    post(P.make('job-failed', { jobId: job.id, reason, stage: job.stage }));
   }, Math.max(1000, m.deadlineMs - DEADLINE_MARGIN_MS));
   runJob(job).catch((e) => {
     if (jobs.get(job.id) !== job) return;
     finishJob(job);
-    post(P.make('job-failed', { jobId: job.id, reason: 'extension_error', message: String(e && e.message || e).slice(0, 200) }));
+    post(P.make('job-failed', { jobId: job.id, reason: 'extension_error', stage: job.stage, message: String(e && e.message || e).slice(0, 200) }));
   });
 }
 
-const progress = (job, state) => { job.state = state; if (!job.aborted) post(P.make('progress', { jobId: job.id, state })); };
+// stage defaults to the state when it names one; playback_required keeps the current stage.
+const progress = (job, state, stage = P.JOB_STAGES.includes(state) ? state : job.stage) => {
+  job.state = state;
+  job.stage = stage;
+  if (!job.aborted) post(P.make('progress', { jobId: job.id, state, stage }));
+};
 const alive = (job) => jobs.get(job.id) === job && !job.aborted;
 
 function deliver(job, ranked, dom) {
@@ -506,9 +512,10 @@ async function runJob(job) {
   job.owned = true;
   await rememberOwned(tab.id, true);
   if (!alive(job)) { finishJob(job); return; }
-  progress(job, 'discovering');
+  progress(job, 'discovering', 'waiting_load');
   await waitTabComplete(job, tab.id);
   if (!alive(job)) return;
+  progress(job, 'discovering');
   const started = Date.now();
   let lastCount = -1;
   let lastChange = Date.now();

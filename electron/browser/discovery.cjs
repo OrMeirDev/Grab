@@ -80,16 +80,22 @@ async function discover({ hub, browser, url, jobId = protocol.newId('job'), refr
     const result = await new Promise((resolve, reject) => {
       const done = (fn, v) => { if (isDone) return; isDone = true; fn(v); };
       let isDone = false;
-      const timer = setTimeout(() => done(reject, new BrowserError(lastState === 'playback_required' ? 'playbackRequired' : 'discoveryTimeout')), Math.max(0, deadlineAt - Date.now()));
+      // jobStage: the last stage the extension reported (an enum, never free text), so a timeout is attributable.
+      const stageOf = (s) => (protocol.JOB_STAGES.includes(s) ? { jobStage: s } : {});
+      const timer = setTimeout(() => done(reject, new BrowserError(lastState === 'playback_required' ? 'playbackRequired' : 'discoveryTimeout', stageOf(lastStage))), Math.max(0, deadlineAt - Date.now()));
       let lastState = 'discovering';
+      let lastStage = null;
       cleanup.push(() => clearTimeout(timer));
       const onMessage = (inst, m) => {
         if (inst.key !== instance.key || m.jobId !== jobId) return; // another profile or another attempt: ignored
         if (m.type === 'progress') {
           lastState = m.state;
+          // m.stage is the extension's own stage (e.g. waiting_load); without it, the state names the stage.
+          if (protocol.JOB_STAGES.includes(m.stage)) lastStage = m.stage;
+          else if (protocol.JOB_STAGES.includes(m.state)) lastStage = m.state;
           onPhase(m.state === 'playback_required' ? 'playback_required' : 'discovering', { state: m.state });
         } else if (m.type === 'candidates' && m.final) done(resolve, { candidates: m.candidates, title: m.title || '' });
-        else if (m.type === 'job-failed') done(reject, new BrowserError(REASON_TO_KIND[m.reason] || 'extensionError', { message: m.message }));
+        else if (m.type === 'job-failed') done(reject, new BrowserError(REASON_TO_KIND[m.reason] || 'extensionError', { message: m.message, ...stageOf(m.stage) }));
       };
       const onGone = (inst) => { if (inst.key === instance.key) done(reject, new BrowserError('browserDisconnected')); };
       hub.on('message', onMessage);

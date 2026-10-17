@@ -261,6 +261,7 @@ class BrowserService extends EventEmitter {
     if (!(error instanceof BrowserError)) return this.fail('extensionError', browser, { error: String(error && error.message || error).slice(0, 200) });
     const kindMap = { noVideo: 'noVideoBrowser', protectedMedia: 'protected', choiceRequired: 'browserChoice' };
     const extra = error.options ? { options: error.options.map((i) => ({ key: i.key, label: this.instanceLabel(i) })) } : {};
+    if (protocol.JOB_STAGES.includes(error.jobStage)) extra.jobStage = error.jobStage;
     return this.fail(kindMap[error.kind] || error.kind, browser, extra);
   }
 

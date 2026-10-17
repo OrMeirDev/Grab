@@ -4,7 +4,7 @@
 
 The hardening branch builds on PR #6 and the privacy changes from PR #5. See
 [the findings/status matrix](hardening-status.md) and [ADR 0003](adr/0003-download-network-privacy.md).
-Its required extension version is 1.1.5. This work is separate from the published stable installer;
+Its required extension version is 1.1.6. This work is separate from the published stable installer;
 final-head CI, installed Windows checks and real-account compatibility remain release gates.
 
 ### Local upgrade follow-up (2026-10-17)
@@ -21,6 +21,14 @@ Mako/Edge cold-start timeout is not yet attributed conclusively: repeat installe
 resume checks with the updated extension, preserving existing personal tabs and sanitized timings.
 The extension version is bumped to 1.1.5 so same-version application upgrades refresh its files;
 Reload is still required in each browser before those checks.
+
+Extension 1.1.6 makes a discovery timeout attributable. `progress` and `job-failed` carry an optional
+`stage` from a fixed protocol enum: `locating`, `opening`, `waiting_load` or `discovering`. The UI
+state is unchanged; waiting for the load event is still shown as discovering. The app keeps the
+last valid stage, also when its own timer ends the job. That stage reaches the lookup result as
+`jobStage` and diagnostics as an enum-only field; other values are dropped. Protocol version and
+permissions are unchanged. The bump makes an installed 1.1.5 report as outdated, so Repair and
+Reload are needed. When an installed cold-start timeout recurs, record the lookup's `jobStage`.
 
 Private native-host runtimes are now content-verified against the installed executable,
 runtime files and locales, including same-version/same-size rebuilds. Startup auto-repair
