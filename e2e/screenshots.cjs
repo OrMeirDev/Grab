@@ -50,7 +50,7 @@ for (const f of ['settings.json', 'history.json', 'cache.json']) {
 }
 // Hebrew everywhere (Tune keeps the language in settings.json)
 try { const s = JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'), 'utf8')); s.lang = 'he'; fs.writeFileSync(path.join(profile, 'settings.json'), JSON.stringify(s)); } catch { /* no settings yet */ }
-app.setPath('userData', profile);
+require('../test-support/electron-profile.cjs').isolateElectronProfile(app, profile);
 // the app's own version (run from source, Electron would report its own)
 const pkgVersion = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version;
 app.getVersion = () => pkgVersion;

@@ -7,8 +7,7 @@ const os = require('os');
 const assert = require('assert/strict');
 const root = path.join(__dirname, '..');
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-ui-'));
-app.setPath('userData', profile);
-process.env.LOCALAPPDATA = path.join(profile, 'local');
+const { registry } = require('../test-support/electron-profile.cjs').isolateElectronProfile(app, profile);
 const output = path.join(root, 'e2e', 'output', 'browser-ui');
 fs.mkdirSync(output, { recursive: true });
 const engine = require('../electron/engine.cjs');
@@ -22,8 +21,6 @@ browsers.detectBrowsers = async () => ({ systemDefault: 'chrome', browsers: [
   { id: 'chrome', name: 'Google Chrome', exe: process.execPath }, { id: 'edge', name: 'Microsoft Edge', exe: process.execPath },
 ] });
 const setup = require('../electron/browser/setup.cjs');
-const registry = new Map();
-Object.assign(setup.windowsRegistry, { get: async (k) => registry.get(k) || null, set: async (k, v) => registry.set(k, v), remove: async (k) => registry.delete(k) });
 const { FakeBrowser } = require('../test-support/fake-browser.cjs');
 const { BrowserService } = require('../electron/browser/service.cjs');
 const realTest = BrowserService.prototype.test;
