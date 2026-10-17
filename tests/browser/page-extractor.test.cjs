@@ -129,3 +129,22 @@ for (const kind of ['private', 'forbidden', 'blocked', 'notfound', 'rateLimited'
     assert.deepEqual(f.calls, []);
   });
 }
+
+test('an extension job that times out reports its stage in the lookup result and in diagnostics, as an enum only', async (t) => {
+  const { Diagnostics } = require('../../electron/infrastructure/diagnostics.cjs');
+  for (const [stage, recorded] of [['waiting_load', 'waiting_load'], ['locating', 'locating'], [undefined, undefined]]) {
+    const f = fixture(t);
+    f.hub.sendTo = (key, type, m) => {
+      if (type === 'discover') queueMicrotask(() => f.hub.emit('message', f.instance, { type: 'job-failed', jobId: m.jobId, reason: 'timeout', ...(stage ? { stage } : {}) }));
+      return true;
+    };
+    const diagnostics = new Diagnostics();
+    const discovery = createDiscoveryService({ engine: f.engine, browserSession: session, getBrowserService: () => f.svc, record: (e, d) => diagnostics.record(e, d) });
+    const out = await discovery.analyze('https://members.example/lesson/7', { browser: 'chrome', instance: f.instance.key, requireSession: true });
+    assert.equal(out.kind, 'discoveryTimeout', JSON.stringify(out));
+    assert.equal(out.jobStage, recorded);
+    const [entry] = diagnostics.recent().filter((d) => d.event === 'lookup');
+    assert.equal(entry.jobStage, recorded);
+    assert.equal(entry.strategy, 'browser');
+  }
+});

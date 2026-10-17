@@ -12,7 +12,7 @@ const mediaUrl = 'https://media.fixture.test/master.m3u8';
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 const dom = (url = mediaUrl) => [{ frameId: 0, result: { media: [url], pageUrl, title: 'Fixture', players: 1, playing: 1, playRejected: 0, blobPlayers: 0, drm: false, embeds: [] } }];
 
-async function worker({ existing = [], status = 'complete', execute = async () => dom() } = {}) {
+async function worker({ existing = [], status = 'complete', execute = async () => dom(), query = async () => existing, create = null } = {}) {
   let now = 1700000000000;
   let nextTimer = 0;
   let receive;
@@ -38,8 +38,8 @@ async function worker({ existing = [], status = 'complete', execute = async () =
         connectNative: () => ({ postMessage: (m) => sent.push(m), onMessage: { addListener: (fn) => { receive = fn; } }, onDisconnect: event() }) },
       storage: { local: storage, session: storage }, alarms: { create() {}, onAlarm: event() },
       tabs: {
-        onRemoved, query: async () => existing,
-        create: async (options) => { const tab = { id: 100 + created.length, ...options, status }; created.push(tab); return tab; },
+        onRemoved, query: () => query(),
+        create: async (options) => { if (create) return create(options); const tab = { id: 100 + created.length, ...options, status }; created.push(tab); return tab; },
         get: async (id) => existing.find((tab) => tab.id === id) || created.find((tab) => tab.id === id),
         remove: async (id) => { removed.push(id); onRemoved.emit(id); },
         update: async (...args) => { updated.push(args); },
@@ -152,4 +152,46 @@ test('unresponsive DOM scans do not accumulate injections or misreport no-video 
   assert.equal(failures(w).length, 1);
   assert.equal(failures(w)[0].reason, 'timeout');
   assert.deepEqual(w.removed, [100]);
+});
+
+// ---------------------------------------------------------------- failure stage
+const never = () => new Promise(() => {});
+const valid = (m) => P.validate(m, 'ext').ok;
+
+test('a timed-out job names the stage it was in, as a protocol enum', async () => {
+  for (const [stage, deadlineMs, options] of [
+    ['locating', 10000, { query: never }],
+    ['opening', 10000, { create: never }],
+    ['waiting_load', 6000, { status: 'loading', execute: never }],
+    ['discovering', 30000, { execute: never }],
+  ]) {
+    const w = await worker(options);
+    w.start(deadlineMs);
+    await w.advance(deadlineMs);
+    assert.equal(failures(w).length, 1, stage);
+    assert.equal(failures(w)[0].reason, 'timeout', stage);
+    assert.equal(failures(w)[0].stage, stage);
+    assert.ok(valid(failures(w)[0]), stage);
+  }
+});
+
+test('progress reports the stage separately from the UI state: waiting for load is still "discovering" on screen', async () => {
+  const w = await worker({ status: 'loading' });
+  w.start();
+  await w.advance(15000);
+  assert.equal(candidates(w).length, 1);
+  const progress = w.sent.filter((m) => m.type === 'progress');
+  assert.deepEqual(progress.map((m) => [m.state, m.stage]),
+    [['locating', 'locating'], ['opening', 'opening'], ['discovering', 'waiting_load'], ['discovering', 'discovering']]);
+  assert.ok(progress.every(valid));
+});
+
+test('job-failed and progress accept only the known stages', () => {
+  for (const [type, base] of [['job-failed', { jobId: 'job1', reason: 'timeout' }], ['progress', { jobId: 'job1', state: 'discovering' }]]) {
+    assert.equal(P.validate(P.make(type, base), 'ext').ok, true, type + ': older extensions send no stage');
+    for (const stage of P.JOB_STAGES) assert.equal(P.validate(P.make(type, { ...base, stage }), 'ext').ok, true, type + ' ' + stage);
+    for (const stage of ['playback_required', 'waiting for https://x.test/', '', 3, null]) {
+      assert.equal(P.validate(P.make(type, { ...base, stage }), 'ext').ok, false, type + ' ' + JSON.stringify(stage));
+    }
+  }
 });

@@ -176,3 +176,27 @@ test('two profiles: the chosen one is used, a missing remembered one is never re
   await assert.rejects(discover({ hub, browser: edge, url: 'https://x.test/p', getInstance: ghost, settings }), { kind: 'wrongProfile' });
   assert.equal(a.received.filter((m) => m.type === 'discover').length, 0);
 });
+
+test('a timeout names the extension job stage: from job-failed, or the last valid progress stage when the app timer ends it', async (t) => {
+  const { hub, connect, getInstance } = await rig(t);
+  const b = await connect();
+  let script = () => [];
+  respond(b, (m) => { for (const out of script(m)) b.write(out); });
+  const timesOut = (jobStage, discoveryMs = 500) => assert.rejects(
+    discover({ hub, browser: edge, url: 'https://x.test/p', getInstance: getInstance(), settings: { ...settings, discoveryMs } }),
+    (e) => { assert.equal(e.kind, 'discoveryTimeout'); assert.equal(e.jobStage, jobStage); return true; });
+
+  script = (m) => [protocol.make('job-failed', { jobId: m.jobId, reason: 'timeout', stage: 'waiting_load' })];
+  await timesOut('waiting_load', settings.discoveryMs);
+  // The UI state says "discovering" while the extension still waits for the page to load.
+  script = (m) => [protocol.make('progress', { jobId: m.jobId, state: 'opening', stage: 'opening' }), protocol.make('progress', { jobId: m.jobId, state: 'discovering', stage: 'waiting_load' })];
+  await timesOut('waiting_load');
+  // A stage outside the enum is rejected at the protocol boundary and does not replace the last valid one.
+  script = (m) => [protocol.make('progress', { jobId: m.jobId, state: 'discovering', stage: 'waiting_load' }), protocol.make('progress', { jobId: m.jobId, state: 'discovering', stage: 'https://x.test/secret' })];
+  await timesOut('waiting_load');
+  // An older extension without stages: the progress state names it.
+  script = (m) => [protocol.make('progress', { jobId: m.jobId, state: 'opening' })];
+  await timesOut('opening');
+  script = () => [];
+  await timesOut(undefined);
+});
