@@ -113,3 +113,13 @@ Renderer → main: `downloads:*` commands with job ids (snapshot, add, rename, s
 resume, retry, remove, move, resumeSite, show), settings (folder only from the folder dialog),
 history read/clear, library list, open/reveal of approved files, engine/app version and updates,
 browser default/check/setup/state and validated browser preferences; per-job browser/profile selection. Main → renderer: `downloads:changed` (numbered snapshots), `update:status`.
+
+
+## PDF originals
+
+`domain/pdf.cjs` owns public HTML link/name rules; `infrastructure/pdf-downloader.cjs` owns bounded
+HTTP discovery and streamed file transfers. The existing discovery service routes PDF jobs to it
+or the selected BrowserService. DownloadRunner uses the same allocator and vault with the PDF
+adapter. The coordinator retains `contentType` and maps PDF choice results to the existing job
+choice UI. Extension `lib/pdf.js` scans the DOM without playback; PDF responses are observed
+separately from video ranking. See [PDF behavior and verification](pdf-downloads.md).

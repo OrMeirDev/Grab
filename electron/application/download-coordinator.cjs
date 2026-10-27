@@ -142,15 +142,15 @@ class DownloadCoordinator {
 
   // New links -> new jobs. A link already in the queue, or repeated in the same paste, is skipped.
   // nameEdited: the label is a name the user chose (re-download from history keeps it).
-  add(links, { nameEdited = false, useBrowser = false, browser, instance, ref, sourceId, autoQueue = false } = {}) {
-    const seen = new Set(this.jobs.filter((j) => !sourceId || !['done', 'error'].includes(j.status)).map((j) => sourceId ? j.sourceId : sameLinkKey(j.url)));
+  add(links, { contentType = 'video', nameEdited = false, useBrowser = false, browser, instance, ref, sourceId, autoQueue = false } = {}) {
+    const seen = new Set(this.jobs.filter((j) => !sourceId || !['done', 'error'].includes(j.status)).map((j) => sourceId ? j.sourceId : (j.contentType || 'video') + ':' + sameLinkKey(j.url)));
     let added = 0;
     for (const { url, label = '' } of links) {
-      const key = sourceId || sameLinkKey(url);
+      const key = sourceId || contentType + ':' + sameLinkKey(url);
       if (seen.has(key)) continue;
       seen.add(key);
       const session = !!(useBrowser || browser || ref || instance);
-      this.jobs.push({ id: this.d.newId(), url, label, name: label, nameEdited, status: 'waiting', progress: 0, siteKey: siteKey(url), browserPick: browser || null, instancePick: instance || null, browserRef: ref || null, sourceId: sourceId || null, needsSession: session, sessionSource: session ? 'browser' : null, autoQueue });
+      this.jobs.push({ id: this.d.newId(), contentType, url, label, name: label, nameEdited, status: 'waiting', progress: 0, siteKey: siteKey(url), browserPick: browser || null, instancePick: instance || null, browserRef: ref || null, sourceId: sourceId || null, needsSession: session, sessionSource: session ? 'browser' : null, autoQueue });
       added++;
     }
     if (added) { this.changed(); this.pumpLookups(); }
@@ -314,7 +314,7 @@ class DownloadCoordinator {
     let info;
     try {
       info = await this.d.discover(job.url, {
-        forcePage,
+        contentType: job.contentType, forcePage,
         requireSession,
         itemId: job.id, browser: job.browserPick, instance: job.instancePick, ref: job.browserRef, choice: job.choice,
         signal: controller.signal,
@@ -356,7 +356,7 @@ class DownloadCoordinator {
         return;
       }
       const choices = info.kind === 'browserChoice' ? (info.options || []).map((o) => ({ kind: 'profile', value: o.key, label: o.label, browser: info.browser?.id }))
-        : info.kind === 'videoChoice' ? (info.choices || []).map((c) => ({ kind: 'video', token: info.token, value: c.index, label: c.label })) : null;
+        : ['videoChoice', 'pdfChoice'].includes(info.kind) ? (info.choices || []).map((c) => ({ kind: 'video', token: info.token, value: c.index, label: c.label })) : null;
       this.update(id, {
         choices: choices?.map((c, index) => ({ index, label: c.label })), choiceOptions: choices,
         fix: ['browserUnavailable', 'extensionNotConnected', 'hostSetupError', 'wrongProfile'].includes(info.kind) ? 'settings' : null,
@@ -415,7 +415,7 @@ class DownloadCoordinator {
     }
     // Its session is gone (Grab restarted, or the browser disconnected and the snapshot was
     // dropped): look it up again first, never send the site a request without the session.
-    if ((next.needsSession && (!next.cookieRef || (this.d.hasSession && !this.d.hasSession(next.cookieRef)))) || (next.fromPage && next.infoExpiresAt && next.infoExpiresAt <= this.d.clock.now() + 5000)) {
+    if ((next.contentType === 'pdf' && !next.mediaUrl) || (next.needsSession && (!next.cookieRef || (this.d.hasSession && !this.d.hasSession(next.cookieRef)))) || (next.fromPage && next.infoExpiresAt && next.infoExpiresAt <= this.d.clock.now() + 5000)) {
       this.relookup(next);
       this.pumpDownloads();
       return;
@@ -444,7 +444,7 @@ class DownloadCoordinator {
       const settings = await this.d.getSettings();
       if (active.stopRequested) return { ok: false, stopped: true };
       const plan = {
-        id: job.id, url: job.url, name: job.name, folder: settings.folder, format: settings.format, quality: settings.quality,
+        id: job.id, url: job.url, name: job.name, folder: settings.folder, format: job.contentType === 'pdf' ? 'pdf' : settings.format, quality: settings.quality,
         infoFile: job.infoFile, infoAt: job.infoAt, infoExpiresAt: job.infoExpiresAt, mediaUrl: job.mediaUrl, referer: job.referer,
         cookieRef: job.cookieRef, requestContext: job.requestContext, outputBase: job.outputBase,
       };
@@ -456,7 +456,7 @@ class DownloadCoordinator {
       active.stop = () => run.stop();
       if (run.outputBase) this.update(job.id, { outputBase: run.outputBase });
       const result = await run.done;
-      return { ...result, format: settings.format };
+      return { ...result, format: plan.format };
     })()
       .catch((error) => ({ ok: false, error: String(error.message || error), kind: 'other', crashed: true }))
       .then((r) => this.finishDownload(active, r));

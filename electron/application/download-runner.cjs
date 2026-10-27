@@ -4,7 +4,7 @@
 // start(plan, onProgress) -> { outputBase, stop(), done } ; done resolves the engine's result.
 // plan.outputBase: the name the job had before (a restart), kept so its partial files resume.
 
-function createDownloadRunner({ engine, browserSession, allocator }) {
+function createDownloadRunner({ pdf, engine, browserSession, allocator }) {
   function start(plan, onProgress) {
     let outputBase;
     try {
@@ -17,7 +17,7 @@ function createDownloadRunner({ engine, browserSession, allocator }) {
     let active = null;
     const done = browserSession.withSessionCookies(plan.cookieRef, async (cookieFile) => {
       if (stopRequested) return { ok: false, stopped: true };
-      active = engine.download({ ...plan, outputBase, cookieFile, findOutput: (b) => allocator.findOutput(b) }, onProgress);
+      active = (plan.format === 'pdf' ? pdf : engine).download({ ...plan, outputBase, cookieFile, findOutput: (b) => allocator.findOutput(b) }, onProgress);
       return active.done;
     }).catch((error) => ({ ok: false, error: String(error.message || error), kind: error.kind || 'other' }));
     return {

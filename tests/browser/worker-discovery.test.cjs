@@ -58,6 +58,13 @@ async function worker({ existing = [], status = 'complete', execute = async () =
   return {
     sent, scans, created, removed, updated, data,
     start: (deadlineMs = 60000) => receive(P.make('discover', { jobId: 'fixture-job', url: pageUrl, deadlineMs })),
+    responsePdf: () => {
+      const m = { requestId: 'pdf-request', tabId: 7, frameId: 0, url: pageUrl, type: 'main_frame' };
+      context.chrome.webRequest.onBeforeRequest.emit(m);
+      context.chrome.webRequest.onHeadersReceived.emit({ ...m, statusCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'application/pdf' }] });
+      context.chrome.webNavigation.onCommitted.emit({ tabId: 7, frameId: 0, url: pageUrl });
+    },
+    startPdf: () => receive(P.make('discover', { jobId: 'fixture-job', url: pageUrl, deadlineMs: 60000, contentType: 'pdf' })),
     cancel: () => receive(P.make('cancel', { jobId: 'fixture-job' })),
     async advance(ms) {
       await flush();
@@ -194,4 +201,33 @@ test('job-failed and progress accept only the known stages', () => {
       assert.equal(P.validate(P.make(type, { ...base, stage }), 'ext').ok, false, type + ' ' + JSON.stringify(stage));
     }
   }
+});
+
+test('PDF discovery scans an existing tab read-only and never opens, plays, navigates or closes it', async () => {
+  const w = await worker({ existing: [userTab()], execute: async () => [{ frameId: 0, result: { links: [{ url: 'https://fixture.test/guide.pdf' }], title: 'Lesson', pageUrl } }] });
+  w.startPdf(); await w.advance(10);
+  assert.equal(candidates(w).length, 1);
+  assert.equal(candidates(w)[0].candidates[0].kind, 'pdf');
+  assert.equal(candidates(w)[0].candidates[0].url, 'https://fixture.test/guide.pdf');
+  assert.equal(w.created.length, 0); assert.equal(w.removed.length, 0); assert.equal(w.updated.length, 0);
+  assert.equal(w.scans.every(s => !s.args), true, 'PDF injection has no playback arguments');
+});
+
+test('PDF discovery closes only its own temporary tab and returns no candidates when there is no PDF', async () => {
+  const w = await worker({ execute: async () => [{ frameId: 0, result: { links: [], pageUrl } }] });
+  w.startPdf(); await w.advance(10);
+  assert.equal(candidates(w).length, 1);
+  assert.equal(candidates(w)[0].candidates.length, 0);
+  assert.equal(w.created.length, 1);
+  assert.deepEqual(w.removed, [w.created[0].id]);
+});
+
+test('an opaque PDF viewer response survives navigation commit even when Chrome blocks DOM injection', async () => {
+  const w = await worker({ existing: [userTab()], execute: async () => { throw new Error('Cannot access PDF viewer'); } });
+  w.responsePdf(); await w.advance(1);
+  w.startPdf(); await w.advance(10);
+  assert.equal(candidates(w).length, 1);
+  assert.equal(candidates(w)[0].candidates[0].kind, 'pdf');
+  assert.equal(candidates(w)[0].candidates[0].url, pageUrl);
+  assert.equal(w.created.length, 0);
 });

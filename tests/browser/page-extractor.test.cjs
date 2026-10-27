@@ -148,3 +148,60 @@ test('an extension job that times out reports its stage in the lookup result and
     assert.equal(entry.strategy, 'browser');
   }
 });
+
+test('PDF extension discovery uses the sending profile, scoped cookies and PDF adapter; no video calls', async t => {
+  const f = fixture(t);
+  const requests = [];
+  const { createPdfDownloader } = require('../../electron/infrastructure/pdf-downloader.cjs');
+  f.svc.pdf = createPdfDownloader({ fetchImpl: async (url, opts) => {
+    requests.push({ url, headers: opts.headers });
+    return new Response('%PDF-1.7\n%%EOF', { headers: { 'content-type': 'application/pdf' } });
+  } });
+  const page = 'https://www.youtube.com/lesson';
+  const candidate = { url: 'https://docs.test/lesson.pdf?sig=a%2Bb', kind: 'pdf', context: { userAgent: 'Sending UA', referer: page } };
+  f.hub.sendTo = (key, type, m) => {
+    f.calls.push({ key, type, m });
+    if (type === 'discover') queueMicrotask(() => f.hub.emit('message', f.instance, { type: 'candidates', final: true, jobId: m.jobId, candidates: [candidate] }));
+    return true;
+  };
+  f.hub.request = async (key, type, m) => {
+    f.calls.push({ key, type, m });
+    return { type: 'cookies', jobId: m.jobId, available: true, cookies: [
+      { domain: 'docs.test', name: 'SID', value: 'PDF-SESSION', path: '/', secure: true, session: true },
+      { domain: 'other.test', name: 'OTHER', value: 'NO', path: '/', session: true },
+    ] };
+  };
+  const r = await f.discovery.analyze(page, { contentType: 'pdf', browser: 'chrome', instance: f.instance.key, itemId: 'pdf-one', requireSession: true });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.instanceKey, f.instance.key);
+  assert.equal(r.mediaUrl, candidate.url);
+  assert.equal(r.site, 'PDF');
+  assert.deepEqual(f.calls.map(c => c.type), ['discover', 'cookies-request']);
+  assert.equal(f.calls[0].m.contentType, 'pdf');
+  assert.equal(requests[0].headers.Cookie, 'SID=PDF-SESSION');
+  assert.equal(requests[0].headers['User-Agent'], 'Sending UA');
+  assert.equal(session.hasCookies(r.cookieRef), true);
+  f.svc.dropInstanceSession(f.instance.key);
+  assert.equal(session.hasCookies(r.cookieRef), false);
+});
+
+test('PDF browser choices do not request any document before selection and cannot cross queue items', async t => {
+  const f = fixture(t);
+  let pdfCalls = 0;
+  f.svc.pdf = { analyze: async url => { pdfCalls++; return { ok: true, title: 'PDF', site: 'PDF', mediaUrl: url }; } };
+  const page = 'https://site.test/lesson';
+  f.hub.sendTo = (_key, type, m) => {
+    if (type === 'discover') queueMicrotask(() => f.hub.emit('message', f.instance, { type: 'candidates', final: true, jobId: m.jobId, candidates: [
+      { url: 'https://docs.test/a.pdf', kind: 'pdf' }, { url: 'https://docs.test/b.pdf', kind: 'pdf' },
+    ] }));
+    return true;
+  };
+  const r = await f.discovery.analyze(page, { contentType: 'pdf', browser: 'chrome', itemId: 'one' });
+  assert.equal(r.kind, 'pdfChoice'); assert.equal(pdfCalls, 0);
+  assert.deepEqual(r.choices.map(c => c.label), ['a.pdf', 'b.pdf']);
+  const bad = await f.discovery.analyze(page, { contentType: 'pdf', browser: 'chrome', itemId: 'other', choice: { token: r.token, index: 0 } });
+  assert.equal(bad.ok, false); assert.equal(pdfCalls, 0);
+  const selected = await f.discovery.analyze(page, { contentType: 'pdf', browser: 'chrome', itemId: 'one', choice: { token: r.token, index: 1 } });
+  assert.equal(selected.ok, true, JSON.stringify(selected)); assert.equal(pdfCalls, 1);
+  assert.equal(selected.mediaUrl, 'https://docs.test/b.pdf');
+});

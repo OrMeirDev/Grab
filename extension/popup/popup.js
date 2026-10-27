@@ -21,11 +21,12 @@ const CONN_HELP = {
   host_start_failed: 'הדפדפן לא הצליח להפעיל את רכיב החיבור של Grab. ב-Grab: הגדרות ← דפדפן ← תיקון.',
   protocol_version: 'גרסת ההרחבה אינה תואמת ל-Grab. ב-Grab: הגדרות ← דפדפן ← תיקון, ואז טען מחדש את ההרחבה.',
 };
-const SEND_TEXT = { accepted: 'התקבל ב-Grab. ההורדה מתחילה…', duplicate: 'הסרטון הזה כבר בתור של Grab.', rejected: 'Grab דחה את הבקשה.', offline: 'Grab לא מחובר.', timeout: 'Grab לא ענה בזמן.' };
+const SEND_TEXT = { accepted: 'התקבל ב-Grab. ההורדה מתחילה…', duplicate: 'הפריט הזה כבר בתור של Grab.', rejected: 'Grab דחה את הבקשה.', offline: 'Grab לא מחובר.', timeout: 'Grab לא ענה בזמן.' };
 const PHASE_TEXT = { queued: 'בתור', resolving: 'מזהה את הסרטון…', discovering: 'מזהה את הסרטון…', downloading: 'מוריד…', finalizing: 'מסיים…' };
 
 let tabId = null;
 let status = null;
+const mode = () => $('contentType').value;
 
 function renderConn() {
   const [text, cls] = CONN_TEXT[status.conn.state] || ['לא מחובר', 'bad'];
@@ -50,7 +51,7 @@ function showSend(send) {
 }
 
 async function scan() {
-  const info = await ask({ type: 'popup:scan', tabId });
+  const info = await ask({ type: 'popup:scan', tabId, contentType: mode() });
   if (!info || !info.ok || !/^https?:/i.test(info.url || '')) { $('page').hidden = true; $('unsupported').hidden = false; return; }
   $('unsupported').hidden = true;
   $('page').hidden = false;
@@ -72,7 +73,8 @@ async function scan() {
   }
   const note = $('pageNote');
   note.hidden = true;
-  if (info.ambiguous) { note.hidden = false; note.textContent = 'נמצאו כמה סרטונים בעמוד. בחר את הנכון, או שלח את העמוד ו-Grab יזהה.'; }
+  if (mode() === 'pdf') { note.hidden = false; note.textContent = info.candidates.length ? 'נמצא PDF אחד או יותר. שלח ל-Grab לבחירה ולהורדה.' : 'לא נמצא PDF בעמוד. Grab יבדוק את העמוד לאחר השליחה.'; }
+  else if (info.ambiguous) { note.hidden = false; note.textContent = 'נמצאו כמה סרטונים בעמוד. בחר את הנכון, או שלח את העמוד ו-Grab יזהה.'; }
   else if (!info.candidates.length && info.blob) { note.hidden = false; note.textContent = 'הנגן משתמש במקור פנימי של הדפדפן. Grab יפעיל ויזהה את הסרטון אחרי השליחה.'; }
   else if (!info.candidates.length) { note.hidden = false; note.textContent = 'עוד לא זוהה סרטון בעמוד הזה. אפשר לשלוח את העמוד ו-Grab ינסה לזהות.'; }
   showSend(info.send);
@@ -82,7 +84,7 @@ async function send(candidateUrl) {
   $('sendPage').disabled = true;
   const out = $('sendResult');
   out.hidden = false; out.className = 'result'; out.textContent = 'שולח…';
-  const res = await ask({ type: 'popup:send', tabId, candidateUrl });
+  const res = await ask({ type: 'popup:send', tabId, candidateUrl, contentType: mode() });
   const r = (res && res.result) || { status: 'offline' };
   out.textContent = SEND_TEXT[r.status] || 'שגיאה בשליחה.';
   out.classList.add(r.status === 'accepted' || r.status === 'duplicate' ? 'ok' : 'bad');
@@ -94,7 +96,7 @@ let pollTimer = null;
 function poll() {
   clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
-    const info = await ask({ type: 'popup:scan', tabId });
+    const info = await ask({ type: 'popup:scan', tabId, contentType: mode() });
     if (info && info.ok && info.send) { showSend(info.send); if (info.send.terminal) clearInterval(pollTimer); }
   }, 1500);
 }
@@ -109,6 +111,7 @@ async function init() {
   else $('unsupported').hidden = false;
 }
 
+$('contentType').addEventListener('change', scan);
 $('sendPage').addEventListener('click', () => send());
 $('reconnect').addEventListener('click', async () => { await ask({ type: 'popup:reconnect' }); setTimeout(async () => { status = await ask({ type: 'popup:status' }); renderConn(); }, 1200); });
 $('alias').addEventListener('change', () => ask({ type: 'popup:alias', alias: $('alias').value.trim() }));

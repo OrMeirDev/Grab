@@ -7,11 +7,12 @@
 // Privacy: webRequest is used observationally. Only requests that look like media are kept, in
 // session storage (cleared when the browser closes), per tab, at most MAX_ITEMS for OBS_TTL_MS,
 // and dropped on the next navigation of the tab. No general browsing history is recorded.
-importScripts('lib/protocol.js', 'lib/media.js', 'lib/collector.js');
+importScripts('lib/protocol.js', 'lib/media.js', 'lib/collector.js', 'lib/pdf.js');
 
 const P = self.GrabProtocol;
 const M = self.GrabMedia;
 const C = self.GrabCollector;
+const PDF = self.GrabPdf;
 
 const EXT_VERSION = chrome.runtime.getManifest().version;
 const OBS_TTL_MS = 10 * 60 * 1000;
@@ -209,7 +210,7 @@ chrome.webNavigation.onCommitted.addListener((d) => {
   // A new document in this tab: observations of the previous page must not leak into it.
   withTab(d.tabId, async () => {
     const prev = await loadTab(d.tabId);
-    await saveTab(d.tabId, { nav: ((prev && prev.nav) || 0) + 1, url: d.url, items: [], hosts: [] });
+    await saveTab(d.tabId, { nav: ((prev && prev.nav) || 0) + 1, url: d.url, items: (prev?.items || []).filter(o => o.kind === 'pdf' && o.documentResponse && o.url === d.url && Date.now() - o.at < 10000), hosts: [] });
   });
 });
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -222,7 +223,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 // requestId -> in-flight request info. Memory only, tiny, discarded as soon as the request ends.
 const requests = new Map();
-const FILTER = { urls: ['http://*/*', 'https://*/*'], types: ['xmlhttprequest', 'media', 'other', 'object'] };
+const FILTER = { urls: ['http://*/*', 'https://*/*'], types: ['xmlhttprequest', 'media', 'other', 'object', 'main_frame', 'sub_frame'] };
 const SEGMENT_PATH = /\.(ts|m4s|cmfv|cmfa)$/i;
 
 // One entry per request id. A redirect keeps the id but changes the URL (onBeforeRedirect, then the
@@ -246,7 +247,7 @@ chrome.webRequest.onBeforeRedirect.addListener((d) => {
   const r = requests.get(d.requestId);
   if (!r || !d.redirectUrl) return;
   if (r.url !== d.redirectUrl) { r.redirects.push(r.url); r.url = d.redirectUrl; }
-}, { urls: ['http://*/*', 'https://*/*'], types: ['xmlhttprequest', 'media', 'other', 'object'] });
+}, { urls: ['http://*/*', 'https://*/*'], types: ['xmlhttprequest', 'media', 'other', 'object', 'main_frame', 'sub_frame'] });
 
 chrome.webRequest.onBeforeRequest.addListener((d) => {
   const r = track(d, true);
@@ -278,10 +279,10 @@ chrome.webRequest.onHeadersReceived.addListener((d) => {
   const header = (name) => ((d.responseHeaders || []).find((h) => h.name.toLowerCase() === name) || {}).value || '';
   const contentRange = header('content-range').match(/\/(\d+)$/);
   const size = contentRange ? Number(contentRange[1]) : Number(header('content-length')) || 0;
-  const cls = M.classify({ url: r.url, contentType: header('content-type'), status: d.statusCode, size });
+  const cls = d.statusCode >= 200 && d.statusCode < 300 && /application\/pdf/i.test(header('content-type')) ? { kind: 'pdf' } : M.classify({ url: r.url, contentType: header('content-type'), status: d.statusCode, size });
   if (!cls) return;
   void observe(r.tabId, {
-    url: r.url, kind: cls.kind, size, at: Date.now(), frameId: r.frameId,
+    url: r.url, kind: cls.kind, size, at: Date.now(), frameId: r.frameId, documentResponse: d.type === 'main_frame',
     context: r.context || { userAgent: navigator.userAgent, referer: '', origin: '' },
     redirects: r.redirects.slice(-10),
   });
@@ -334,7 +335,7 @@ async function scanDom(tabId, startPlayback, deadlineAt = Infinity) {
 async function gather(tabId, { play = false, deadlineAt = Infinity } = {}) {
   const { items, hosts } = await freshObservations(tabId);
   const dom = await scanDom(tabId, play, deadlineAt);
-  const obs = items.map((o) => ({ ...o, hosts }));
+  const obs = items.filter(o => o.kind !== 'pdf').map((o) => ({ ...o, hosts }));
   for (const m of dom.media) {
     const cls = M.classify({ url: m.url });
     if (!cls) continue;
@@ -460,7 +461,7 @@ async function waitTabComplete(job, tabId) {
 function startJob(m) {
   if (jobs.has(m.jobId)) return;
   // state is what the UI is told; stage (protocol JOB_STAGES) is where the job actually is.
-  const job = { id: m.jobId, url: m.url, refresh: !!m.refresh, tabId: null, owned: false, aborted: null, deadlineAt: Date.now() + m.deadlineMs - DEADLINE_MARGIN_MS, state: 'locating', stage: 'locating', timer: null };
+  const job = { id: m.jobId, url: m.url, contentType: m.contentType, refresh: !!m.refresh, tabId: null, owned: false, aborted: null, deadlineAt: Date.now() + m.deadlineMs - DEADLINE_MARGIN_MS, state: 'locating', stage: 'locating', timer: null };
   jobs.set(job.id, job);
   job.timer = setTimeout(() => {
     if (jobs.get(job.id) !== job) return;
@@ -497,6 +498,7 @@ function deliver(job, ranked, dom) {
 
 async function runJob(job) {
   progress(job, 'locating');
+  if (job.contentType === 'pdf') return runPdfJob(job);
   // 1) An existing tab of this exact page: fresh, attributable observations and the page's own players.
   const existing = job.refresh ? null : await findExistingTab(job.url);
   if (!alive(job)) return;
@@ -554,15 +556,16 @@ function recordSendStatus(m) {
   rec.at = Date.now();
 }
 
-async function sendToGrab(tabId, candidateUrl) {
+async function sendToGrab(tabId, candidateUrl, contentType = 'video') {
   if (!conn.welcomed) return { status: 'offline', conn: publicConn() };
   const tab = await chrome.tabs.get(tabId);
   if (!tab.url || !P.isHttpUrl(tab.url)) return { status: 'rejected', reason: 'unsupported_page' };
-  const g = await gather(tabId, { play: false });
+  const g = contentType === 'pdf' ? await gatherPdf(tabId) : await gather(tabId, { play: false });
   let chosen = candidateUrl ? g.ranked.ranked.find((c) => c.url === candidateUrl) : null;
   if (!chosen && !candidateUrl && g.ranked.plausible.length === 1) chosen = g.ranked.plausible[0];
   const message = P.make('send-to-grab', {
     url: tab.url,
+    ...(contentType === 'pdf' ? { contentType } : {}),
     title: (g.dom.title || tab.title || '').slice(0, 300),
     ...(chosen ? { candidate: toWire(chosen) } : {}),
   });
@@ -605,12 +608,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
     }
     if (msg.type === 'popup:scan' && Number.isInteger(msg.tabId)) {
       const tab = await chrome.tabs.get(msg.tabId);
-      const g = await gather(msg.tabId, { play: false });
+      const g = msg.contentType === 'pdf' ? await gatherPdf(msg.tabId) : await gather(msg.tabId, { play: false });
       const sendState = sends.find((s) => s.url === tab.url) || null;
       return { ok: true, url: tab.url || '', title: g.dom.title || tab.title || '', candidates: g.ranked.plausible.slice(0, 6).map(toWire), ambiguous: g.ranked.ambiguous, blob: g.dom.blob > 0, drm: g.dom.drm, send: sendState };
     }
     if (msg.type === 'popup:send' && Number.isInteger(msg.tabId)) {
-      return { ok: true, result: await sendToGrab(msg.tabId, typeof msg.candidateUrl === 'string' ? msg.candidateUrl : undefined) };
+      return { ok: true, result: await sendToGrab(msg.tabId, typeof msg.candidateUrl === 'string' ? msg.candidateUrl : undefined, msg.contentType === 'pdf' ? 'pdf' : 'video') };
     }
     return { ok: false };
   })().then(respond, (e) => respond({ ok: false, error: String(e && e.message || e) }));
@@ -630,3 +633,39 @@ chrome.storage.session.get(ownedKey).then(async (got) => {
 }).catch(() => {});
 
 connect();
+
+
+async function gatherPdf(tabId, deadlineAt = Infinity) {
+  const tab = await chrome.tabs.get(tabId);
+  const { items } = await freshObservations(tabId);
+  const candidates = new Map(items.filter(c => c.kind === 'pdf').map(c => [c.url, c]));
+  const budget = Math.max(1, Math.min(DOM_SCAN_MS, deadlineAt - Date.now()));
+  let frames = [];
+  try {
+    frames = await within(chrome.scripting.executeScript({ target: { tabId, allFrames: true }, injectImmediately: true, func: PDF.collectInPage }), budget, []) || [];
+  } catch { /* Chrome's PDF viewer blocks injection; use its original tab URL/network response. */ }
+  for (const frame of frames) for (const c of frame.result?.links || []) {
+    if (P.isHttpUrl(c.url) && candidates.size < 20 && !candidates.has(c.url)) candidates.set(c.url, { url: c.url, kind: 'pdf', context: { userAgent: navigator.userAgent, referer: frame.result.pageUrl || tab.url } });
+  }
+  if (P.isHttpUrl(tab.url) && /\.pdf(?:[?#]|$)/i.test(tab.url) && !candidates.size) candidates.set(tab.url, { url: tab.url, kind: 'pdf', context: { userAgent: navigator.userAgent, referer: tab.url } });
+  const list = [...candidates.values()].slice(0, 20);
+  return { ranked: { ranked: list, plausible: list, ambiguous: list.length > 1 }, dom: { title: tab.title || '', blob: 0, drm: false } };
+}
+
+async function runPdfJob(job) {
+  let tab = await findExistingTab(job.url);
+  if (!alive(job)) return;
+  if (!tab) {
+    progress(job, 'opening');
+    tab = await chrome.tabs.create({ url: job.url, active: false });
+    job.tabId = tab.id; job.owned = true;
+    await rememberOwned(tab.id, true);
+    if (!alive(job)) { finishJob(job); return; }
+    progress(job, 'discovering', 'waiting_load');
+    await waitTabComplete(job, tab.id);
+  }
+  if (!alive(job)) return;
+  progress(job, 'discovering');
+  const g = await gatherPdf(tab.id, job.deadlineAt);
+  if (alive(job)) deliver(job, g.ranked, g.dom);
+}

@@ -73,7 +73,7 @@ export default function useDownloads() {
     // -> how many of the links were already in the queue
     addLinks: async (links, options) => (d ? (await d.add(links.map(({ url, label }) => ({ url, label })), options)).skipped : 0),
     // Download again from history, keeping the name it was saved under.
-    requeue: (h) => d?.add([{ url: h.url, label: h.name }], { nameEdited: true }),
+    requeue: (h) => d?.add([{ url: h.url, label: h.name }], { nameEdited: true, contentType: h.format === 'pdf' ? 'pdf' : 'video' }),
     downloadAll: () => d?.startAll(),
     resumeSite: (key) => d?.resumeSite(key),
   };
