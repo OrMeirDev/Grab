@@ -150,14 +150,15 @@ test('real coordinator and discovery retain restored PDF session provenance and 
   assert.equal(f.calls.length, 0); assert.equal(downloads, 0);
 });
 
-test('original PDF downloads through a real local HTTP server with a redirect and encoded query', async t => {
+test('original PDF downloads through a real local HTTP server with a redirect, encoded query and gzip transfer', async t => {
   const http = require('node:http');
   const seen = [];
+  const compressed = require('node:zlib').gzipSync(PDF);
   const server = http.createServer((req, res) => {
     seen.push(req.url);
     if (req.url === '/lesson') { res.setHeader('Content-Type', 'text/html'); res.end('<a href="/redirect?sig=a%2Bb">Open</a><embed src="/redirect?sig=a%2Bb" type="application/pdf">'); }
     else if (req.url === '/redirect?sig=a%2Bb') { res.writeHead(302, { Location: '/original.pdf?sig=a%2Bb' }); res.end(); }
-    else if (req.url === '/original.pdf?sig=a%2Bb') { res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Length': PDF.length }); res.end(PDF); }
+    else if (req.url === '/original.pdf?sig=a%2Bb') { res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Encoding': 'gzip', 'Content-Length': compressed.length }); res.end(compressed); }
     else { res.writeHead(404); res.end(); }
   });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });

@@ -20,7 +20,7 @@ function createPdfDownloader({ fetchImpl = fetch } = {}) {
     for (let hop = 0; hop < 11; hop++) {
       options.signal?.throwIfAborted();
       if (!httpUrl(url)) throw new Error('Unsupported PDF address');
-      const headers = { Accept: 'application/pdf,text/html;q=0.8' };
+      const headers = { Accept: 'application/pdf,text/html;q=0.8', 'Accept-Encoding': 'identity' };
       const context = options.requestContext || {};
       if (context.userAgent) headers['User-Agent'] = context.userAgent;
       const referer = context.referer || options.referer;
@@ -96,7 +96,9 @@ function createPdfDownloader({ fetchImpl = fetch } = {}) {
       let file;
       try {
         const { response } = await request(plan.mediaUrl || plan.url, { ...plan, signal });
-        const total = Number(response.headers.get('content-length')) || 0;
+        // fetch exposes decoded bytes, whereas Content-Length describes the encoded transfer.
+        const encoding = response.headers.get('content-encoding');
+        const total = !encoding || encoding.toLowerCase() === 'identity' ? Number(response.headers.get('content-length')) || 0 : 0;
         if (total > MAX_PDF) { await response.body.cancel(); return fail('pdfTooLarge'); }
         file = await fs.promises.open(partial, 'w', 0o600);
         let received = 0, prefix = Buffer.alloc(0), tail = Buffer.alloc(0), verified = false;
