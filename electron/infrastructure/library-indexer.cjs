@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const MEDIA = /\.(mp4|mkv|webm|mov|m4a|mp3|opus|wav|flac)$/i;
+const MEDIA = /\.(mp4|mkv|webm|mov|m4a|mp3|opus|wav|flac|pdf)$/i;
 const MAX_DEPTH = 3;
 const MAX_FILES = 5000;
 

@@ -44,8 +44,10 @@ const diagnostics = new Diagnostics({ dir: path.join(app.getPath('userData'), 'l
 let browserService = null;
 let browserServiceError = '';
 let coordinatorReady = false;
-const discovery = createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession, getBrowserService: () => browserService, record: (e, d) => diagnostics.record(e, d) });
-const downloadRunner = createDownloadRunner({ engine, browserSession, allocator });
+const { createPdfDownloader } = require('./infrastructure/pdf-downloader.cjs');
+const pdf = createPdfDownloader();
+const discovery = createDiscoveryService({ pdf, engine, hiddenProbe, pageprobe, browserSession, getBrowserService: () => browserService, record: (e, d) => diagnostics.record(e, d) });
+const downloadRunner = createDownloadRunner({ pdf, engine, browserSession, allocator });
 
 // The download queue's single owner. Its snapshots go to the window; it survives a renderer
 // reload, and its non-sensitive state survives a restart (queue.json).
@@ -216,8 +218,8 @@ const browserId = t.oneOf('edge', 'chrome', 'brave');
 router.handle('downloads:snapshot', [], () => coordinator.snapshot());
 router.handle('downloads:add', [
   t.array(t.object({ url: t.url(), label: t.optional(t.string({ max: 2000 })) }), { max: 500 }),
-  t.optional(t.object({ nameEdited: t.optional(t.bool()), useBrowser: t.optional(t.bool()), browser: t.optional(browserId) })),
-], (_e, links, opts = {}) => coordinator.add(links.map((l) => ({ url: l.url, label: l.label || '' })), { nameEdited: !!opts.nameEdited, useBrowser: !!opts.useBrowser, browser: opts.browser }));
+  t.optional(t.object({ contentType: t.optional(t.oneOf('video', 'pdf')), nameEdited: t.optional(t.bool()), useBrowser: t.optional(t.bool()), browser: t.optional(browserId) })),
+], (_e, links, opts = {}) => coordinator.add(links.map((l) => ({ url: l.url, label: l.label || '' })), { contentType: opts.contentType, nameEdited: !!opts.nameEdited, useBrowser: !!opts.useBrowser, browser: opts.browser }));
 router.handle('downloads:rename', [id, t.string({ max: 2000 })], (_e, jobId, name) => coordinator.rename(jobId, name));
 router.handle('downloads:start', [id], (_e, jobId) => coordinator.downloadOne(jobId));
 router.handle('downloads:startAll', [], () => coordinator.downloadAll());
@@ -282,7 +284,7 @@ async function startBrowserService() {
     sourceRoot: app.isPackaged ? process.resourcesPath : path.join(__dirname, '..'),
     getSettings: () => settingsRepo.current || {},
     saveSettings: (patch) => settingsRepo.update(patch),
-    engine, session: browserSession,
+    pdf, engine, session: browserSession,
     notify: (channel, payload) => {
       if (channel === 'browser:phase') coordinator.browserPhase(payload);
       else if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
@@ -290,7 +292,7 @@ async function startBrowserService() {
     acceptIncoming: async (incoming) => {
       if (!coordinatorReady || coordinator.closed) return 'unavailable';
       const r = coordinator.add([{ url: incoming.url }], { browser: incoming.browserId, instance: incoming.instanceKey,
-        ref: incoming.ref, sourceId: incoming.sourceId, autoQueue: true });
+        contentType: incoming.contentType, ref: incoming.ref, sourceId: incoming.sourceId, autoQueue: true });
       return r.added ? 'accepted' : { status: 'duplicate', ref: coordinator.jobs.find((j) => j.sourceId === incoming.sourceId)?.browserRef };
     },
   });

@@ -33,7 +33,7 @@ function normalizeHistoryEntry(e, makeId) {
     url: e.url.slice(0, 4096),
     file: str(e.file, 1024),
     site: str(e.site, 100),
-    format: FORMATS.includes(e.format) ? e.format : 'mp4',
+    format: [...FORMATS, 'pdf'].includes(e.format) ? e.format : 'mp4',
     completedAt: str(e.completedAt, 40) || new Date(0).toISOString(),
     ...(e.height ? { height: Number(e.height) || null } : {}),
     ...(e.vcodec ? { vcodec: str(e.vcodec, 40) } : {}),

@@ -1,6 +1,6 @@
 {
   "name": "grab",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "description": "Grab - video downloader",
   "author": "Or meir Tzarfati",
   "main": "electron/main.cjs",
@@ -63,7 +63,14 @@
       },
       "THIRD_PARTY_NOTICES.md",
       "native-tools.lock.json",
-      { "from": "engine-plugins", "to": "engine-plugins", "filter": ["**/*.py", "!**/__pycache__{,/**}"] },
+      {
+        "from": "engine-plugins",
+        "to": "engine-plugins",
+        "filter": [
+          "**/*.py",
+          "!**/__pycache__{,/**}"
+        ]
+      },
       {
         "from": "extension",
         "to": "extension"

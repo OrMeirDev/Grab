@@ -498,3 +498,40 @@ test('cancel wins over a late lookup success and never automatically restarts th
   assert.equal(t.starts.length, 0);
   assert.ok(t.released.some((r) => r.cookieRef === 'late-private'));
 });
+
+test('PDF restore re-discovers its original page before download and keeps PDF format despite video defaults', async () => {
+  const url = 'https://site.test/documents';
+  const t = setup({ store: { load: async () => [{ id: 'pdf-one', url, status: 'paused', contentType: 'pdf', name: 'Guide' }], save: async () => {} }, lookups: { [url]: { ok: true, title: 'Guide', site: 'PDF', mediaUrl: 'https://site.test/guide.pdf?sig=fresh' } } });
+  await t.c.init();
+  t.c.resume('pdf-one');
+  await settle();
+  assert.equal(t.discovers.length, 1);
+  assert.equal(t.discovers[0].contentType, 'pdf');
+  assert.equal(t.starts.length, 1);
+  assert.equal(t.starts[0].plan.format, 'pdf');
+  assert.equal(t.starts[0].plan.mediaUrl, 'https://site.test/guide.pdf?sig=fresh');
+  t.starts[0].finish({ ok: true, file: '/dl/Guide.pdf' });
+  await settle();
+  assert.equal(t.history[0].format, 'pdf');
+});
+
+test('PDF and video from the same page are independent queue jobs; duplicate PDFs are skipped', async () => {
+  const t = setup();
+  const links = [{ url: 'https://site.test/lesson' }];
+  assert.equal(t.c.add(links).added, 1);
+  assert.equal(t.c.add(links, { contentType: 'pdf' }).added, 1);
+  assert.equal(t.c.add(links, { contentType: 'pdf' }).skipped, 1);
+  await t.clock.advance(10000);
+  assert.deepEqual(t.c.snapshot().jobs.map(j => j.contentType), ['video', 'pdf']);
+});
+
+test('PDF restore keeps the session requirement and does not download when the sending browser is unavailable', async () => {
+  const url = 'https://site.test/private-documents';
+  const t = setup({ store: { load: async () => [{ id: 'pdf-session', url, status: 'paused', contentType: 'pdf', needsSession: true, sessionSource: 'browser', browserPick: 'chrome', instancePick: 'chrome:personal' }], save: async () => {} }, lookups: { [url]: { ok: false, kind: 'sessionRequired' } } });
+  await t.c.init(); t.c.resume('pdf-session'); await settle();
+  assert.equal(t.discovers[0].requireSession, true);
+  assert.equal(t.discovers[0].instance, 'chrome:personal');
+  assert.equal(t.discovers[0].contentType, 'pdf');
+  assert.equal(t.starts.length, 0);
+  assert.equal(t.c.jobs[0].error.kind, 'sessionRequired');
+});

@@ -17,7 +17,7 @@ const STATES = ['waiting', 'analyzing', 'ready', 'queued', 'downloading', 'pause
 
 // Fields the renderer sees. Session material (cookie handles, request headers), signed media
 // addresses and lookup files never leave the main process.
-const PUBLIC_FIELDS = ['id', 'url', 'label', 'name', 'status', 'progress', 'speed', 'eta', 'phase', 'phaseBrowser',
+const PUBLIC_FIELDS = ['contentType', 'id', 'url', 'label', 'name', 'status', 'progress', 'speed', 'eta', 'phase', 'phaseBrowser',
   'bphase', 'bbrowser', 'binstance', 'choices', 'fix', 'site', 'duration', 'height', 'thumbnail', 'title', 'file', 'signInHint', 'analyzeFailed'];
 
 function toPublic(job) {
@@ -33,7 +33,7 @@ function toPublic(job) {
 // files and thumbnails (they expire, and they can carry signatures). needsSession records only
 // that the lookup used cookies, and sessionSource where they came from ('browser': the user's
 // signed-in browser; 'probe': the hidden probe's throwaway public-page session).
-const DURABLE_FIELDS = ['id', 'url', 'label', 'name', 'nameEdited', 'status', 'progress', 'site', 'siteKey', 'duration', 'height',
+const DURABLE_FIELDS = ['contentType', 'id', 'url', 'label', 'name', 'nameEdited', 'status', 'progress', 'site', 'siteKey', 'duration', 'height',
   'title', 'error', 'analyzeFailed', 'autoRetried', 'forcePage', 'autoQueue', 'fromPage', 'needsSession', 'sessionSource', 'outputBase', 'signInHint', 'browserPick', 'instancePick', 'browserRef', 'sourceId'];
 
 // A job whose site is known to need the user's signed-in browser session: every request for it,

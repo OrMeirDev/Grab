@@ -85,6 +85,8 @@ jobs:
       - run: npm run build
       - name: queue cooldown (GRB-01)
         run: xvfb-run -a npx electron --no-sandbox e2e/queue-cooldown.cjs
+      - name: Original PDF download through the UI
+        run: xvfb-run -a npx electron --no-sandbox e2e/pdf-download.cjs
       - name: hidden player probe (GRB-12)
         run: xvfb-run -a npx electron --no-sandbox e2e/hidden-probe.cjs
       - name: Actual Electron network privacy capture

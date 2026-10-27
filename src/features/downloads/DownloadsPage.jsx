@@ -12,7 +12,7 @@ import useQueueReorder from './useQueueReorder.js';
 
 // The main screen: paste links, identify them, download. Composition only; the queue's owner
 // (downloads) and the link draft come from the shell.
-export default function DownloadsPage({ draft, downloads, sites, settings, onSettings, notice, onDismissNotice, onIdentify, onShowSites, onSignInGuide, onBrowserSettings }) {
+export default function DownloadsPage({ contentType, onContentType, draft, downloads, sites, settings, onSettings, notice, onDismissNotice, onIdentify, onShowSites, onSignInGuide, onBrowserSettings }) {
   const drag = useQueueReorder(downloads.move);
   const actions = { ...downloads.actions, signInGuide: onSignInGuide, openBrowserSettings: onBrowserSettings };
   return (
@@ -37,15 +37,22 @@ export default function DownloadsPage({ draft, downloads, sites, settings, onSet
       ))}
 
       <section className="card paste-card">
-        <label className="card-label">הקישורים שלך</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+          <label className="card-label" style={{ margin: 0 }}>הקישורים שלך</label>
+          <div role="group" aria-label="סוג ההורדה" style={{ display: 'flex', gap: 6 }}>
+            <button className="btn-ghost small" aria-pressed={contentType === 'video'} onClick={() => onContentType('video')}>וידאו {contentType === 'video' ? '✓' : ''}</button>
+            <button className="btn-ghost small" aria-pressed={contentType === 'pdf'} onClick={() => onContentType('pdf')}>PDF {contentType === 'pdf' ? '✓' : ''}</button>
+          </div>
+        </div>
+        {contentType === 'pdf' && <p className="subtitle">קישור למסמך מקורי או לעמוד עם קובצי PDF. למסמך שדורש התחברות, שלח דרך התוסף.</p>}
         <LinkInput value={draft.text} onChange={draft.setText} onAppend={draft.append} />
-        <IntakeActions sites={sites} linkCount={draft.parsed.length} onShowSites={onShowSites} onIdentify={onIdentify} />
+        <IntakeActions contentType={contentType} sites={sites} linkCount={draft.parsed.length} onShowSites={onShowSites} onIdentify={onIdentify} />
       </section>
 
       <DownloadQueue queue={downloads.queue} actions={actions} drag={drag} />
 
       <footer className="action-bar">
-        <DownloadOptions settings={settings} onChange={onSettings} />
+        {contentType === 'pdf' ? <span className="pill">PDF מקורי · ללא המרה</span> : <DownloadOptions settings={settings} onChange={onSettings} />}
         <div className="action-main">
           <QueueSummary resting={downloads.resting} counts={downloads.counts} />
           <BatchActions running={downloads.running} pending={downloads.counts.pending} onDownloadAll={downloads.downloadAll} />

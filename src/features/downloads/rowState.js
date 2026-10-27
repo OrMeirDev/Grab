@@ -14,6 +14,7 @@ export function lookupLine(item) {
   if (item.status === 'waiting') return item.label || 'ממתין לזיהוי';
   const b = item.bbrowser || 'הדפדפן';
   if (item.bphase === 'connecting') return `מתחבר ל־${b}…`;
+  if (item.contentType === 'pdf') return 'מחפש קובצי PDF בעמוד…';
   if (item.bphase === 'discovering') return `מחפש את הסרטון ב־${b}${item.binstance ? ` (${item.binstance})` : ''}…`;
   if (item.bphase === 'playback_required') return `לחץ Play ב־${b} כדי להמשיך`;
   if (item.bphase === 'validating') return 'בודק שאפשר להוריד את המקור…';

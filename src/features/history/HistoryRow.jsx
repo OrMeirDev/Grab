@@ -1,5 +1,5 @@
 import React from 'react';
-import { FolderOpen, Play, RotateCcw, Film, Music } from 'lucide-react';
+import { FolderOpen, Play, RotateCcw, Film, Music, FileText } from 'lucide-react';
 import { fmtDate } from '../../presentation/formatters.js';
 import { siteInfo } from '../../presentation/sitePresentation.js';
 
@@ -7,7 +7,7 @@ import { siteInfo } from '../../presentation/sitePresentation.js';
 export default function HistoryRow({ entry, missing, onOpen, onShow, onRequeue }) {
   return (
     <div className="row">
-      <span className="row-icon">{entry.format === 'mp3' ? <Music size={18} /> : <Film size={18} />}</span>
+      <span className="row-icon">{entry.format === 'pdf' ? <FileText size={18} /> : entry.format === 'mp3' ? <Music size={18} /> : <Film size={18} />}</span>
       <div className="row-info">
         <div className="row-name">{entry.name}</div>
         <div className="row-meta">
@@ -16,7 +16,7 @@ export default function HistoryRow({ entry, missing, onOpen, onShow, onRequeue }
         </div>
       </div>
       <div className="item-actions">
-        {!missing && <button className="icon-btn" title="נגן" onClick={onOpen}><Play size={18} /></button>}
+        {!missing && <button className="icon-btn" title={entry.format === 'pdf' ? 'פתח מסמך' : 'נגן'} onClick={onOpen}><Play size={18} /></button>}
         {!missing && <button className="icon-btn" title="הצג בתיקייה" onClick={onShow}><FolderOpen size={18} /></button>}
         <button className="icon-btn" title="הורד שוב" onClick={onRequeue}><RotateCcw size={18} /></button>
       </div>

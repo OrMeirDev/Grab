@@ -34,7 +34,7 @@
 
   function validCandidate(c) {
     if (!isObj(c) || !isHttpUrl(c.url)) return false;
-    if (!['hls', 'dash', 'file', 'opaque', 'embed'].includes(c.kind)) return false;
+    if (!['hls', 'dash', 'file', 'opaque', 'embed', 'pdf'].includes(c.kind)) return false;
     if (c.size !== undefined && !(Number.isFinite(c.size) && c.size >= 0)) return false;
     if (c.at !== undefined && !Number.isFinite(c.at)) return false;
     if (c.context !== undefined) {
@@ -54,7 +54,7 @@
     ping: { dir: 'both', check: () => true },
     pong: { dir: 'both', check: () => true },
     error: { dir: 'both', check: (m) => isStr(m.code, 64) && optStr(m.message, 300) },
-    discover: { dir: 'app', check: (m) => isId(m.jobId) && isHttpUrl(m.url) && Number.isInteger(m.deadlineMs) && m.deadlineMs > 0 && m.deadlineMs <= 600000 && (m.refresh === undefined || typeof m.refresh === 'boolean') },
+    discover: { dir: 'app', check: (m) => isId(m.jobId) && isHttpUrl(m.url) && Number.isInteger(m.deadlineMs) && m.deadlineMs > 0 && m.deadlineMs <= 600000 && (m.refresh === undefined || typeof m.refresh === 'boolean') && (m.contentType === undefined || ['video', 'pdf'].includes(m.contentType)) },
     cancel: { dir: 'app', check: (m) => isId(m.jobId) },
     'reveal-tab': { dir: 'app', check: (m) => isId(m.jobId) },
     progress: { dir: 'ext', check: (m) => isId(m.jobId) && ['locating', 'opening', 'discovering', 'playback_required', 'probing'].includes(m.state) && (m.stage === undefined || JOB_STAGES.includes(m.stage)) },
@@ -63,7 +63,7 @@
     'cookies-request': { dir: 'app', check: (m) => isId(m.jobId) && Array.isArray(m.urls) && m.urls.length >= 1 && m.urls.length <= 20 && m.urls.every(isHttpUrl) },
     'page-session-request': { dir: 'app', check: (m) => isId(m.jobId) && isHttpUrl(m.url) },
     cookies: { dir: 'ext', check: (m) => isId(m.jobId) && (m.available === undefined || typeof m.available === 'boolean') && optStr(m.userAgent, 512) && Array.isArray(m.cookies) && m.cookies.length <= 400 && m.cookies.every((c) => isObj(c) && isStr(c.name, 4096) && typeof c.value === 'string' && c.value.length <= 8192 && isStr(c.domain, 255)) },
-    'send-to-grab': { dir: 'ext', check: (m) => isHttpUrl(m.url) && optStr(m.title, 300) && (m.candidate === undefined || validCandidate(m.candidate)) },
+    'send-to-grab': { dir: 'ext', check: (m) => isHttpUrl(m.url) && optStr(m.title, 300) && (m.candidate === undefined || validCandidate(m.candidate)) && (m.contentType === undefined || ['video', 'pdf'].includes(m.contentType)) },
     ack: { dir: 'app', check: (m) => ['accepted', 'duplicate', 'rejected'].includes(m.status) && optStr(m.ref, 80) && optStr(m.reason, 120) },
     'job-status': { dir: 'app', check: (m) => isStr(m.ref, 80) && isStr(m.phase, 40) && (m.terminal === undefined || ['completed', 'failed', 'cancelled'].includes(m.terminal)) && optStr(m.reason, 120) },
     'app-status': { dir: 'app', check: (m) => typeof m.online === 'boolean' },

@@ -7,7 +7,7 @@ const LOOKUP_BUDGET_MS = 6 * 60 * 1000;
 const PROBE_MS = 45000;
 const cancelled = () => ({ ok: false, kind: 'cancelled', error: 'cancelled' });
 
-function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession, getBrowserService = () => null,
+function createDiscoveryService({ pdf, engine, hiddenProbe, pageprobe, browserSession, getBrowserService = () => null,
   now = () => Date.now(), record = () => {}, lookupBudgetMs = LOOKUP_BUDGET_MS }) {
   async function analyze(url, options = {}) {
     const started = now();
@@ -47,6 +47,14 @@ function createDiscoveryService({ engine, hiddenProbe, pageprobe, browserSession
     // context is opt-in per job (including extension sends/restored sessions); Mako is the
     // established Edge-player exception. Never remember this decision for unrelated jobs.
     const requireSession = !!options.requireSession || !!options.browser || !!options.instance || !!options.ref;
+    if (options.contentType === 'pdf') {
+      if (requireSession) {
+        const service = getBrowserService();
+        if (!service) return { ok: false, kind: 'sessionRequired' };
+        return service.analyze(url, options);
+      }
+      return pdf.analyze(url, options);
+    }
     const mako = !!browserSession.isMakoPage?.(url);
     const browserAssisted = requireSession || mako;
     const svc = getBrowserService();

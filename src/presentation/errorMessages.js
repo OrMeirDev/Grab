@@ -1,6 +1,14 @@
 // Classified lookup/download failures -> the Hebrew label on the queue row.
 
 const ERROR_LABELS = {
+  pdfTimeout: 'שרת המסמך לא ענה בזמן. נסה שוב',
+  pdfNotFound: 'לא נמצא קובץ PDF בעמוד',
+  pdfChoice: 'נמצאו כמה קובצי PDF: בחר מסמך להורדה',
+  pdfChoiceExpired: 'בחירת המסמך פגה. נסה לזהות מחדש',
+  pdfSessionRequired: 'המסמך דורש הרשאה. פתח את האתר ושלח PDF דרך התוסף',
+  pdfUnavailable: 'המסמך לא זמין בשרת',
+  pdfInvalid: 'התגובה שהתקבלה אינה קובץ PDF תקין או שההורדה לא הושלמה',
+  pdfTooLarge: 'קובץ ה-PDF גדול ממגבלת ההורדה (1 GB)',
   forbidden: 'השרת סירב לבקשת הסרטון (403); נסה לזהות אותו מחדש מהעמוד',
   notmedia: 'המקור שהתקבל אינו קובץ וידאו או אודיו תקין',
   verification: 'לא ניתן לבדוק את תקינות הקובץ שהתקבל',

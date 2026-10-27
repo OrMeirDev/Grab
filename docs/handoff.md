@@ -1,3 +1,25 @@
+# Grab 1.8.0 — PDF release preparation (2026-10-27)
+
+The owner requested a software update on 2026-10-27, authorizing publication of the PDF feature
+and a new stable update. Application version: **1.8.0**; extension: **1.2.0**; native tools unchanged.
+Release behavior and limitations: [PDF downloads](pdf-downloads.md).
+
+Local validation: 272 compatible-suite tests passed, 26 platform/tool skips. The three existing
+native-host suites cannot open Unix sockets on this execution host; full CI must pass before
+publication. Renderer build, real HTTP PDF transfer and the Electron hidden-probe check pass.
+An isolated headless UI harness replaces only the unavailable singleton-lock API: queue-cooldown
+and the full PDF UI flow pass. Before/after screenshots cover all screens and both dialogs;
+history/library match, settings differ only in their temporary folder, and intake changes are
+intentional. PDF mode/choice rendering has no horizontal overflow at 1347×852.
+
+Publication must use successful CI, Browser integration and Windows verify push runs on the exact
+same main release source, then the existing immutable-bundle publication workflow. Personal-profile
+PDF Sends, every live website/account, a genuine local standard user and the owner's local in-app
+update are not claimed as performed. The installed Windows acceptance checklist remains in the
+PDF guide. Installer signing and pinned tools are unchanged.
+
+---
+
 # Grab 1.7.1 — release preparation (2026-10-17)
 
 The owner explicitly requested publication of stable **1.7.1** on 2026-10-17, continuing the
