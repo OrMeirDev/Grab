@@ -36,16 +36,68 @@ function Assert-Hash($file, $expected, $what) {
     }
 }
 
+# Upstream FFmpeg autobuilds are ephemeral. Recover only this exact locked build from our
+# already-published installer when its original archive was removed. Both the carrier and every
+# recovered binary/license are checked; no installer code is executed and no tool is upgraded.
+function Restore-PublishedFfmpeg($tool, $staging) {
+    if ($tool.name -ne 'ffmpeg' -or $tool.sha256 -ne 'cc4c8f3e15b317be771bce75e4f7cba40ab89991cf1a6bfc4c9385e3ae50baec') {
+        throw 'No verified recovery source for this tool.'
+    }
+    $seven = Join-Path $env:ProgramFiles '7-Zip/7z.exe'
+    if (-not (Test-Path $seven)) {
+        $command = Get-Command 7z.exe -ErrorAction SilentlyContinue
+        if (-not $command) { throw 'Recovering the removed pinned FFmpeg archive requires 7-Zip.' }
+        $seven = $command.Source
+    }
+    $installer = Join-Path $tmp 'Grab-Setup-1.8.0.exe'
+    Get-File 'https://github.com/OrMeirDev/Grab/releases/download/v1.8.0/Grab-Setup-1.8.0.exe' $installer
+    Assert-Hash $installer '10203e2ce1b41ffb7d636808af4c829b271eb76e8da235a7c65c385f313d67eb' 'published recovery installer'
+    $outer = Join-Path $tmp 'recovery-installer'
+    & $seven x $installer "-o$outer" -y | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot extract recovery installer.' }
+    $payload = @(Get-ChildItem $outer -Recurse -File -Filter 'app-64.7z')
+    if ($payload.Count -ne 1) { throw 'Recovery installer has no unique x64 payload.' }
+    $unpacked = Join-Path $tmp 'recovery-app'
+    & $seven x $payload[0].FullName "-o$unpacked" -y | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot extract recovery application.' }
+    $sourceBin = Join-Path $unpacked 'resources/bin'
+    foreach ($entry in $tool.files.PSObject.Properties) {
+        $source = Join-Path $sourceBin $entry.Name
+        Assert-Hash $source $entry.Value $entry.Name
+    }
+    foreach ($license in $tool.licenseFiles) {
+        Assert-Hash (Join-Path $sourceBin "licenses/$($license.name)") $license.sha256 $license.name
+    }
+    # Verify the complete recovered tool before staging any of it for installation.
+    foreach ($entry in $tool.files.PSObject.Properties) {
+        Copy-Item (Join-Path $sourceBin $entry.Name) (Join-Path $staging $entry.Name)
+    }
+    foreach ($license in $tool.licenseFiles) {
+        $target = Join-Path $staging $license.archivePath
+        New-Item -ItemType Directory -Force (Split-Path -Parent $target) | Out-Null
+        Copy-Item (Join-Path $sourceBin "licenses/$($license.name)") $target
+    }
+}
+
 try {
     foreach ($tool in $lock.tools) {
         $name = Split-Path $tool.url -Leaf
         $download = Join-Path $tmp $name
-        Get-File $tool.url $download
-        Assert-Hash $download $tool.sha256 $name
-
         $staging = Join-Path $tmp $tool.name
         New-Item -ItemType Directory -Force $staging | Out-Null
-        if ($name -like '*.zip') { [IO.Compression.ZipFile]::ExtractToDirectory($download, $staging) } else { Copy-Item $download $staging }
+        $recovered = $false
+        try { Get-File $tool.url $download }
+        catch {
+            $status = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
+            if ($status -ne 404 -or $tool.name -ne 'ffmpeg' -or $tool.sha256 -ne 'cc4c8f3e15b317be771bce75e4f7cba40ab89991cf1a6bfc4c9385e3ae50baec') { throw }
+            Write-Host 'Pinned FFmpeg archive removed upstream; recovering identical verified files from Grab 1.8.0.'
+            Restore-PublishedFfmpeg $tool $staging
+            $recovered = $true
+        }
+        if (-not $recovered) {
+            Assert-Hash $download $tool.sha256 $name
+            if ($name -like '*.zip') { [IO.Compression.ZipFile]::ExtractToDirectory($download, $staging) } else { Copy-Item $download $staging }
+        }
 
         foreach ($entry in $tool.files.PSObject.Properties) {
             $found = Get-ChildItem $staging -Recurse -File -Filter $entry.Name | Select-Object -First 1
