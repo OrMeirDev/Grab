@@ -58,12 +58,13 @@ async function worker({ existing = [], status = 'complete', execute = async () =
   return {
     sent, scans, created, removed, updated, data,
     start: (deadlineMs = 60000) => receive(P.make('discover', { jobId: 'fixture-job', url: pageUrl, deadlineMs })),
-    responsePdf: () => {
-      const m = { requestId: 'pdf-request', tabId: 7, frameId: 0, url: pageUrl, type: 'main_frame' };
+    responsePdf: (headers = [{ name: 'Content-Type', value: 'application/pdf' }], type = 'main_frame') => {
+      const m = { requestId: 'pdf-request', tabId: 7, frameId: 0, url: pageUrl, type };
       context.chrome.webRequest.onBeforeRequest.emit(m);
-      context.chrome.webRequest.onHeadersReceived.emit({ ...m, statusCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'application/pdf' }] });
-      context.chrome.webNavigation.onCommitted.emit({ tabId: 7, frameId: 0, url: pageUrl });
+      context.chrome.webRequest.onHeadersReceived.emit({ ...m, statusCode: 200, responseHeaders: headers });
+      if (type === 'main_frame') context.chrome.webNavigation.onCommitted.emit({ tabId: 7, frameId: 0, url: pageUrl });
     },
+    navigate: url => context.chrome.webNavigation.onCommitted.emit({ tabId: 7, frameId: 0, url }),
     startPdf: () => receive(P.make('discover', { jobId: 'fixture-job', url: pageUrl, deadlineMs: 60000, contentType: 'pdf' })),
     cancel: () => receive(P.make('cancel', { jobId: 'fixture-job' })),
     async advance(ms) {
@@ -230,4 +231,59 @@ test('an opaque PDF viewer response survives navigation commit even when Chrome 
   assert.equal(candidates(w)[0].candidates[0].kind, 'pdf');
   assert.equal(candidates(w)[0].candidates[0].url, pageUrl);
   assert.equal(w.created.length, 0);
+});
+
+
+test('PDF Fetch observations remain available after ten minutes on the same document', async () => {
+  const w = await worker({ existing: [userTab()], execute: async () => [] });
+  w.responsePdf(undefined, 'xmlhttprequest');
+  await w.advance(11 * 60 * 1000);
+  w.startPdf();
+  await w.advance(10);
+  assert.equal(candidates(w).length, 1);
+  assert.equal(candidates(w)[0].candidates[0].url, pageUrl);
+  assert.equal(w.created.length, 0);
+});
+
+test('opaque Fetch PDF is recognized by Content-Disposition with octet-stream MIME', async () => {
+  const w = await worker({ existing: [userTab()], execute: async () => [] });
+  w.responsePdf([
+    { name: 'Content-Type', value: 'application/octet-stream' },
+    { name: 'Content-Disposition', value: 'inline; filename="lesson.pdf"' },
+  ], 'xmlhttprequest');
+  await w.advance(10);
+  w.startPdf();
+  await w.advance(10);
+  assert.equal(candidates(w).length, 1);
+  assert.equal(candidates(w)[0].candidates[0].kind, 'pdf');
+});
+
+
+test('PDF observations are discarded when the user navigates to a different document', async () => {
+  const w = await worker({ existing: [userTab()], execute: async () => [] });
+  w.responsePdf(undefined, 'xmlhttprequest');
+  await w.advance(10);
+  w.navigate(pageUrl + '?next');
+  await w.advance(10);
+  w.startPdf();
+  await w.advance(10);
+  assert.equal(candidates(w).length, 1);
+  assert.equal(candidates(w)[0].candidates.length, 0);
+});
+
+test('real PDF collector recovers a signed Fetch URL loaded before worker observation', async () => {
+  const original = 'https://files.fixture.test/opaque?response-content-type=application%2Fpdf&X-Amz-Signature=a%2Bb';
+  const w = await worker({ existing: [userTab()], execute: async ({ func }) => [{ frameId: 0,
+    result: vm.runInNewContext(`(${func.toString()})()`, {
+      URL, location: { href: pageUrl },
+      document: { baseURI: pageUrl, title: 'Lesson', contentType: 'text/html', querySelectorAll: () => [] },
+      performance: { getEntriesByType: () => [{ name: original, initiatorType: 'fetch' }] },
+    }),
+  }] });
+  w.startPdf();
+  await w.advance(10);
+  assert.equal(candidates(w)[0].candidates[0].url, original);
+  assert.equal(candidates(w)[0].candidates[0].context.referer, pageUrl);
+  assert.equal(w.created.length, 0);
+  assert.deepEqual(w.updated, []);
 });

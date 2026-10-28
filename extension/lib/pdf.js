@@ -10,7 +10,11 @@
       try {
         const url = new URL(raw, document.baseURI);
         if (!/^https?:$/.test(url.protocol) || url.username || url.password) return;
-        if (!explicit && !/\.pdf$/i.test(url.pathname)) return;
+        const typeHint = url.searchParams.get('response-content-type') || '';
+        const disposition = url.searchParams.get('response-content-disposition') || '';
+        if (!explicit && !/\.pdf$/i.test(url.pathname) &&
+            !/^application\/pdf(?:\s*;|$)/i.test(typeHint) &&
+            !/filename\*?\s*=.*\.pdf(?:[\s"';]|$)/i.test(disposition)) return;
         url.hash = '';
         if (links.size < 20) links.set(url.href, { url: url.href, label: (label || '').trim().slice(0, 200) });
       } catch { /* ignore */ }
@@ -20,6 +24,14 @@
       const raw = el.getAttribute('href') || el.getAttribute('src') || el.getAttribute('data');
       add(raw, /application\/pdf/i.test(el.getAttribute('type') || '') || /\.pdf$/i.test(el.getAttribute('download') || ''), el.textContent || el.title);
     }
+    // Fetch/XHR viewers may remove the original URL from the DOM after creating a blob.
+    // Resource Timing still exposes URLs loaded before the extension started observing.
+    // Use only positive PDF hints; never probe every resource or replay page requests.
+    try {
+      for (const entry of performance.getEntriesByType('resource').slice(-1000)) {
+        add(entry.name, /^application\/pdf(?:\s*;|$)/i.test(entry.contentType || ''), '');
+      }
+    } catch { /* Resource Timing is optional and can be unavailable in viewers. */ }
     return { links: [...links.values()], title: document.title, pageUrl: location.href };
   }
   return { collectInPage };

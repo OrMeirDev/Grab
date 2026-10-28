@@ -5,7 +5,8 @@
 // down that same connection. Browser startup alone never opens the Grab window.
 //
 // Privacy: webRequest is used observationally. Only requests that look like media are kept, in
-// session storage (cleared when the browser closes), per tab, at most MAX_ITEMS for OBS_TTL_MS,
+// session storage (cleared when the browser closes), per tab, at most MAX_ITEMS. Video expires
+// after OBS_TTL_MS; PDF originals last for the document lifetime,
 // and dropped on the next navigation of the tab. No general browsing history is recorded.
 importScripts('lib/protocol.js', 'lib/media.js', 'lib/collector.js', 'lib/pdf.js');
 
@@ -186,7 +187,7 @@ function observe(tabId, obs) {
     const rec = await currentTab(tabId);
     if (!rec) return;
     const now = Date.now();
-    rec.items = rec.items.filter((o) => now - o.at < OBS_TTL_MS);
+    rec.items = rec.items.filter((o) => (o.kind === 'pdf' || now - o.at < OBS_TTL_MS));
     const existing = rec.items.findIndex((o) => o.url === obs.url);
     if (existing >= 0) rec.items[existing] = { ...rec.items[existing], ...obs, size: Math.max(rec.items[existing].size || 0, obs.size || 0), firstAt: rec.items[existing].firstAt || rec.items[existing].at };
     else rec.items.push({ ...obs, firstAt: obs.at });
@@ -279,7 +280,7 @@ chrome.webRequest.onHeadersReceived.addListener((d) => {
   const header = (name) => ((d.responseHeaders || []).find((h) => h.name.toLowerCase() === name) || {}).value || '';
   const contentRange = header('content-range').match(/\/(\d+)$/);
   const size = contentRange ? Number(contentRange[1]) : Number(header('content-length')) || 0;
-  const cls = d.statusCode >= 200 && d.statusCode < 300 && /application\/pdf/i.test(header('content-type')) ? { kind: 'pdf' } : M.classify({ url: r.url, contentType: header('content-type'), status: d.statusCode, size });
+  const cls = d.statusCode >= 200 && d.statusCode < 300 && (/^application\/pdf(?:\s*;|$)/i.test(header('content-type')) || /filename\*?\s*=.*\.pdf(?:[\s"';]|$)/i.test(header('content-disposition'))) ? { kind: 'pdf' } : M.classify({ url: r.url, contentType: header('content-type'), status: d.statusCode, size });
   if (!cls) return;
   void observe(r.tabId, {
     url: r.url, kind: cls.kind, size, at: Date.now(), frameId: r.frameId, documentResponse: d.type === 'main_frame',
@@ -297,7 +298,7 @@ async function freshObservations(tabId) {
   const rec = await loadTab(tabId);
   if (!rec) return { items: [], hosts: [] };
   const now = Date.now();
-  return { items: rec.items.filter((o) => now - o.at < OBS_TTL_MS), hosts: rec.hosts || [] };
+  return { items: rec.items.filter((o) => (o.kind === 'pdf' || now - o.at < OBS_TTL_MS)), hosts: rec.hosts || [] };
 }
 
 const pendingDomScans = new Map();

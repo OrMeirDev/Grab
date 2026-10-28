@@ -66,3 +66,27 @@ Pending installed Windows acceptance:
 5. Confirm library open/reveal and history download-again for PDF; smoke-test normal video paste.
 6. Capture before/after screenshots of every screen and the extension; verify RTL layout and no
    unrelated screen changes. Run the existing Electron queue-cooldown and hidden-probe checks.
+
+
+## Loaded-document detection fix (extension 1.2.1)
+
+PDF network observations now last for the current document rather than expiring after ten
+minutes; navigation and closing the tab still discard them, and the per-tab limit is unchanged.
+Fetch/XHR responses with a PDF filename in Content-Disposition are recognized even when served
+as application/octet-stream. Discovery also reads the current frames' Resource Timing entries
+for original PDF URLs already fetched before observation, using PDF path, response query or MIME
+hints. Signed query strings are preserved without replaying arbitrary page requests.
+
+This cannot recover an opaque URL fetched before observation if its timing entry is missing or
+has no PDF hint (cross-origin timing can hide MIME). An expired signed URL still requires a fresh
+original from the site. Blob/data originals remain unsupported. Reload extension 1.2.1 before
+installed testing. Real signed-in Whop and installed Windows acceptance remain pending.
+
+
+Targeted verification: 47 PDF/worker/session tests passed, including the shipped collector inside
+the worker, pre-observed signed URLs, observation retention/navigation cleanup, Content-Disposition,
+and exact-byte downloads over real local HTTP. Another 31 extension/architecture/setup tests
+passed (3 platform/tool skips). Renderer build and git diff whitespace checks passed. The full
+suite was attempted; native Unix socket creation returns EPERM on this host, preventing the
+native-host/BrowserHub integration tests. No tests were disabled. No Windows installer or live
+Whop validation is claimed.

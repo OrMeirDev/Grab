@@ -1,3 +1,17 @@
+# Grab 1.8.1 — PDF detection repair (2026-10-28)
+
+The owner requested distribution of the PDF fix to their computer. Stable app version 1.8.1,
+extension 1.2.1; native tools unchanged. Publish only after the existing same-source CI,
+Browser integration and Windows verify gates. The published update feed carries the installer;
+local installation and personal Whop acceptance cannot be claimed from CI alone.
+
+The fix retains bounded per-document PDF observations, recognizes Content-Disposition PDF
+filenames, and recovers positively identified PDF Resource Timing entries loaded before the
+worker observed them. Opaque unhinted URLs and expired signatures remain limitations. No UI,
+font sizes, session routing or native tools changed. See docs/pdf-downloads.md for local checks.
+
+---
+
 # Grab 1.8.0 — PDF release preparation (2026-10-27)
 
 The owner requested a software update on 2026-10-27, authorizing publication of the PDF feature
