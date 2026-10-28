@@ -37,3 +37,11 @@ branches are preserved. This list is a one-time retirement list, not a rule for 
 
 Current architecture and owner scope: [architecture](architecture.md), [handoff](handoff.md),
 [AGENTS](../AGENTS.md). Old candidates/audits are retained in [archive](archive/).
+
+
+Pinned FFmpeg recovery: the upstream 2026-10-13 autobuild was removed (404) on 2026-10-28.
+The fetch script can recover that exact locked build from the SHA-256-pinned Grab 1.8.0
+installer using 7-Zip, without executing the installer. It verifies the carrier before extraction
+and every executable/license against native-tools.lock.json before staging. Other errors,
+archive hash mismatches and other tools do not trigger recovery. Tool versions and lock remain
+unchanged. The Windows build runners supply 7-Zip; recovery on another build host requires it.

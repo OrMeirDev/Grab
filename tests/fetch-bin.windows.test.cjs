@@ -98,3 +98,26 @@ test('fetch-bin: plain and zipped tools with licenses, every hash checked; a tam
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// A removed arbitrary dependency must fail closed; recovery is limited to the known pinned
+// FFmpeg archive, never selected by an attacker-controlled/custom lock name alone.
+test('fetch-bin: a 404 for a different lock cannot select the published FFmpeg recovery', { skip: !windows && 'Windows only', timeout: 180000 }, async () => {
+  const server = http.createServer((req, res) => { res.writeHead(404); res.end('missing'); });
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grab-fetchbin-missing-'));
+  try {
+    const lockFile = path.join(dir, 'lock.json');
+    fs.writeFileSync(lockFile, JSON.stringify({ tools: [{ name: 'ffmpeg', version: 'custom',
+      url: `http://127.0.0.1:${server.address().port}/removed.zip`, sha256: '0'.repeat(64),
+      files: { 'ffmpeg.exe': '0'.repeat(64) }, licenseFiles: [],
+    }] }));
+    const bin = path.join(dir, 'bin');
+    const result = await fetchBin(lockFile, bin);
+    assert.notEqual(result.code, 0, result.out);
+    assert.doesNotMatch(result.out, /Downloading https:\/\/github.com\/OrMeirDev\/Grab/);
+    assert.equal(fs.existsSync(path.join(bin, 'ffmpeg.exe')), false);
+  } finally {
+    await new Promise(r => server.close(r));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
