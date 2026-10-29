@@ -1,5 +1,10 @@
 # Stable releases
 
+Owner policy (2026-10-29): a request to merge into main includes a new stable installer and
+publication to Grab's ordinary update feed. Choose the next appropriate stable version, complete
+the gates below, publish, and verify the assets/feed before reporting completion. This is standing
+authorization; no extra publication approval is needed for that merge request.
+
 1. Update the stable version in package.json and package-lock.json, current installation guide
    and docs/releases/<version>.md. Do not change native-tools.lock.json as part of an unrelated
    release; tool upgrades have their own reviewed change.
