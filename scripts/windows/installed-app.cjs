@@ -194,7 +194,7 @@ async function paste(text) {
   await js(`document.querySelector('textarea').focus()`);
   await cdp.send('Input.insertText', { text });
   await wait(300);
-  await click('זהה סרטונים');
+  await click('זהה קבצים');
 }
 // Removes every row; a row still being looked up has no remove button yet, so keep trying.
 async function clearQueue() {

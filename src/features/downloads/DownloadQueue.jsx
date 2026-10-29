@@ -14,7 +14,7 @@ export default function DownloadQueue({ queue, actions, drag }) {
         {queue.length === 0 && (
           <div className="empty">
             <Link2 size={28} />
-            <div>התור ריק. הדבק קישורים למעלה ולחץ "זהה סרטונים".</div>
+            <div>התור ריק. הדבק קישורים למעלה ולחץ "זהה קבצים".</div>
           </div>
         )}
         {queue.map((item, i) => (
