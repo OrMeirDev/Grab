@@ -1,3 +1,17 @@
+# Grab 1.9.0 — automatic file detection release (2026-10-29)
+
+The owner explicitly requested a new installer now, and made installer publication part of every
+future request to merge to main. This standing scope is recorded in AGENTS.md and releasing.md.
+Version 1.9.0 includes automatic video/PDF intake from PR #20 (b6d5bd7), extension 1.3.0,
+and the existing UI, direct video routing and per-profile session behavior. Native tools unchanged.
+
+Publication must consume the verified Windows bundle from successful CI, Browser integration
+and Windows verify push runs on this exact release source. Earlier feature/PR results are not
+substitutes. The owner confirmed manual Whop PDFs on 1.8.1; automatic personal-profile Sends
+remain an installed acceptance check, not a claim from the controlled fixtures.
+
+---
+
 # Automatic video/PDF intake — development (2026-10-29)
 
 The owner confirmed the Whop PDF download works on 1.8.1 and requested automatic type detection

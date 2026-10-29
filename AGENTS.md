@@ -5,6 +5,11 @@ Decisions: [docs/adr/](docs/adr/). Current state and open work: [docs/handoff.md
 
 ## Owner scope (binding)
 
+- Standing release instruction (2026-10-29): when the owner asks to merge into main, also
+  prepare and publish a new stable Windows installer and its ordinary in-app update feed.
+  The request authorizes that publication; do not ask again. Follow docs/releasing.md and
+  require its exact-source checks before publishing. A merge alone does not complete the task.
+
 - The current workflow is accepted. Keep paste-and-download, the purple styling, Hebrew RTL,
   the current screens and successful downloads. Make targeted, verified fixes; no redesign.
 - **No DRM work of any kind**: no DRM player/CDM, license acquisition, protected offline playback,
