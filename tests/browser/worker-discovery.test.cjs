@@ -65,6 +65,7 @@ async function worker({ existing = [], status = 'complete', execute = async () =
       if (type === 'main_frame') context.chrome.webNavigation.onCommitted.emit({ tabId: 7, frameId: 0, url: pageUrl });
     },
     navigate: url => context.chrome.webNavigation.onCommitted.emit({ tabId: 7, frameId: 0, url }),
+    startAuto: () => receive(P.make('discover', { jobId: 'fixture-job', url: pageUrl, deadlineMs: 60000, contentType: 'auto' })),
     startPdf: () => receive(P.make('discover', { jobId: 'fixture-job', url: pageUrl, deadlineMs: 60000, contentType: 'pdf' })),
     cancel: () => receive(P.make('cancel', { jobId: 'fixture-job' })),
     async advance(ms) {
@@ -286,4 +287,19 @@ test('real PDF collector recovers a signed Fetch URL loaded before worker observ
   assert.equal(candidates(w)[0].candidates[0].context.referer, pageUrl);
   assert.equal(w.created.length, 0);
   assert.deepEqual(w.updated, []);
+});
+
+
+test('automatic worker discovery returns both video and PDF from the existing tab without navigation or playback', async () => {
+  const pdf = 'https://files.test/guide.pdf?sig=a%2Bb';
+  const w = await worker({ existing: [userTab()], execute: async ({ func }) => func.name === 'collectInPage' && func.toString().includes("const links = new Map()")
+    ? [{ frameId: 0, result: { links: [{ url: pdf }], pageUrl } }] : dom() });
+  w.startAuto(); await w.advance(10);
+  assert.ok(candidates(w).length, JSON.stringify(w.sent));
+  const result = candidates(w)[0].candidates;
+  assert.ok(result.some(c => c.kind === 'pdf' && c.url === pdf));
+  assert.ok(result.some(c => c.url === mediaUrl));
+  assert.equal(w.created.length, 0);
+  assert.equal(w.scans.some(s => s.args?.[0]?.startPlayback), false);
+  assert.deepEqual(w.updated, []); assert.deepEqual(w.removed, []);
 });

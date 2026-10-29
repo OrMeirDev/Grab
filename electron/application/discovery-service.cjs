@@ -1,6 +1,7 @@
 // Lookup strategies share one cancellable deadline. Browser-assisted jobs use the selected
 // extension (when configured), otherwise the existing browser's CDP adapter. Session-required
 // jobs acquire their context before any extractor request; no anonymous fallback is allowed.
+const { urlContentType } = require('../domain/content-type.cjs');
 const { budget } = require('../domain/candidate-policy.cjs');
 
 const LOOKUP_BUDGET_MS = 6 * 60 * 1000;
@@ -9,6 +10,7 @@ const cancelled = () => ({ ok: false, kind: 'cancelled', error: 'cancelled' });
 
 function createDiscoveryService({ pdf, engine, hiddenProbe, pageprobe, browserSession, getBrowserService = () => null,
   now = () => Date.now(), record = () => {}, lookupBudgetMs = LOOKUP_BUDGET_MS }) {
+  const autoChoices = new Map();
   async function analyze(url, options = {}) {
     const started = now();
     const controller = new AbortController();
@@ -47,6 +49,7 @@ function createDiscoveryService({ pdf, engine, hiddenProbe, pageprobe, browserSe
     // context is opt-in per job (including extension sends/restored sessions); Mako is the
     // established Edge-player exception. Never remember this decision for unrelated jobs.
     const requireSession = !!options.requireSession || !!options.browser || !!options.instance || !!options.ref;
+    if (options.contentType === 'auto') return autoLookup(url, options, requireSession);
     if (options.contentType === 'pdf') {
       if (requireSession) {
         const service = getBrowserService();
@@ -144,6 +147,48 @@ function createDiscoveryService({ pdf, engine, hiddenProbe, pageprobe, browserSe
         return last;
       });
     }
+  }
+  async function autoLookup(url, options, requireSession) {
+    if (requireSession) {
+      const service = getBrowserService();
+      if (service) return service.analyze(url, options);
+      if (urlContentType(url) === 'pdf') return { ok: false, kind: 'sessionRequired' };
+      return { ...await lookup(url, { ...options, contentType: 'video' }), contentType: 'video' };
+    }
+    const video = () => lookup(url, { ...options, contentType: 'video', choice: undefined });
+    const document = (extra = {}) => pdf.analyze(url, { ...options, ...extra });
+    for (const [token, choice] of autoChoices) if (now() - choice.at > 600000) autoChoices.delete(token);
+    if (options.choice) {
+      const saved = autoChoices.get(options.choice.token);
+      if (!saved) return { ...await document(), contentType: 'pdf' };
+      if (saved.url !== url || saved.itemId !== options.itemId || !Number.isInteger(options.choice.index) || !saved.entries[options.choice.index]) return { ok: false, kind: 'fileChoiceExpired' };
+      autoChoices.delete(options.choice.token);
+      const entry = saved.entries[options.choice.index];
+      return entry.type === 'video' ? { ...await video(), contentType: 'video' }
+        : { ...await document({ choice: entry.choice }), contentType: 'pdf' };
+    }
+    const hint = urlContentType(url);
+    if (hint === 'pdf') return { ...await document(), contentType: 'pdf' };
+    if (!pdf || hint === 'video' || browserSession.isMakoPage?.(url)) return { ...await video(), contentType: 'video' };
+    const found = await document();
+    options.signal.throwIfAborted();
+    if (found.directDocument || ['rateLimited', 'blocked', 'cancelled', 'pdfSessionRequired', 'protected'].includes(found.kind)) return { ...found, contentType: 'pdf' };
+    if (!found.ok && found.kind !== 'pdfChoice') return { ...await video(), contentType: 'video' };
+    // A page with documents may also contain a video. Keep only opaque, item-bound choices;
+    // discard exploratory video metadata and revalidate the selected source when chosen.
+    const movie = await engine.analyze(url, { signal: options.signal, timeoutMs: Math.max(1, Math.min(PROBE_MS, options.deadline - now())) });
+    options.signal.throwIfAborted();
+    if (['rateLimited', 'blocked', 'cancelled', 'protected'].includes(movie.kind)) return movie;
+    if (!movie.ok) return { ...found, contentType: 'pdf' };
+    if (movie.infoFile) engine.releaseInfo?.(movie.infoFile);
+    if (movie.cookieRef) browserSession.forgetCookies?.(movie.cookieRef);
+    const entries = [{ type: 'video', label: 'וידאו · ' + (movie.title || 'הסרטון בעמוד').slice(0, 150) },
+      ...(found.kind === 'pdfChoice' ? found.choices.map(c => ({ type: 'pdf', label: 'PDF · ' + c.label, choice: { token: found.token, index: c.index } }))
+        : [{ type: 'pdf', label: 'PDF · ' + (found.title || 'המסמך בעמוד') }])];
+    const token = globalThis.crypto.randomUUID();
+    if (autoChoices.size >= 100) autoChoices.delete(autoChoices.keys().next().value);
+    autoChoices.set(token, { url, itemId: options.itemId, entries, at: now() });
+    return { ok: false, kind: 'fileChoice', token, choices: entries.map((e, index) => ({ index, label: e.label })) };
   }
   return { analyze };
 }

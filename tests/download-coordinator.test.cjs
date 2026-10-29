@@ -535,3 +535,23 @@ test('PDF restore keeps the session requirement and does not download when the s
   assert.equal(t.starts.length, 0);
   assert.equal(t.c.jobs[0].error.kind, 'sessionRequired');
 });
+
+test('automatic intake resolves each job type before choosing its downloader and persisted format', async () => {
+  const pdf = 'https://site.test/guide', video = 'https://site.test/video';
+  const t = setup({ lookups: {
+    [pdf]: { ok: true, contentType: 'pdf', title: 'Guide', mediaUrl: 'https://files.test/opaque?sig=private' },
+    [video]: { ok: true, contentType: 'video', title: 'Movie' },
+  } });
+  t.c.add([{ url: pdf }, { url: video }]);
+  await t.clock.advance(10000);
+  assert.equal(t.discovers[0].contentType, 'auto');
+  assert.deepEqual(t.c.snapshot().jobs.map(j => j.contentType), ['pdf', 'video']);
+  assert.equal(t.c.add([{ url: pdf }]).skipped, 1, 'resolved type does not defeat default intake deduplication');
+  t.c.downloadAll(); await settle();
+  assert.equal(t.starts[0].plan.format, 'pdf');
+  t.starts[0].finish({ ok: true, file: '/dl/Guide.pdf' }); await settle();
+  await t.clock.advance(10000);
+  assert.equal(t.starts[1].plan.format, 'mp4');
+  assert.equal(t.history[0].format, 'pdf');
+  await t.c.shutdown();
+});

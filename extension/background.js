@@ -504,7 +504,7 @@ async function runJob(job) {
   const existing = job.refresh ? null : await findExistingTab(job.url);
   if (!alive(job)) return;
   if (existing) {
-    const g = await gather(existing.id, { play: false, deadlineAt: job.deadlineAt });
+    const g = await (job.contentType === 'auto' ? gatherAuto : gather)(existing.id, { play: false, deadlineAt: job.deadlineAt });
     if (!alive(job)) return;
     if (g.ranked.plausible.length) { deliver(job, g.ranked, g.dom); return; }
   }
@@ -524,7 +524,7 @@ async function runJob(job) {
   let lastChange = Date.now();
   let prompted = false;
   while (alive(job) && Date.now() < job.deadlineAt) {
-    const g = await gather(tab.id, { play: true, deadlineAt: job.deadlineAt });
+    const g = await (job.contentType === 'auto' ? gatherAuto : gather)(tab.id, { play: true, deadlineAt: job.deadlineAt });
     if (!alive(job)) return;
     const count = g.ranked.ranked.length;
     if (count !== lastCount) { lastCount = count; lastChange = Date.now(); }
@@ -557,16 +557,16 @@ function recordSendStatus(m) {
   rec.at = Date.now();
 }
 
-async function sendToGrab(tabId, candidateUrl, contentType = 'video') {
+async function sendToGrab(tabId, candidateUrl, contentType = 'auto') {
   if (!conn.welcomed) return { status: 'offline', conn: publicConn() };
   const tab = await chrome.tabs.get(tabId);
   if (!tab.url || !P.isHttpUrl(tab.url)) return { status: 'rejected', reason: 'unsupported_page' };
-  const g = contentType === 'pdf' ? await gatherPdf(tabId) : await gather(tabId, { play: false });
+  const g = contentType === 'pdf' ? await gatherPdf(tabId) : await (contentType === 'auto' ? gatherAuto : gather)(tabId, { play: false });
   let chosen = candidateUrl ? g.ranked.ranked.find((c) => c.url === candidateUrl) : null;
   if (!chosen && !candidateUrl && g.ranked.plausible.length === 1) chosen = g.ranked.plausible[0];
   const message = P.make('send-to-grab', {
     url: tab.url,
-    ...(contentType === 'pdf' ? { contentType } : {}),
+    ...(['pdf', 'auto'].includes(contentType) ? { contentType } : {}),
     title: (g.dom.title || tab.title || '').slice(0, 300),
     ...(chosen ? { candidate: toWire(chosen) } : {}),
   });
@@ -609,12 +609,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
     }
     if (msg.type === 'popup:scan' && Number.isInteger(msg.tabId)) {
       const tab = await chrome.tabs.get(msg.tabId);
-      const g = msg.contentType === 'pdf' ? await gatherPdf(msg.tabId) : await gather(msg.tabId, { play: false });
+      const g = msg.contentType === 'pdf' ? await gatherPdf(msg.tabId) : await (msg.contentType === 'video' ? gather : gatherAuto)(msg.tabId, { play: false });
       const sendState = sends.find((s) => s.url === tab.url) || null;
       return { ok: true, url: tab.url || '', title: g.dom.title || tab.title || '', candidates: g.ranked.plausible.slice(0, 6).map(toWire), ambiguous: g.ranked.ambiguous, blob: g.dom.blob > 0, drm: g.dom.drm, send: sendState };
     }
     if (msg.type === 'popup:send' && Number.isInteger(msg.tabId)) {
-      return { ok: true, result: await sendToGrab(msg.tabId, typeof msg.candidateUrl === 'string' ? msg.candidateUrl : undefined, msg.contentType === 'pdf' ? 'pdf' : 'video') };
+      return { ok: true, result: await sendToGrab(msg.tabId, typeof msg.candidateUrl === 'string' ? msg.candidateUrl : undefined, msg.contentType === 'pdf' ? 'pdf' : msg.contentType === 'video' ? 'video' : 'auto') };
     }
     return { ok: false };
   })().then(respond, (e) => respond({ ok: false, error: String(e && e.message || e) }));
@@ -635,6 +635,16 @@ chrome.storage.session.get(ownedKey).then(async (got) => {
 
 connect();
 
+
+// Both scans are read-only for existing tabs. Mixed results retain both types so the user
+// chooses a file, without selecting a search mode or losing the sending profile's cookie scope.
+async function gatherAuto(tabId, options = {}) {
+  const [video, pdf] = await Promise.all([gather(tabId, options), gatherPdf(tabId, options.deadlineAt)]);
+  const plausible = [...video.ranked.plausible, ...pdf.ranked.plausible];
+  const seen = new Set(plausible.map(c => c.url));
+  const ranked = [...plausible, ...video.ranked.ranked.filter(c => !seen.has(c.url))];
+  return { ranked: { ranked, plausible, ambiguous: pdf.ranked.plausible.length ? plausible.length > 1 : video.ranked.ambiguous }, dom: video.dom };
+}
 
 async function gatherPdf(tabId, deadlineAt = Infinity) {
   const tab = await chrome.tabs.get(tabId);

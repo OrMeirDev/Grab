@@ -123,3 +123,13 @@ or the selected BrowserService. DownloadRunner uses the same allocator and vault
 adapter. The coordinator retains `contentType` and maps PDF choice results to the existing job
 choice UI. Extension `lib/pdf.js` scans the DOM without playback; PDF responses are observed
 separately from video ranking. See [PDF behavior and verification](pdf-downloads.md).
+
+
+Automatic intake: new jobs begin as `contentType: auto`. Discovery resolves a concrete video or
+PDF type before the coordinator creates a download plan. Public platform/media URL hints retain
+the ordinary video path; other public documents use bounded HTTP inspection. Mixed public-page
+choices are opaque, bounded and bound to the original item; exploratory video metadata is
+released. Browser-assisted auto jobs scan and choose candidates inside the sending profile, use
+the adapter matching the selected candidate, and never attempt anonymous PDF inspection. Legacy
+explicit video/PDF jobs and history retain their concrete types. The renderer and popup expose
+one intake flow and show a file choice only when candidates require it.

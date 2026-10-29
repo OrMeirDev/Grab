@@ -110,7 +110,7 @@ async function discover({ hub, browser, url, jobId = protocol.newId('job'), refr
       const onAbortNow = () => done(reject, new BrowserError('cancelled'));
       abort.signal.addEventListener('abort', onAbortNow, { once: true });
       cleanup.push(() => abort.signal.removeEventListener('abort', onAbortNow));
-      if (!hub.sendTo(instance.key, 'discover', { jobId, url, deadlineMs: cfg.discoveryMs, refresh, ...(contentType === 'pdf' ? { contentType } : {}) })) done(reject, new BrowserError('browserDisconnected'));
+      if (!hub.sendTo(instance.key, 'discover', { jobId, url, deadlineMs: cfg.discoveryMs, refresh, ...(['pdf', 'auto'].includes(contentType) ? { contentType } : {}) })) done(reject, new BrowserError('browserDisconnected'));
       if (abort.signal.aborted) onAbortNow();
     });
     return { ...result, instance, jobId };

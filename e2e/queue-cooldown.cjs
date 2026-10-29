@@ -39,7 +39,7 @@ app.whenReady().then(async () => {
   await js(`document.querySelector('textarea').focus()`);
   await win.webContents.insertText('https://www.youtube.com/watch?v=aaaaaaaaaa1\nhttps://www.youtube.com/watch?v=aaaaaaaaaa2\n');
   await wait(300);
-  await js(`[...document.querySelectorAll('button')].find((b) => b.textContent.includes('זהה סרטונים')).click()`);
+  await js(`[...document.querySelectorAll('button')].find((b) => b.textContent.includes('זהה קבצים')).click()`);
   for (let i = 0; i < 100 && (await js(`document.querySelectorAll('.queue-item.is-ready').length`)) < 2; i++) await wait(100);
   await js(`[...document.querySelectorAll('button')].find((b) => b.textContent.includes('הורד הכול')).click()`);
   const t0 = Date.now();

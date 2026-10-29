@@ -142,8 +142,8 @@ class DownloadCoordinator {
 
   // New links -> new jobs. A link already in the queue, or repeated in the same paste, is skipped.
   // nameEdited: the label is a name the user chose (re-download from history keeps it).
-  add(links, { contentType = 'video', nameEdited = false, useBrowser = false, browser, instance, ref, sourceId, autoQueue = false } = {}) {
-    const seen = new Set(this.jobs.filter((j) => !sourceId || !['done', 'error'].includes(j.status)).map((j) => sourceId ? j.sourceId : (j.contentType || 'video') + ':' + sameLinkKey(j.url)));
+  add(links, { contentType = 'auto', nameEdited = false, useBrowser = false, browser, instance, ref, sourceId, autoQueue = false } = {}) {
+    const seen = new Set(this.jobs.filter((j) => !sourceId || !['done', 'error'].includes(j.status)).map((j) => sourceId ? j.sourceId : (contentType === 'auto' ? 'auto' : (j.contentType || 'video')) + ':' + sameLinkKey(j.url)));
     let added = 0;
     for (const { url, label = '' } of links) {
       const key = sourceId || contentType + ':' + sameLinkKey(url);
@@ -356,7 +356,7 @@ class DownloadCoordinator {
         return;
       }
       const choices = info.kind === 'browserChoice' ? (info.options || []).map((o) => ({ kind: 'profile', value: o.key, label: o.label, browser: info.browser?.id }))
-        : ['videoChoice', 'pdfChoice'].includes(info.kind) ? (info.choices || []).map((c) => ({ kind: 'video', token: info.token, value: c.index, label: c.label })) : null;
+        : ['videoChoice', 'pdfChoice', 'fileChoice'].includes(info.kind) ? (info.choices || []).map((c) => ({ kind: 'video', token: info.token, value: c.index, label: c.label })) : null;
       this.update(id, {
         choices: choices?.map((c, index) => ({ index, label: c.label })), choiceOptions: choices,
         fix: ['browserUnavailable', 'extensionNotConnected', 'hostSetupError', 'wrongProfile'].includes(info.kind) ? 'settings' : null,
@@ -369,6 +369,7 @@ class DownloadCoordinator {
     }
     this.forget(job);
     this.update(id, {
+      contentType: info.contentType || (job.contentType === 'pdf' ? 'pdf' : 'video'),
       status: autoQueue ? 'queued' : 'ready', forcePage: false, autoQueue: false, analyzeFailed: false, phase: null,
       site: info.site || null, duration: info.duration || null, height: info.height || null,
       thumbnail: info.thumbnail || null, title: info.title || null,
