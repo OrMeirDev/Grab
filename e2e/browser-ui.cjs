@@ -100,8 +100,8 @@ app.whenReady().then(async () => {
     await js("document.querySelector('textarea').focus()");
     const youtube = 'https://www.youtube.com/watch?v=fixture123';
     await win.webContents.insertText(youtube);
-    await until("!![...document.querySelectorAll('button')].find((b) => b.textContent.includes('זהה סרטונים') && !b.disabled)");
-    await click('זהה סרטונים');
+    await until("!![...document.querySelectorAll('button')].find((b) => b.textContent.includes('זהה קבצים') && !b.disabled)");
+    await click('זהה קבצים');
     await until("document.querySelectorAll('.queue-item.is-ready').length === 1");
     assert.equal(engineCalls.at(-1).url, youtube, 'ordinary YouTube paste bypasses the disconnected extension and saved Chrome default');
     assert.equal(engineCalls.at(-1).cookieFile, undefined);

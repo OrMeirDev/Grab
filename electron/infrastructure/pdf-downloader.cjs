@@ -73,6 +73,7 @@ function createPdfDownloader({ fetchImpl = fetch } = {}) {
         url = c.links[options.choice.index].url;
       }
       let found = await inspect(url, { ...options, signal, referer: options.referer || pageUrl });
+      const directDocument = found.pdf;
       if (!found.pdf) {
         if (options.direct || !found.links.length) return fail('pdfNotFound');
         if (found.links.length > 1) {
@@ -84,7 +85,7 @@ function createPdfDownloader({ fetchImpl = fetch } = {}) {
         found = await inspect(found.links[0].url, { ...options, signal, referer: found.url });
       }
       if (!found.pdf) return fail('pdfNotFound');
-      return { ok: true, title: found.title, site: 'PDF', mediaUrl: found.url, referer: options.referer || pageUrl };
+      return { ok: true, contentType: 'pdf', directDocument, title: found.title, site: 'PDF', mediaUrl: found.url, referer: options.referer || pageUrl };
     } catch (e) { return fail(options.signal?.aborted ? 'cancelled' : signal.aborted ? 'pdfTimeout' : e.kind || 'network', 'PDF lookup failed', e.httpStatus ? { httpStatus: e.httpStatus } : {}); }
   }
   function download(plan, onProgress = () => {}) {

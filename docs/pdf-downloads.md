@@ -1,14 +1,16 @@
-# Original PDF downloads
+# Automatic video and original PDF detection
 
-Choose **PDF** above the links box, paste a direct PDF address or a page containing PDF links,
-then identify and download. Video/audio keeps the existing path and output preferences.
-Each queue job remembers its own type, so a page can supply both a video and a PDF.
-PDF jobs ignore MP4/MP3 and quality settings; their original bytes are saved as `.pdf`.
+Paste a link and choose **זהה קבצים**, or Send from the extension. Grab discovers the file type
+without a video/PDF selector in either interface. A direct PDF is recognized by its response
+bytes even without a file suffix. Ordinary video platforms and direct media URLs keep their
+existing direct extractor route. Unknown public pages are inspected for original PDFs; pages
+with both a video and documents offer a file choice. Browser Sends scan both kinds in the same
+sending profile, retaining scoped account cookies and without navigating or playing user tabs.
 
-For pages requiring an account, open the page in the signed-in browser, choose **PDF** in the
-Grab extension, then Send to Grab. Extension version **1.2.0** is required (repair/update from
-Grab settings, then Reload the unpacked extension). Sending remains automatic and retains the
-sending browser and profile. Multiple documents require a choice in Grab or the popup.
+Every resolved job retains its own concrete type. PDF jobs save original bytes and ignore video
+format/quality settings. Those settings remain available for video jobs in a mixed queue. History
+and restored jobs keep their known type. Extension **1.3.0** is required for automatic Sends;
+Repair the browser integration and Reload the extension after installing an app with this feature.
 
 Supported sources:
 - Direct HTTP(S) files, including addresses without a `.pdf` suffix when their response is PDF.

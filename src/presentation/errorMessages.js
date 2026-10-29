@@ -3,9 +3,12 @@
 const ERROR_LABELS = {
   pdfTimeout: 'שרת המסמך לא ענה בזמן. נסה שוב',
   pdfNotFound: 'לא נמצא קובץ PDF בעמוד',
+  fileChoice: 'נמצאו כמה קבצים בעמוד: בחר וידאו או PDF להורדה',
+  fileChoiceExpired: 'בחירת הקובץ פגה. נסה לזהות מחדש',
+  fileNotFound: 'לא נמצא וידאו או PDF בעמוד',
   pdfChoice: 'נמצאו כמה קובצי PDF: בחר מסמך להורדה',
   pdfChoiceExpired: 'בחירת המסמך פגה. נסה לזהות מחדש',
-  pdfSessionRequired: 'המסמך דורש הרשאה. פתח את האתר ושלח PDF דרך התוסף',
+  pdfSessionRequired: 'המסמך דורש הרשאה. פתח את האתר ושלח דרך התוסף',
   pdfUnavailable: 'המסמך לא זמין בשרת',
   pdfInvalid: 'התגובה שהתקבלה אינה קובץ PDF תקין או שההורדה לא הושלמה',
   pdfTooLarge: 'קובץ ה-PDF גדול ממגבלת ההורדה (1 GB)',

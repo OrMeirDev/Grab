@@ -1,3 +1,18 @@
+# Automatic video/PDF intake — development (2026-10-29)
+
+The owner confirmed the Whop PDF download works on 1.8.1 and requested automatic type detection
+in the app and extension. This branch removes the two mode selectors and adds auto discovery,
+including mixed video/PDF choices. Extension 1.3.0; no app release/version change in this feature
+branch. Existing concrete jobs/history remain compatible. Ordinary platforms retain direct
+video extraction; authenticated auto scans stay in the selected profile. No UI font/style changes.
+
+Windows verification: automatic PDF Send from a signed-in Whop page, video Send, a mixed page
+with both file types, a pasted opaque public PDF, a mixed batch with video format settings, pause
+and restore both types. Repair/Reload extension 1.3.0. Personal-account results remain pending;
+controlled fixtures and screenshots do not claim those checks.
+
+---
+
 # Grab 1.8.1 — PDF detection repair (2026-10-28)
 
 The owner requested distribution of the PDF fix to their computer. Stable app version 1.8.1,

@@ -27,7 +27,6 @@ export default function AppShell() {
   const engine = useEngine({ busy: downloads.busy, onUpdated: sites.reload });
   const appUpdate = useAppUpdate();
   const [notice, setNotice] = useState('');
-  const [contentType, setContentType] = useState('video');
   const [page, setPage] = useState('downloads');
   const [sitesOpen, setSitesOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
@@ -41,7 +40,7 @@ export default function AppShell() {
     if (!api || !draft.parsed.length) return;
     const links = draft.parsed;
     draft.clear();
-    const skipped = await downloads.addLinks(links, { contentType });
+    const skipped = await downloads.addLinks(links, { contentType: 'auto' });
     if (skipped) setNotice(`${skipped} קישורים כבר היו בתור ודילגתי עליהם`);
   };
   const requeue = (h) => { downloads.requeue(h); setPage('downloads'); };
@@ -66,7 +65,7 @@ export default function AppShell() {
         )}
         {page === 'downloads' && (
           <DownloadsPage
-            contentType={contentType} onContentType={setContentType} draft={draft} downloads={downloads} sites={sites.sites} settings={settings} onSettings={saveSettings}
+            draft={draft} downloads={downloads} sites={sites.sites} settings={settings} onSettings={saveSettings}
             notice={notice} onDismissNotice={() => setNotice('')} onIdentify={identify}
             onShowSites={() => setSitesOpen(true)} onSignInGuide={openGuide} onBrowserSettings={() => setPage('settings')}
           />

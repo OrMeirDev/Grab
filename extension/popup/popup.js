@@ -22,11 +22,11 @@ const CONN_HELP = {
   protocol_version: 'גרסת ההרחבה אינה תואמת ל-Grab. ב-Grab: הגדרות ← דפדפן ← תיקון, ואז טען מחדש את ההרחבה.',
 };
 const SEND_TEXT = { accepted: 'התקבל ב-Grab. ההורדה מתחילה…', duplicate: 'הפריט הזה כבר בתור של Grab.', rejected: 'Grab דחה את הבקשה.', offline: 'Grab לא מחובר.', timeout: 'Grab לא ענה בזמן.' };
-const PHASE_TEXT = { queued: 'בתור', resolving: 'מזהה את הסרטון…', discovering: 'מזהה את הסרטון…', downloading: 'מוריד…', finalizing: 'מסיים…' };
+const PHASE_TEXT = { queued: 'בתור', resolving: 'מזהה קבצים…', discovering: 'מזהה קבצים…', downloading: 'מוריד…', finalizing: 'מסיים…' };
 
 let tabId = null;
 let status = null;
-const mode = () => $('contentType').value;
+const mode = () => 'auto';
 
 function renderConn() {
   const [text, cls] = CONN_TEXT[status.conn.state] || ['לא מחובר', 'bad'];
@@ -73,10 +73,9 @@ async function scan() {
   }
   const note = $('pageNote');
   note.hidden = true;
-  if (mode() === 'pdf') { note.hidden = false; note.textContent = info.candidates.length ? 'נמצא PDF אחד או יותר. שלח ל-Grab לבחירה ולהורדה.' : 'לא נמצא PDF בעמוד. Grab יבדוק את העמוד לאחר השליחה.'; }
-  else if (info.ambiguous) { note.hidden = false; note.textContent = 'נמצאו כמה סרטונים בעמוד. בחר את הנכון, או שלח את העמוד ו-Grab יזהה.'; }
+  if (info.ambiguous) { note.hidden = false; note.textContent = 'נמצאו כמה קבצים בעמוד. בחר וידאו או PDF להורדה.'; }
   else if (!info.candidates.length && info.blob) { note.hidden = false; note.textContent = 'הנגן משתמש במקור פנימי של הדפדפן. Grab יפעיל ויזהה את הסרטון אחרי השליחה.'; }
-  else if (!info.candidates.length) { note.hidden = false; note.textContent = 'עוד לא זוהה סרטון בעמוד הזה. אפשר לשלוח את העמוד ו-Grab ינסה לזהות.'; }
+  else if (!info.candidates.length) { note.hidden = false; note.textContent = 'עוד לא זוהה וידאו או PDF. אפשר לשלוח את העמוד לזיהוי אוטומטי.'; }
   showSend(info.send);
 }
 
@@ -111,7 +110,6 @@ async function init() {
   else $('unsupported').hidden = false;
 }
 
-$('contentType').addEventListener('change', scan);
 $('sendPage').addEventListener('click', () => send());
 $('reconnect').addEventListener('click', async () => { await ask({ type: 'popup:reconnect' }); setTimeout(async () => { status = await ask({ type: 'popup:status' }); renderConn(); }, 1200); });
 $('alias').addEventListener('change', () => ask({ type: 'popup:alias', alias: $('alias').value.trim() }));

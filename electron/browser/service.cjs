@@ -374,7 +374,7 @@ class BrowserService extends EventEmitter {
           this.releaseSession(context.cookieRef);
           return { ...result, ok: false, kind: result.httpStatus === 429 ? 'rateLimited' : result.kind || 'engineFailure', browser: { id: browser.id, name: browser.name } };
         }
-        return { ...result, ...context, needsSession: true, sessionSource: 'browser', browser: { id: browser.id, name: browser.name }, instanceKey: instance.key };
+        return { ...result, contentType: 'video', ...context, needsSession: true, sessionSource: 'browser', browser: { id: browser.id, name: browser.name }, instanceKey: instance.key };
       }
       let pendingChoice = opts.choice && this.choices.get(opts.choice.token);
       if (opts.choice) {
@@ -415,16 +415,19 @@ class BrowserService extends EventEmitter {
           scopeKey = discovery.jobId;
           title = discovery.title;
           const pdfCandidates = discovery.candidates.filter(c => c.kind === 'pdf');
-          const ranked = opts.contentType === 'pdf' ? { plausible: pdfCandidates, ambiguous: pdfCandidates.length > 1 } : media.rank(discovery.candidates.filter(c => c.kind !== 'pdf'));
+          const videos = media.rank(discovery.candidates.filter(c => c.kind !== 'pdf'));
+          const all = [...videos.plausible, ...pdfCandidates];
+          const ranked = opts.contentType === 'pdf' ? { plausible: pdfCandidates, ambiguous: pdfCandidates.length > 1 }
+            : opts.contentType === 'auto' ? { plausible: all, ambiguous: pdfCandidates.length ? all.length > 1 : videos.ambiguous } : videos;
           if (!ranked.plausible.length) {
-            return this.fail(opts.contentType === 'pdf' ? 'pdfNotFound' : 'noVideoBrowser', browser);
+            return this.fail(opts.contentType === 'pdf' ? 'pdfNotFound' : opts.contentType === 'auto' ? 'fileNotFound' : 'noVideoBrowser', browser);
           }
           if (ranked.ambiguous && !opts.choice) {
             const token = protocol.newId('choice');
-            const plausible = ranked.plausible.slice(0, opts.contentType === 'pdf' ? 20 : 4);
+            const plausible = ranked.plausible.slice(0, opts.contentType === 'video' ? 4 : 20);
             this.choices.set(token, { candidates: plausible, instance, scopeKey, title, url, itemId, at: Date.now() });
             for (const [k, v] of this.choices) if (Date.now() - v.at > 10 * 60 * 1000) this.choices.delete(k);
-            return { ok: false, kind: opts.contentType === 'pdf' ? 'pdfChoice' : 'videoChoice', error: 'multiple files', token, browser: { id: browser.id, name: browser.name }, choices: plausible.map((c, index) => ({ index, label: this.describeChoice(c) })) };
+            return { ok: false, kind: opts.contentType === 'pdf' ? 'pdfChoice' : opts.contentType === 'auto' ? 'fileChoice' : 'videoChoice', error: 'multiple files', token, browser: { id: browser.id, name: browser.name }, choices: plausible.map((c, index) => ({ index, label: (opts.contentType === 'auto' ? (c.kind === 'pdf' ? 'PDF · ' : 'וידאו · ') : '') + this.describeChoice(c) })) };
           }
           candidates = ranked.plausible.slice(0, 3);
         }
@@ -438,8 +441,8 @@ class BrowserService extends EventEmitter {
           const cookieRef = await this.cookiesFor(instance, scopeKey, c, abort.signal);
           let r;
           try {
-            r = await this.session.withSessionCookies(cookieRef, (cookieFile) => (opts.contentType === 'pdf' ? this.pdf : this.engine).analyze(c.url, {
-              direct: opts.contentType === 'pdf',
+            r = await this.session.withSessionCookies(cookieRef, (cookieFile) => (c.kind === 'pdf' ? this.pdf : this.engine).analyze(c.url, {
+              direct: c.kind === 'pdf',
               cookieFile, requestContext: c.context, referer: url, title: title || undefined, signal: abort.signal, timeoutMs: cfg.probeMs,
             }));
             if (abort.signal.aborted) throw new BrowserError('cancelled');
@@ -450,7 +453,7 @@ class BrowserService extends EventEmitter {
             return { ...r, ok: false, kind: r.kind === 'blocked' && r.httpStatus !== 429 ? 'blocked' : 'rateLimited', browser: { id: browser.id, name: browser.name } };
           }
           if (r.ok) {
-            return { ...r, mediaUrl: c.url, referer: c.context?.referer ?? url, requestContext: c.context, cookieRef, needsSession: true, sessionSource: 'browser', browser: { id: browser.id, name: browser.name }, instanceKey: instance.key };
+            return { ...r, contentType: c.kind === 'pdf' ? 'pdf' : 'video', mediaUrl: c.url, referer: c.context?.referer ?? url, requestContext: c.context, cookieRef, needsSession: true, sessionSource: 'browser', browser: { id: browser.id, name: browser.name }, instanceKey: instance.key };
           }
           this.releaseSession(cookieRef);
           lastFailure = r;
@@ -502,7 +505,7 @@ class BrowserService extends EventEmitter {
     this.incoming.set(ref, { instanceKey: instance.key, scopeKey: m.id, candidate: m.candidate || null, title: m.title || '', url: m.url, sendKey, terminal: '' });
     try {
       const sourceId = crypto.createHash('sha256').update(sendKey).digest('hex');
-      const answer = await this.acceptIncoming({ ref, sourceId, contentType: m.contentType === 'pdf' ? 'pdf' : 'video', url: m.url, title: m.title || '', browserId: instance.browser, instanceKey: instance.key, hasCandidate: !!m.candidate });
+      const answer = await this.acceptIncoming({ ref, sourceId, contentType: m.contentType === 'pdf' ? 'pdf' : m.contentType === 'auto' ? 'auto' : 'video', url: m.url, title: m.title || '', browserId: instance.browser, instanceKey: instance.key, hasCandidate: !!m.candidate });
       const status = typeof answer === 'string' ? answer : answer?.status;
       if (status !== 'accepted') {
         this.incoming.delete(ref);

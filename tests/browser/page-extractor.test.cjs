@@ -205,3 +205,35 @@ test('PDF browser choices do not request any document before selection and canno
   assert.equal(selected.ok, true, JSON.stringify(selected)); assert.equal(pdfCalls, 1);
   assert.equal(selected.mediaUrl, 'https://docs.test/b.pdf');
 });
+
+test('automatic browser discovery offers both types and keeps scoped PDF cookies on selection', async t => {
+  const f = fixture(t);
+  const page = 'https://whop.test/course';
+  const requests = [];
+  f.svc.pdf = require('../../electron/infrastructure/pdf-downloader.cjs').createPdfDownloader({ fetchImpl: async (url, opts) => {
+    requests.push({ url, headers: opts.headers });
+    return new Response('%PDF-1.7\n%%EOF', { headers: { 'content-type': 'application/pdf' } });
+  } });
+  const candidates = [
+    { url: 'https://video.test/lesson.mp4', kind: 'file', fromPlayer: true },
+    { url: 'https://docs.test/opaque?sig=a%2Bb', kind: 'pdf', context: { userAgent: 'Sending UA', referer: page } },
+  ];
+  f.hub.sendTo = (key, type, m) => {
+    f.calls.push({ key, type, m });
+    if (type === 'discover') queueMicrotask(() => f.hub.emit('message', f.instance, { type: 'candidates', final: true, jobId: m.jobId, candidates }));
+    return true;
+  };
+  f.hub.request = async (_key, _type, m) => ({ type: 'cookies', jobId: m.jobId, available: true,
+    cookies: [{ domain: 'docs.test', name: 'SID', value: 'PDF-SESSION', path: '/', secure: true, session: true }] });
+  const opts = { contentType: 'auto', browser: 'chrome', instance: f.instance.key, itemId: 'mixed-one', requireSession: true };
+  const r = await f.discovery.analyze(page, opts);
+  assert.equal(r.kind, 'fileChoice'); assert.equal(requests.length, 0);
+  assert.equal(f.calls[0].m.contentType, 'auto');
+  assert.deepEqual(r.choices.map(c => c.label.split(' · ')[0]), ['וידאו', 'PDF']);
+  const selected = await f.discovery.analyze(page, { ...opts, choice: { token: r.token, index: 1 } });
+  assert.equal(selected.ok, true, JSON.stringify(selected));
+  assert.equal(selected.contentType, 'pdf'); assert.equal(selected.instanceKey, f.instance.key);
+  assert.equal(requests[0].url, candidates[1].url);
+  assert.equal(requests[0].headers.Cookie, 'SID=PDF-SESSION');
+  assert.equal(f.calls.some(c => c.type === 'extractor'), false);
+});
