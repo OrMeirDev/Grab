@@ -24,7 +24,7 @@
       if (/^blob:/i.test(value.trim())) { out.blobPlayers++; return; }
       try {
         const url = new URL(value, base);
-        if (/\.ism(?:\/manifest)?$/i.test(url.pathname) && /^(video|audio)$/i.test(url.searchParams.get('type') || '') && url.searchParams.has('start')) return;
+        if (/\.ism(?:\/manifest)?$/i.test(url.pathname) && /^(video|audio)$/i.test(url.searchParams.get('type') || '') && (url.searchParams.has('start') || (url.searchParams.has('bitrate') && url.searchParams.has('id')))) return;
         if (url.protocol === 'https:' || url.protocol === 'http:') media.add(url.href);
       } catch (e) { /* not a URL */ }
     };

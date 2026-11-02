@@ -20,7 +20,7 @@ function classify(url, type = '') {
   if (typeof url !== 'string' || !/^https?:/i.test(url)) return { reject: 'not-http' };
   try {
     const u = new URL(url);
-    if (/\.ism(?:\/manifest)?$/i.test(u.pathname) && /^(video|audio)$/i.test(u.searchParams.get('type') || '') && u.searchParams.has('start')) return { reject: 'segment' };
+    if (/\.ism(?:\/manifest)?$/i.test(u.pathname) && /^(video|audio)$/i.test(u.searchParams.get('type') || '') && (u.searchParams.has('start') || (u.searchParams.has('bitrate') && u.searchParams.has('id')))) return { reject: 'segment' };
   } catch { return { reject: 'not-http' }; }
   if (ADS.test(url)) return { reject: 'ad' };
   // Stream pieces are skipped by name and by type (some services give them odd names, e.g. ".dts").

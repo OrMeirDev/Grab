@@ -37,7 +37,7 @@
     const type = String(obs.contentType || '').split(';')[0].trim().toLowerCase();
     if (/^image\//.test(type) || IMAGE_EXT.test(path)) return null;
     // Redge/Kan serves DASH fragments from the manifest path with a track and timestamp.
-    if (/\.ism(?:\/manifest)?$/i.test(path) && /^(video|audio)$/i.test(u.searchParams.get('type') || '') && u.searchParams.has('start')) return null;
+    if (/\.ism(?:\/manifest)?$/i.test(path) && /^(video|audio)$/i.test(u.searchParams.get('type') || '') && (u.searchParams.has('start') || (u.searchParams.has('bitrate') && u.searchParams.has('id')))) return null;
     if (SEGMENT_EXT.test(path) || SEGMENT_NAME.test(path) || SEGMENT_TYPE.test(type)) return null;
     if (/\.m3u8$/i.test(path) || /mpegurl/.test(type)) return { kind: 'hls' };
     if (/\.(?:mpd|ism)(?:\/manifest)?$/i.test(path) || /dash\+xml/.test(type)) return { kind: 'dash' };
