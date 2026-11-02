@@ -13,7 +13,7 @@ test('DASH manifest is kept with its exact query while same-path audio/video fra
   assert.equal(media.classify({ url: manifest, contentType: 'application/dash+xml' }).kind, 'dash');
   assert.equal(policy.classify(manifest).kind, 'stream');
   assert.equal(urlContentType(manifest), 'video');
-  for (const url of fragments) {
+  for (const url of [...fragments, `${manifest}&type=audio&bitrate=192000&id=2`, `${manifest}&type=video&bitrate=5500000&id=1`]) {
     assert.equal(media.classify({ url, contentType: 'video/mp4' }), null);
     assert.equal(policy.classify(url, 'video/mp4').reject, 'segment');
     assert.equal(policy.classifyPlayerSource(url).reject, 'segment');
@@ -26,7 +26,7 @@ test('late extension attachment recovers a manifest after hundreds of fragments 
   const result = vm.runInNewContext(`(${collectInPage.toString()})()`, {
     URL, document: { title: 'Lesson', URL: 'https://page.example/watch', baseURI: 'https://page.example/watch',
       querySelectorAll: () => [], querySelector: () => null },
-    performance: { getEntriesByType: () => [...fragments, manifest].map(name => ({ name })) },
+    performance: { getEntriesByType: () => [...fragments, `${manifest}&type=audio&bitrate=192000&id=2`, manifest].map(name => ({ name })) },
   });
   assert.deepEqual(Array.from(result.media), [manifest]);
 });
