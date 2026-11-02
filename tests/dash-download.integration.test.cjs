@@ -16,11 +16,13 @@ test('real engine downloads DASH on a .ism URL and merges separate audio/video i
   const made = spawnSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=128x72:r=12',
     '-f', 'lavfi', '-i', 'sine=frequency=880:sample_rate=44100', '-t', '2.4', '-map', '0:v', '-map', '1:a',
     '-c:v', 'libx264', '-preset', 'ultrafast', '-g', '12', '-c:a', 'aac', '-f', 'dash', '-seg_duration', '1',
-    '-adaptation_sets', 'id=0,streams=v id=1,streams=a', path.join(dir, 'Manifest.ism')], { encoding: 'utf8', windowsHide: true });
+    '-adaptation_sets', 'id=0,streams=v id=1,streams=a',
+    '-init_seg_name', 'init-stream$RepresentationID$.m4s', '-media_seg_name', 'chunk-stream$RepresentationID$-$Number$.m4s',
+    'Manifest.ism'], { cwd: dir, encoding: 'utf8', windowsHide: true });
   assert.equal(made.status, 0, made.stderr);
   const requests = [];
   const server = http.createServer((req, res) => {
-    const name = new URL(req.url, 'http://localhost').pathname.slice(1);
+    const name = decodeURIComponent(new URL(req.url, 'http://localhost').pathname.slice(1));
     requests.push(name);
     if (!fs.readdirSync(dir).includes(name)) { res.writeHead(404); res.end(); return; }
     res.setHeader('Content-Type', name === 'Manifest.ism' ? 'application/dash+xml' : 'video/mp4');
@@ -33,7 +35,7 @@ test('real engine downloads DASH on a .ism URL and merges separate audio/video i
   assert.equal(info.ok, true, JSON.stringify(info));
   t.after(() => { if (info.infoFile) engine.releaseInfo(info.infoFile); });
   const result = await engine.download({ ...info, url, outputBase: path.join(dir, 'result'), format: 'mp4', quality: 'best' }, () => {}).done;
-  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.ok, true, JSON.stringify({ result, requests, files: fs.readdirSync(dir), manifest: fs.readFileSync(path.join(dir, 'Manifest.ism'), 'utf8') }));
   const probe = spawnSync('ffprobe', ['-v', 'error', '-show_streams', '-of', 'json', result.file], { encoding: 'utf8', windowsHide: true });
   assert.equal(probe.status, 0, probe.stderr);
   const streams = JSON.parse(probe.stdout).streams;
