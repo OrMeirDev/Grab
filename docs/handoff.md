@@ -1,3 +1,19 @@
+# Grab 1.9.1 — DASH manifest discovery (2026-11-02)
+
+The owner requested stream discovery and a new stable in-app update. Recognize .ism and
+.ism/Manifest sources, including DASH served under these names. Ignore Redge/Kan track/time
+fragment requests instead of offering individual silent MP4 pieces. Late attachment recovers
+the original observed manifest before fragments can exhaust the DOM candidate limit. Signed
+queries are retained unchanged; no source URLs are synthesized. Existing engine merging uses
+yt-dlp and FFmpeg; no tool upgrades or DRM changes. Extension 1.3.1 requires Reload after update.
+
+Release gates: fresh CI, Browser integration and Windows verify on the exact main release SHA.
+Windows acceptance: send an already-playing Kan page from each browser; verify complete video
+and sound, plus ordinary pasted video and PDF downloads. Personal-site acceptance is not
+claimed by the generated local DASH fixture.
+
+---
+
 # Grab 1.9.0 — automatic file detection release (2026-10-29)
 
 The owner explicitly requested a new installer now, and made installer publication part of every

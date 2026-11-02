@@ -24,6 +24,7 @@
       if (/^blob:/i.test(value.trim())) { out.blobPlayers++; return; }
       try {
         const url = new URL(value, base);
+        if (/\.ism(?:\/manifest)?$/i.test(url.pathname) && /^(video|audio)$/i.test(url.searchParams.get('type') || '') && url.searchParams.has('start')) return;
         if (url.protocol === 'https:' || url.protocol === 'http:') media.add(url.href);
       } catch (e) { /* not a URL */ }
     };
@@ -58,7 +59,7 @@
         if (tag === 'source' && el.parentElement && el.parentElement.matches('video, audio')) add(el.src || el.getAttribute('src'));
         for (const attr of ['src', 'cast-src', 'data-src']) {
           const value = el.getAttribute(attr);
-          if (value && /\.(m3u8|mpd)([?#]|$)/i.test(value)) add(value);
+          if (value && /\.(m3u8|mpd|ism(?:\/manifest)?)([?#]|$)/i.test(value)) add(value);
         }
         if (el.matches('meta[property="og:video"], meta[property="og:video:url"], meta[property="og:video:secure_url"], meta[name="twitter:player:stream"]')) add(el.content);
         if (tag === 'iframe' && el.getAttribute('src')) {
@@ -73,7 +74,7 @@
     // Manifests this page already loaded before the extension was watching.
     try {
       for (const entry of performance.getEntriesByType('resource')) {
-        if (/\.(m3u8|mpd)([?#]|$)/i.test(entry.name)) add(entry.name);
+        if (/\.(m3u8|mpd|ism(?:\/manifest)?)([?#]|$)/i.test(entry.name)) add(entry.name);
       }
     } catch (e) { /* ignore */ }
     out.media = Array.from(media).slice(0, 60);
