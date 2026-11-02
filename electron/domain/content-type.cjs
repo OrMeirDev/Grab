@@ -6,7 +6,7 @@ function urlContentType(value) {
     const u = new URL(value);
     if (/\.pdf$/i.test(u.pathname) || /^application\/pdf(?:\s*;|$)/i.test(u.searchParams.get('response-content-type') || '') ||
       /filename\*?\s*=.*\.pdf(?:[\s"';]|$)/i.test(u.searchParams.get('response-content-disposition') || '')) return 'pdf';
-    if (/\.(mp4|webm|mkv|mov|m4v|mp3|m4a|aac|ogg|wav|m3u8|mpd)$/i.test(u.pathname) ||
+    if (/\.(mp4|webm|mkv|mov|m4v|mp3|m4a|aac|ogg|wav|m3u8|mpd|ism(?:\/manifest)?)$/i.test(u.pathname) ||
       ['youtube', 'vimeo', 'facebook', 'instagram', 'tiktok', 'x'].includes(siteKey(value))) return 'video';
   } catch { /* unrecognized */ }
   return null;

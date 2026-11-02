@@ -5,7 +5,7 @@
 // user is told it can't be downloaded. Nothing here tries to get past it.
 
 const FILE = /\.(mp4|webm|mov|m4v|mkv|mp3|m4a|ogg|opus|wav|flac|aac)(\?|#|$)/i;
-const MANIFEST = /\.(m3u8|mpd)(\?|#|$)/i;
+const MANIFEST = /\.(m3u8|mpd|ism(?:\/manifest)?)(\?|#|$)/i;
 const MEDIA_TYPE = /^(video\/|audio\/|application\/(vnd\.apple\.mpegurl|x-mpegurl|dash\+xml))/i;
 // Pieces of a stream (the manifest is what's wanted) and common ad servers.
 const SEGMENT = /\.(ts|m4s)(\?|#|$)|[/_-](seg|segment|chunk|frag)[-_]?\d|init[-_]?\d*\.mp4/i;
@@ -18,6 +18,10 @@ const CANDIDATE_BUDGET = 12;
 // -> { kind: 'stream' | 'file' } or { reject: reason }
 function classify(url, type = '') {
   if (typeof url !== 'string' || !/^https?:/i.test(url)) return { reject: 'not-http' };
+  try {
+    const u = new URL(url);
+    if (/\.ism(?:\/manifest)?$/i.test(u.pathname) && /^(video|audio)$/i.test(u.searchParams.get('type') || '') && u.searchParams.has('start')) return { reject: 'segment' };
+  } catch { return { reject: 'not-http' }; }
   if (ADS.test(url)) return { reject: 'ad' };
   // Stream pieces are skipped by name and by type (some services give them odd names, e.g. ".dts").
   if (SEGMENT.test(url) || /mp2t|iso\.segment/i.test(type)) return { reject: 'segment' };
