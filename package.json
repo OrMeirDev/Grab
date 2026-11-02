@@ -6,7 +6,7 @@
   "main": "electron/main.cjs",
   "private": true,
   "scripts": {
-    "test": "node --test --test-concurrency=4",
+    "test": "node --test --test-concurrency=1",
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env VITE_DEV=1 electron .\"",
     "build": "vite build",
     "start": "electron .",
