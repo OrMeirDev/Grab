@@ -12,6 +12,13 @@ initialization requests remain excluded. The capture and its private request dat
 Two new regressions fail before the policy change and pass after it, including real-worker
 webRequest -> auto discovery with a blob player and no DOM/timing manifest fallback.
 
+Release validation found a Windows test-harness race: Chromium's DevToolsActivePort can exist
+while locked or partially written. Readiness now waits for a readable, complete endpoint within
+the original startup deadline, and failed startup cleans up its browser. Regressions cover
+locked/missing/partial files, invalid endpoints, bounded timeout and immediate unexpected errors.
+All product assertions remain intact. CI and Windows upgrade passed on the first candidate;
+Browser integration must be rerun with this harness correction before merging.
+
 Application 1.9.2, extension 1.3.2. Native tools and UI unchanged. Require exact-source CI,
 Browser integration and Windows verify before stable publication. Local Unix browser-hub
 checks cannot bind their sockets (EPERM); no check was weakened. Personal Kan acceptance
