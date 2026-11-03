@@ -129,8 +129,12 @@
       if (c.fromPlayer) score += 30;
       if (c.frameId === 0) score += 5;
       if (ADS.test(c.url)) score -= 60;
-      if (c.size && c.size < 150000) score -= 35;
-      else if (c.size) score += Math.min(10, Math.floor(c.size / 1048576));
+      // A manifest describes the stream; its byte size says nothing about video duration.
+      // Keep the preview/pixel size heuristic for actual media files only.
+      if (c.kind !== 'hls' && c.kind !== 'dash') {
+        if (c.size && c.size < 150000) score -= 35;
+        else if (c.size) score += Math.min(10, Math.floor(c.size / 1048576));
+      }
       if (c.at && now - c.at < 120000) score += 3;
       return { ...c, score };
     }).sort((a, b) => b.score - a.score || (b.at || 0) - (a.at || 0));

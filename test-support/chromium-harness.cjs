@@ -27,6 +27,27 @@ function findChromium() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Chromium creates this file before Windows necessarily allows readers, and may write its
+// two lines separately. Existence alone does not mean the DevTools endpoint is ready.
+async function waitForDevToolsPort(file, { read = () => fs.readFileSync(file, 'utf8'),
+  now = Date.now, pause = sleep, timeoutMs = 20000 } = {}) {
+  const end = now() + timeoutMs;
+  let lastError;
+  while (now() < end) {
+    try {
+      const [port, wsPath] = read().trim().split(/\r?\n/);
+      if (/^\d+$/.test(port) && Number(port) > 0 && Number(port) <= 65535 && /^\/devtools\/browser\/[^\s]+$/.test(wsPath || '')) {
+        return `ws://127.0.0.1:${port}${wsPath}`;
+      }
+    } catch (error) {
+      if (!['ENOENT', 'EBUSY', 'EACCES'].includes(error.code)) throw error;
+      lastError = error;
+    }
+    await pause(100);
+  }
+  throw new Error('Chromium did not publish a readable DevTools endpoint', { cause: lastError });
+}
+
 class Chromium {
   constructor({ extensionDir, autoplay = true, exe = findChromium() } = {}) {
     this.extensionDir = extensionDir;
@@ -48,17 +69,16 @@ class Chromium {
     ];
     this.child = spawn(this.exe, args, { stdio: 'ignore', windowsHide: true });
     this.exited = new Promise((resolve) => this.child.on('exit', resolve));
-    const portFile = path.join(this.profile, 'DevToolsActivePort');
-    const end = Date.now() + 20000;
-    while (!fs.existsSync(portFile)) {
-      if (Date.now() > end) throw new Error('Chromium did not start');
-      await sleep(100);
+    try {
+      const endpoint = await waitForDevToolsPort(path.join(this.profile, 'DevToolsActivePort'));
+      const socket = new WebSocket(endpoint, { perMessageDeflate: false });
+      await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+      this.cdp = new CdpClient(socket);
+      return this;
+    } catch (error) {
+      await this.stop();
+      throw error;
     }
-    const [port, wsPath] = fs.readFileSync(portFile, 'utf8').trim().split(/\r?\n/);
-    const socket = new WebSocket(`ws://127.0.0.1:${port}${wsPath}`, { perMessageDeflate: false });
-    await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
-    this.cdp = new CdpClient(socket);
-    return this;
   }
 
   send(method, params, sessionId) { return this.cdp.send(method, params, sessionId); }
@@ -100,4 +120,4 @@ class Chromium {
   }
 }
 
-module.exports = { Chromium, findChromium, sleep };
+module.exports = { Chromium, findChromium, sleep, waitForDevToolsPort };

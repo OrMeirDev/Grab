@@ -57,6 +57,15 @@ async function worker({ existing = [], status = 'complete', execute = async () =
   receive(P.make('welcome', { protocol: P.PROTOCOL_VERSION, appVersion: 'test' }));
   return {
     sent, scans, created, removed, updated, data,
+    responseMedia: (url, { contentType = 'application/dash+xml', size = 30070, frameId = 1 } = {}) => {
+      const m = { requestId: 'media-request', tabId: 7, frameId, url, type: 'xmlhttprequest' };
+      context.chrome.webRequest.onBeforeRequest.emit(m);
+      context.chrome.webRequest.onSendHeaders.emit({ ...m, requestHeaders: [{ name: 'Origin', value: 'https://fixture.test' }] });
+      context.chrome.webRequest.onHeadersReceived.emit({ ...m, statusCode: 200, responseHeaders: [
+        { name: 'Content-Type', value: contentType }, { name: 'Content-Length', value: String(size) },
+      ] });
+      context.chrome.webRequest.onCompleted.emit(m);
+    },
     start: (deadlineMs = 60000) => receive(P.make('discover', { jobId: 'fixture-job', url: pageUrl, deadlineMs })),
     responsePdf: (headers = [{ name: 'Content-Type', value: 'application/pdf' }], type = 'main_frame') => {
       const m = { requestId: 'pdf-request', tabId: 7, frameId: 0, url: pageUrl, type };
@@ -86,6 +95,31 @@ async function worker({ existing = [], status = 'complete', execute = async () =
 const candidates = (w) => w.sent.filter((m) => m.type === 'candidates');
 const failures = (w) => w.sent.filter((m) => m.type === 'job-failed');
 const userTab = (extra = {}) => ({ id: 7, url: pageUrl, status: 'loading', ...extra });
+
+test('auto discovery delivers a small network-only DASH manifest from the existing tab', async () => {
+  // A blob player need not expose its old manifest in the current Resource Timing buffer.
+  const empty = [{ frameId: 0, result: { media: [], pageUrl, title: 'Fixture', players: 1,
+    playing: 1, playRejected: 0, blobPlayers: 1, drm: false, embeds: [] } }];
+  const w = await worker({ existing: [userTab()], execute: async () => empty });
+  const manifest = 'https://cdn.fixture.test/vod/Manifest.ism?token=a%2Fb';
+  w.responseMedia(manifest);
+  // Track init and media fragments must not replace the complete manifest.
+  w.responseMedia(manifest + '&type=video&bitrate=5500000&id=1', { contentType: 'video/mp4', size: 800 });
+  w.responseMedia(manifest + '&type=audio&bitrate=192000&id=2&start=400000', { contentType: 'audio/mp4', size: 48000 });
+  await w.advance(1000);
+  w.startAuto();
+  await w.advance(2000);
+  assert.equal(candidates(w).length, 1);
+  const [c] = candidates(w)[0].candidates;
+  assert.equal(candidates(w)[0].candidates.length, 1);
+  assert.equal(c.url, manifest);
+  assert.equal(c.kind, 'dash');
+  assert.equal(c.size, 30070);
+  assert.equal(c.context.origin, 'https://fixture.test');
+  assert.deepEqual(w.created, [], 'use the observed source without opening another player');
+  assert.deepEqual(w.updated, []);
+  assert.deepEqual(w.removed, []);
+});
 
 test('a stalled existing-tab injection falls back to an owned tab; late results are ignored', async () => {
   let resolveExisting;
