@@ -45,6 +45,20 @@ test('the real video beats ads, tiny files, license calls and segments', () => {
   assert.equal(r.ambiguous, false);
 });
 
+test('manifest size describes the playlist, not the video: small DASH and HLS stay plausible', () => {
+  for (const url of ['https://cdn.test/Manifest.ism', 'https://cdn.test/main.mpd', 'https://cdn.test/master.m3u8']) {
+    for (const size of [200, 30_070, 149_999, 150_000, 2_000_000]) {
+      // Network-only source in an iframe, including one no longer in Resource Timing.
+      const r = rank([obs(url, { size, frameId: 1, at: now - 180_000 }),
+        obs('https://cdn.test/preview.mp4', { size: 90_000 })]);
+      assert.deepEqual(r.plausible.map(c => c.url), [url], `${url}, ${size} bytes`);
+      assert.equal(r.ranked[0].score, 50, 'manifest byte size must not change stream confidence');
+    }
+  }
+  assert.equal(rank([obs('https://ads.doubleclick.net/master.m3u8', { size: 30_070 })]).plausible.length, 0);
+  assert.equal(rank([obs('https://cdn.test/preview.mp4', { size: 30_070 })]).plausible.length, 0);
+});
+
 test('a player source confirmed in the DOM is preferred over background media', () => {
   const r = rank([
     obs('https://cdn.test/background-loop.mp4', { size: 5_000_000 }),

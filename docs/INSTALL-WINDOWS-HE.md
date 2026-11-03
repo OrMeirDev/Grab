@@ -1,17 +1,17 @@
-# Grab 1.9.1 — התקנה ושימוש ב־Windows
+# Grab 1.9.2 — התקנה ושימוש ב־Windows
 
 ## התקנה או שדרוג
 
-1. הורד את [Grab-Setup-1.9.1.exe](https://github.com/OrMeirDev/Grab/releases/download/v1.9.1/Grab-Setup-1.9.1.exe) מתוך [עמוד הגרסה](https://github.com/OrMeirDev/Grab/releases/tag/v1.9.1).
+1. הורד את [Grab-Setup-1.9.2.exe](https://github.com/OrMeirDev/Grab/releases/download/v1.9.2/Grab-Setup-1.9.2.exe) מתוך [עמוד הגרסה](https://github.com/OrMeirDev/Grab/releases/tag/v1.9.2).
 2. סגור את Grab והתקן מעל ההתקנה הקיימת, באותה תיקייה. אין צורך להסיר את הגרסה הישנה. ההגדרות וההיסטוריה נשמרות; הורדות שהופסקו חוזרות מושהות.
-3. פתח Grab וודא שמופיעה גרסה **1.9.1**. המתקין אינו חתום, כמו הגרסאות הקודמות. אם Windows מציג SmartScreen, בדוק את מקור הקובץ ובחר מידע נוסף → הפעל בכל זאת.
+3. פתח Grab וודא שמופיעה גרסה **1.9.2**. המתקין אינו חתום, כמו הגרסאות הקודמות. אם Windows מציג SmartScreen, בדוק את מקור הקובץ ובחר מידע נוסף → הפעל בכל זאת.
 
 אין צורך להתקין Node.js, Python או מנועי הורדה בנפרד. גרסאות מלאות מופיעות גם בערוץ העדכונים של Grab. אם אתה מגיע מגרסת RC ואינך רואה עדכון, השתמש במתקין שבקישור.
 
 לבדיקת הקובץ אפשר להוריד מאותו עמוד את `SHA256SUMS.txt` ולהשוות ב־PowerShell:
 
 ```powershell
-(Get-FileHash .\Grab-Setup-1.9.1.exe -Algorithm SHA256).Hash
+(Get-FileHash .\Grab-Setup-1.9.2.exe -Algorithm SHA256).Hash
 Get-Content .\SHA256SUMS.txt
 ```
 

@@ -1,3 +1,25 @@
+# Grab 1.9.2 — small stream manifest ranking (2026-11-03)
+
+The owner reported Kan downloads still fail after 1.9.1 and requested a code fix.
+The original Network capture has a 30,070-byte DASH manifest: the generic tiny-media penalty
+put its network-only candidate below the plausible threshold. Manifest byte length now has
+no influence on HLS/DASH ranking; small actual-file and advertising penalties are retained.
+The shared policy fixes both the MV3 worker and desktop BrowserService ranking.
+
+Replayed classification/ranking of the capture's 278 .ism requests: before, one complete source
+but zero plausible candidates (score 18); after, one plausible source (score 53). Segment and
+initialization requests remain excluded. The capture and its private request data are not committed.
+Two new regressions fail before the policy change and pass after it, including real-worker
+webRequest -> auto discovery with a blob player and no DOM/timing manifest fallback.
+
+Application 1.9.2, extension 1.3.2. Native tools and UI unchanged. Require exact-source CI,
+Browser integration and Windows verify before stable publication. Local Unix browser-hub
+checks cannot bind their sockets (EPERM); no check was weakened. Personal Kan acceptance
+still requires the installed update, Repair/Reload of extension 1.3.2, and a complete video
+with sound. Do not equate captured-request ranking or generated DASH with live account acceptance.
+
+---
+
 # Grab 1.9.1 — DASH manifest discovery (2026-11-02)
 
 The owner requested stream discovery and a new stable in-app update. Recognize .ism and
